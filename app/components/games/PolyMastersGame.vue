@@ -1,25 +1,27 @@
 <script setup lang="ts">
-// Poly Masters: a crash game. A biplane takes off from a carrier, flies through
+// PolyMasters: a crash game. A biplane takes off from a carrier, flies through
 // adders, multipliers, rockets and boosters, and lands on the island (pays the
-// counter) or splashes into the sea. The server decides and settles the whole
-// round (shared/games/polymasters.ts); the Pixi scene (~/utils/polymasters)
-// only plays the returned flight back. Every model is painted with Canvas2D and
-// every sound is synthesised, so it loads no assets.
+// Counter Balance) or splashes into the sea. The server decides and settles the
+// whole round (shared/games/polymasters.ts); the Pixi scene
+// (~/utils/polymasters) only plays the returned flight back. Every model is
+// painted with Canvas2D and every sound is synthesised, so it loads no assets.
 import '@fontsource/lilita-one/400.css'
 import '@fontsource/nunito/600.css'
 import '@fontsource/nunito/800.css'
 import '@fontsource/nunito/900.css'
-import { Volume2, VolumeX } from 'lucide-vue-next'
-import { Button } from '@/components/ui/button'
-import { PM_MAX_WIN, PM_SAFE_LANDING_COST } from '#shared/games/polymasters'
+import { findGame } from '#shared/games/registry'
 import { GameScene } from '~/utils/polymasters/scene'
 import PmTopBar from '~/components/games/polymasters/PmTopBar.vue'
 import PmBoosterBar from '~/components/games/polymasters/PmBoosterBar.vue'
 import PmControlBar from '~/components/games/polymasters/PmControlBar.vue'
 import PmResultOverlay from '~/components/games/polymasters/PmResultOverlay.vue'
+import PmRulesModal from '~/components/games/polymasters/PmRulesModal.vue'
 import PmLoadingScreen from '~/components/games/polymasters/PmLoadingScreen.vue'
 
-const sound = useSlotSound(undefined)
+const info = findGame('polymasters')!
+useHead({ title: info.name })
+onMounted(() => useHubBridge().postTitle(info.name))
+
 const game = providePolyMastersGame()
 const { state, attachScene, sceneHooks, speedMult, play, dismissResult } = game
 
@@ -44,7 +46,7 @@ function onFullscreenChange() {
 
 // --- keyboard -----------------------------------------------------------------
 function onKey(e: KeyboardEvent) {
-    if (e.code !== 'Space' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+    if (e.code !== 'Space' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || state.showRules) return
     const target = e.target as HTMLElement | null
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
     // A focused button already plays/stops on Space by itself.
@@ -89,13 +91,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <GameFrame slug="polymasters">
-    <template #actions>
-      <Button size="icon" variant="ghost" :title="sound.muted.value ? 'Sound on' : 'Sound off'" @click="sound.toggle()">
-        <VolumeX v-if="sound.muted.value" class="size-5" />
-        <Volume2 v-else class="size-5" />
-      </Button>
-    </template>
+  <!-- The old page's padding around the game. -->
+  <div class="px-3 py-4 sm:px-6 sm:py-6">
     <div ref="root" class="pm" :class="{ 'is-fullscreen': isFullscreen }">
       <div ref="host" class="stage" />
       <div class="hud">
@@ -107,18 +104,12 @@ onBeforeUnmount(() => {
       <Transition name="pm-toast">
         <div v-if="state.toast" class="toast panel" role="alert">{{ state.toast }}</div>
       </Transition>
+      <PmRulesModal v-if="state.showRules" :icons="icons" />
       <Transition name="pm-fade" :duration="600">
         <PmLoadingScreen v-if="!state.ready" />
       </Transition>
     </div>
-
-    <template #rules>
-      <p>The plane takes off with your bet on its counter. Adders (+1, +2, +5, +10) add bets, multipliers (×2 to ×5) multiply the counter, and both lift the plane.</p>
-      <p>A rocket halves the counter and drops the plane. A hit at the lowest altitude sinks it, unless a Life Buoy bounces it back. Nitro and the Laser Gun stop rockets; a Magnet keeps them away and pulls the plane to the island.</p>
-      <p>Land on the island and the counter pays. The higher the plane flies at the end, the easier the landing. The flight ends at {{ PM_MAX_WIN.toLocaleString('en-US') }}× bet.</p>
-      <p>Safe Landing costs {{ PM_SAFE_LANDING_COST }}× bet per round and always lands.</p>
-    </template>
-  </GameFrame>
+  </div>
 </template>
 
 <style scoped>
@@ -133,7 +124,7 @@ onBeforeUnmount(() => {
   /* clip, not hidden: a focused control must never scroll the stage sideways */
   overflow: clip;
   isolation: isolate;
-  border-radius: calc(var(--radius) * 1.25);
+  border-radius: 1.5rem;
   border: 1px solid var(--border);
   background: #071a36;
 }

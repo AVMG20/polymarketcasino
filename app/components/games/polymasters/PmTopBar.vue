@@ -4,7 +4,7 @@ import { sfx } from '~/utils/polymasters/audio'
 defineProps<{ fullscreen: boolean, fullscreenSupported: boolean }>()
 const emit = defineEmits<{ 'toggle-fullscreen': [] }>()
 
-const { state, money, setMusic } = usePolyMastersGame()
+const { state, money, setSfx, setMusic } = usePolyMastersGame()
 
 function toggleFullscreen() {
     sfx.click()
@@ -48,11 +48,21 @@ function chipClass(m: number) {
         </TransitionGroup>
       </div>
       <div class="buttons">
+        <button class="round-btn" :class="{ off: !state.sfx }" title="Sound effects" aria-label="Sound effects" @click="setSfx(!state.sfx)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" />
+            <path v-if="state.sfx" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" />
+            <path v-else d="M17 9l5 6M22 9l-5 6" />
+          </svg>
+        </button>
         <button class="round-btn" :class="{ off: !state.music }" title="Music" aria-label="Music" @click="setMusic(!state.music)">
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M9 17.5a2.5 2.5 0 1 1-2.5-2.5c.5 0 1 .1 1.5.4V5l11-2v12.5a2.5 2.5 0 1 1-2.5-2.5c.5 0 1 .1 1.5.4V7.2L9 8.8z" />
             <path v-if="!state.music" d="M3 3l18 18" stroke="#ff6b6b" stroke-width="2.5" />
           </svg>
+        </button>
+        <button class="round-btn" title="Rules" aria-label="Rules" @click="(state.showRules = true), sfx.click()">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5.5" r="2.2" /><rect x="10" y="9.5" width="4" height="11" rx="1.6" /></svg>
         </button>
         <button v-if="fullscreenSupported" class="round-btn" :title="fullscreen ? 'Exit fullscreen' : 'Fullscreen'" :aria-label="fullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="toggleFullscreen">
           <svg v-if="fullscreen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>

@@ -1,18 +1,8 @@
 <script setup lang="ts">
 import { PM_SAFE_LANDING_COST as SAFE_LANDING_COST } from '#shared/games/polymasters'
-import { formatCoins, parseAmount } from '#shared/money'
+import { parseAmount } from '#shared/money'
+import { amountShorthand } from '~/composables/amount-input'
 import { sfx } from '~/utils/polymasters/audio'
-
-/** An amount as shorthand the parser reads back exactly: 2500 → 2.5k. */
-function amountShorthand(value: number) {
-    const units: [string, number][] = [['m', 1e6], ['k', 1e3]]
-    for (const [suffix, size] of units) {
-        if (value < size) continue
-        const rounded = Math.round((value / size) * 100) / 100
-        if (Math.abs(rounded * size - value) < 1e-6) return `${rounded}${suffix}`
-    }
-    return String(value)
-}
 
 const { state, balance, money, stake, betLocked, changeBet, setBet, setSpeed, toggleSafe, play, startAuto, stopAuto, dismissResult } = usePolyMastersGame()
 const SPEEDS = PM_SPEEDS
@@ -111,7 +101,7 @@ function chooseAuto(n: number) {
   <footer ref="bar" class="bar">
     <div class="group balance panel">
       <div class="label">Balance</div>
-      <div class="big display" :title="formatCoins(balance, false)">{{ money(balance) }}</div>
+      <div class="big display" :title="formatNumber(balance, false)">{{ money(balance) }}</div>
     </div>
 
     <div ref="betGroup" class="group bet panel">
