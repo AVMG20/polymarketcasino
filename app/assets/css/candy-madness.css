@@ -1,0 +1,32 @@
+/* Shared by the cabinet and portalled dialogs, in either site color mode.
+   The --cmx-* names map the casino's tokens onto the palette the game was
+   drawn with. */
+.candy-theme {
+  --cmx-text: var(--foreground);
+  --cmx-text-highlighted: var(--foreground);
+  --cmx-text-muted: var(--muted-foreground);
+  --cmx-text-inverted: var(--background);
+  --cmx-bg: var(--background);
+  --cmx-bg-elevated: var(--card);
+  --cmx-bg-accented: var(--muted);
+  --cmx-border: var(--border);
+  --cmx-success: var(--success);
+  --cmx-warning: var(--star);
+  --cmx-error: oklch(0.64 0.21 25);
+  --cmx-secondary: oklch(0.62 0.19 260);
+  --candy-accent: color-mix(in oklch, var(--cmx-error) 62%, var(--cmx-secondary));
+  --candy-violet: color-mix(in oklch, var(--candy-accent) 55%, var(--cmx-secondary));
+  --candy-bg: color-mix(in srgb, var(--cmx-bg) 90%, var(--candy-violet));
+  --candy-surface: color-mix(in srgb, var(--cmx-bg-elevated) 85%, var(--candy-violet));
+  --candy-elevated: color-mix(in srgb, var(--cmx-bg-elevated) 88%, var(--candy-accent));
+  --candy-border: color-mix(in srgb, var(--candy-accent) 22%, var(--cmx-border));
+  --candy-soft: color-mix(in srgb, var(--candy-accent) 18%, var(--candy-surface));
+  color: var(--cmx-text);
+  font-family: 'Fredoka', system-ui, sans-serif;
+}
+
+.candy-theme button:focus-visible,
+.candy-theme input:focus-visible {
+  outline: 2px solid var(--candy-accent);
+  outline-offset: 3px;
+}

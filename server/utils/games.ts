@@ -1,9 +1,18 @@
+import { candyMadnessStake, parseCandyMadnessOptions, playCandyMadness } from '#shared/games/candymadness'
 import { parseDiceOptions, playDice } from '#shared/games/dice'
 import { parseLimboOptions, playLimbo } from '#shared/games/limbo'
+import { parseMagicHandsOptions, playMagicHands } from '#shared/games/magichands'
+import { parsePolyMastersOptions, playPolyMasters } from '#shared/games/polymasters'
 import { GAMES, type GameInfo } from '#shared/games/registry'
 import { parseRouletteBets, playRoulette, totalStake } from '#shared/games/roulette'
+import { parseWheelOptions, playWheel } from '#shared/games/wheel'
 import type { Rng } from '#shared/rng'
 import { playSlot, SLOT_CONFIGS, slotPayout, type SlotConfig } from '#shared/slots'
+import { aetherPayout, aetherStake, parseAetherOptions, playAethergates } from '#shared/slots/aethergates'
+import { BOS_BUY_COST, playBookOfShadows } from '#shared/slots/bookofshadows'
+import { emberPortalsPayout, emberPortalsStake, parseEmberPortalsMode, playEmberPortals } from '#shared/slots/emberportals'
+import { FITH_BUY_COST, playFireInTheHole } from '#shared/slots/fireinthehole'
+import { parseXenoSlotOptions, playXenoSlot, xenoSlotPayout, xenoSlotStake } from '#shared/slots/xenoslot'
 
 /**
  * The server half of every listed game: validate the player's options, play
@@ -51,6 +60,45 @@ function slotGame(info: GameInfo, config: SlotConfig): ServerGame {
     }
 }
 
+/** What a bespoke slot's round says about itself: the total win in × bet, already capped. */
+interface BespokeOutcome {
+    win: number
+    capped: boolean
+    /** The free spins / bonus ran this round. */
+    feature: boolean
+}
+
+/**
+ * A slot with its own rules module (not the generic engine). The module
+ * resolves the whole round in multiples of the bet; this pays it in whole
+ * coins and bounds the stake (bet, or bet × the integer buy cost).
+ */
+function bespokeSlot(info: GameInfo, buyCost: number, play: (rng: Rng, buy: boolean) => BespokeOutcome): ServerGame {
+    if (!Number.isSafeInteger(buyCost) || buyCost < 1) throw new Error(`${info.slug}: the buy cost must be a whole multiple of the bet`)
+    return {
+        info,
+        play({ bet, options, rng }) {
+            if (options.buy !== undefined && typeof options.buy !== 'boolean') throw new RangeError('buy is true or false')
+            const buy = options.buy === true
+            const outcome = play(rng, buy)
+            return {
+                stake: buy ? bet * buyCost : bet,
+                payout: Math.floor(bet * outcome.win + 1e-9),
+                result: outcome,
+                summary: { bet, buy, win: outcome.win, feature: outcome.feature, capped: outcome.capped }
+            }
+        }
+    }
+}
+
+/**
+ * Coins for a win of `multiple` × bet, rounded down. The epsilon keeps a
+ * decimal multiple that binary floats store a hair low (1.3 × 100) whole.
+ */
+function payFor(bet: number, multiple: number): number {
+    return Math.floor(bet * multiple + 1e-6)
+}
+
 function info(slug: string): GameInfo {
     const game = GAMES.find(g => g.slug === slug)
     if (!game) throw new Error(`${slug} is not in the registry`)
@@ -61,6 +109,100 @@ const implementations: Record<string, ServerGame> = {
     spinata: slotGame(info('spinata'), SLOT_CONFIGS.spinata!),
     trashpanda: slotGame(info('trashpanda'), SLOT_CONFIGS.trashpanda!),
     candyrush: slotGame(info('candyrush'), SLOT_CONFIGS.candyrush!),
+    bookofshadows: bespokeSlot(info('bookofshadows'), BOS_BUY_COST, (rng, buy) => playBookOfShadows(rng, { buy })),
+    fireinthehole: bespokeSlot(info('fireinthehole'), FITH_BUY_COST, (rng, buy) => playFireInTheHole(rng, { buy })),
+    aethergates: {
+        info: info('aethergates'),
+        play({ bet, options, rng }) {
+            const feature = parseAetherOptions(options)
+            const result = playAethergates(rng, feature)
+            return {
+                stake: aetherStake(bet, feature),
+                payout: aetherPayout(result, bet),
+                result,
+                summary: { bet, feature, win: result.totalWinMult, bonus: result.bonusTier, capped: result.capped }
+            }
+        }
+    },
+    emberportals: {
+        info: info('emberportals'),
+        play({ bet, options, rng }) {
+            const mode = parseEmberPortalsMode(options)
+            const result = playEmberPortals(rng, mode)
+            return {
+                stake: emberPortalsStake(mode, bet),
+                payout: emberPortalsPayout(result, bet),
+                result,
+                summary: { bet, mode, win: result.win, freeSpins: result.freeSpins?.spins.length ?? 0, capped: result.capped }
+            }
+        }
+    },
+    xenoslot: {
+        info: info('xenoslot'),
+        play({ bet, options, rng }) {
+            const { buy } = parseXenoSlotOptions(options)
+            const result = playXenoSlot(rng, { buy })
+            return {
+                stake: xenoSlotStake(bet, buy),
+                payout: xenoSlotPayout(result, bet),
+                result,
+                summary: { bet, buy, win: result.win, bonus: result.bonus !== null, capped: result.capped }
+            }
+        }
+    },
+
+    candymadness: {
+        info: info('candymadness'),
+        play({ bet, options, rng }) {
+            const { feature } = parseCandyMadnessOptions(options)
+            const result = playCandyMadness(rng, { feature })
+            return {
+                stake: candyMadnessStake(bet, feature),
+                payout: payFor(bet, result.win),
+                result,
+                summary: { bet, feature, win: result.win, bonus: !!result.bonus, capped: result.capped }
+            }
+        }
+    },
+
+    polymasters: {
+        info: info('polymasters'),
+        play({ bet, options, rng }) {
+            const { mode } = parsePolyMastersOptions(options)
+            const result = playPolyMasters(rng, mode)
+            return {
+                stake: bet * result.cost,
+                payout: payFor(bet, result.win),
+                result,
+                summary: { bet, mode, landing: result.landing, win: result.win, events: result.events.length }
+            }
+        }
+    },
+
+    wheel: {
+        info: info('wheel'),
+        play({ bet, options, rng }) {
+            const result = playWheel(rng, parseWheelOptions(options))
+            return { stake: bet, payout: payFor(bet, result.multiplier), result, summary: { ...result } }
+        }
+    },
+
+    magichands: {
+        info: info('magichands'),
+        // `bet` is one hand; the stake is a hand per placed tile.
+        play({ bet, options, rng }) {
+            const parsed = parseMagicHandsOptions(options)
+            const stake = bet * parsed.placements.length
+            if (stake > this.info.maxBet) throw new RangeError(`At most ${this.info.maxBet.toLocaleString('en-US')} coins per round`)
+            const result = playMagicHands(rng, parsed)
+            return {
+                stake,
+                payout: bet * result.win,
+                result,
+                summary: { bet, hands: parsed.placements.length, winners: result.winners.length, win: result.win }
+            }
+        }
+    },
 
     dice: {
         info: info('dice'),

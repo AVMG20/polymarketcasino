@@ -13,6 +13,10 @@ const slot = (slug: string) => defineAsyncComponent(async () => {
 export const GAME_COMPONENTS: Record<string, Component> = {
     'dice': defineAsyncComponent(() => import('~/components/games/DiceGame.vue')),
     'limbo': defineAsyncComponent(() => import('~/components/games/LimboGame.vue')),
+    'wheel': defineAsyncComponent(() => import('~/components/games/WheelGame.vue')),
+    'magichands': defineAsyncComponent(() => import('~/components/games/MagicHandsGame.vue')),
+    'polymasters': defineAsyncComponent(() => import('~/components/games/PolyMastersGame.vue')),
+    'candymadness': defineAsyncComponent(() => import('~/components/games/CandyMadnessGame.vue')),
     'roulette': defineAsyncComponent(() => import('~/components/games/RouletteGame.vue')),
     'blackjack': defineAsyncComponent(() => import('~/components/games/BlackjackGame.vue')),
     'baccarat': defineAsyncComponent(() => import('~/components/games/BaccaratGame.vue')),
@@ -20,7 +24,12 @@ export const GAME_COMPONENTS: Record<string, Component> = {
     'three-card-poker': defineAsyncComponent(() => import('~/components/games/ThreeCardPokerGame.vue')),
     'spinata': slot('spinata'),
     'trashpanda': slot('trashpanda'),
-    'candyrush': slot('candyrush')
+    'candyrush': slot('candyrush'),
+    'aethergates': defineAsyncComponent(() => import('~/components/games/AethergatesGame.vue')),
+    'emberportals': defineAsyncComponent(() => import('~/components/games/EmberPortalsGame.vue')),
+    'xenoslot': defineAsyncComponent(() => import('~/components/games/XenoSlotGame.vue')),
+    'bookofshadows': defineAsyncComponent(() => import('~/components/games/BookOfShadowsGame.vue')),
+    'fireinthehole': defineAsyncComponent(() => import('~/components/games/FireInTheHoleGame.vue'))
 }
 
 if (import.meta.dev) {

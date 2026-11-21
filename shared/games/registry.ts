@@ -73,6 +73,72 @@ export const GAMES: readonly GameInfo[] = [
         maxBet: MAX_BET
     },
     {
+        slug: 'aethergates',
+        name: 'Aethergates',
+        kind: 'slot',
+        tagline: '8 of a kind anywhere, tumbles and a multiplier meter that never resets in free spins',
+        cover: '/images/games/aethergates.jpg',
+        rtp: 0.96,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'emberportals',
+        name: 'Ember Portals',
+        kind: 'slot',
+        tagline: 'Clusters on a 7×7 grid open portal wilds that grow, jump and merge',
+        cover: '/images/games/emberportals.jpg',
+        rtp: 0.96,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'xenoslot',
+        name: 'Xeno Slot',
+        kind: 'slot',
+        tagline: '5 lines and a Hold & Win where UFOs collect every coin on the board',
+        cover: '/images/games/xenoslot.jpg',
+        rtp: 0.962,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'bookofshadows',
+        name: 'Book of Shadows',
+        kind: 'slot',
+        tagline: 'Zigzag connections on a 5×6 grid and sticky wild columns in free spins',
+        cover: '/images/games/bookofshadows.jpg',
+        rtp: 0.96,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'fireinthehole',
+        name: 'Fire in the Hole',
+        kind: 'slot',
+        tagline: 'Cascading mine clusters, bombs that open new rows and a coin-collecting bonus',
+        cover: '/images/games/fireinthehole.jpg',
+        rtp: 0.96,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'candymadness',
+        name: 'Candy Madness',
+        kind: 'slot',
+        tagline: 'Cluster pops on a 7×7 board leave multiplier spots that double and stack',
+        cover: '/images/games/candymadness.jpg',
+        rtp: 0.96,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
         slug: 'roulette',
         name: 'Roulette',
         kind: 'table',
@@ -151,6 +217,40 @@ export const GAMES: readonly GameInfo[] = [
         rtp: 0.98,
         volatility: 'high',
         minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'polymasters',
+        name: 'Poly Masters',
+        kind: 'original',
+        tagline: 'Fly through multipliers and rockets, then land on the island',
+        cover: '/images/games/polymasters.jpg',
+        rtp: 0.96,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'wheel',
+        name: 'Wheel',
+        kind: 'original',
+        tagline: 'Pick a risk and spin for up to 5×',
+        cover: '/images/games/wheel.jpg',
+        rtp: 0.96,
+        volatility: 'medium',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'magichands',
+        name: 'Magic Hands',
+        kind: 'original',
+        tagline: 'Place hands on the grid and chase stacking multipliers',
+        cover: '/images/games/magichands.jpg',
+        rtp: 0.96,
+        volatility: 'high',
+        // Per hand. Tiles pay whole multiples, so a hand starts at 10 like roulette.
+        minBet: 10,
         maxBet: MAX_BET
     }
 ]
