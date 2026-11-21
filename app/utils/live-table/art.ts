@@ -44,11 +44,31 @@ if (import.meta.dev && CHIP_ART.some((art, i) => art.value !== CHIPS[i]?.value))
     console.warn('[live-table] CHIP_ART is out of step with CHIPS')
 }
 
+/** Roulette's table starts at 10: its two small chips. */
+const SMALL_CHIP_ART: readonly ChipArt[] = [
+    { value: 10, label: '10', base: 0x0284c7, edge: 0xe0f2fe, accent: 0x0c4a6e, text: 0xffffff, tier: 0 },
+    { value: 50, label: '50', base: 0xea580c, edge: 0xffedd5, accent: 0x7c2d12, text: 0xffffff, tier: 0 }
+]
+
 export function chipArt(value: number): ChipArt {
-    return CHIP_ART.find(c => c.value === value) ?? CHIP_ART[0]!
+    return CHIP_ART.find(c => c.value === value) ?? SMALL_CHIP_ART.find(c => c.value === value) ?? CHIP_ART[0]!
 }
 
-export const chipsFor = breakIntoChips
+/** An amount broken into chips, largest first: the table ladder, or a game's own. */
+export function chipsFor(amount: number, max = 8, ladder?: readonly number[]): { value: number }[] {
+    if (!ladder) return breakIntoChips(amount, max)
+    const values = [...ladder].sort((a, b) => b - a)
+    const stack: { value: number }[] = []
+    let left = amount
+    for (const value of values) {
+        while (left >= value && stack.length < max) {
+            stack.push({ value })
+            left -= value
+        }
+    }
+    if (!stack.length && amount > 0) stack.push({ value: values[values.length - 1]! })
+    return stack
+}
 
 const SUIT_COLOR: Record<Suit, string> = {
     hearts: '#c02434',

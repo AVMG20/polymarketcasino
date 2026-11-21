@@ -13,10 +13,10 @@ const flights = ref<Flight[]>([])
 let seq = 0
 const DURATION = 720
 
-function fly(from: Point, to: Point, amount: number, options: { delay?: number, size?: number, max?: number } = {}) {
+function fly(from: Point, to: Point, amount: number, options: { delay?: number, size?: number, max?: number, ladder?: readonly number[] } = {}) {
     if (amount <= 0 || (typeof document !== 'undefined' && document.hidden)) return
     const size = options.size ?? 56
-    chipsFor(amount, options.max ?? 6).forEach((c, i) => {
+    chipsFor(amount, options.max ?? 6, options.ladder).forEach((c, i) => {
         flights.value.push({
             id: ++seq,
             value: c.value,

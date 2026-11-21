@@ -11,7 +11,8 @@ withDefaults(defineProps<{
     canDeal?: boolean
     voted?: boolean
     votes?: string
-}>(), { canRepeat: false, canScale: false, canUndo: false, canClear: false, canDeal: false, voted: false, votes: '' })
+    dealLabel?: string
+}>(), { canRepeat: false, canScale: false, canUndo: false, canClear: false, canDeal: false, voted: false, votes: '', dealLabel: 'DEAL NOW' })
 
 defineEmits<{ repeat: [], scale: [factor: 0.5 | 2], undo: [], clear: [], deal: [] }>()
 </script>
@@ -24,7 +25,7 @@ defineEmits<{ repeat: [], scale: [factor: 0.5 | 2], undo: [], clear: [], deal: [
     <button type="button" class="lb-tile lb-tile-slate" :disabled="!canUndo" @click="$emit('undo')">UNDO</button>
     <button type="button" class="lb-tile lb-tile-red" :disabled="!canClear" @click="$emit('clear')">CLEAR</button>
     <button type="button" class="lb-tile lb-tile-green deal" :disabled="!canDeal || voted" @click="$emit('deal')">
-      {{ voted ? 'READY' : 'DEAL NOW' }}<span v-if="votes" class="ml-1 font-mono text-xs font-semibold opacity-80">{{ votes }}</span>
+      {{ voted ? 'READY' : dealLabel }}<span v-if="votes" class="ml-1 font-mono text-xs font-semibold opacity-80">{{ votes }}</span>
     </button>
   </div>
 </template>

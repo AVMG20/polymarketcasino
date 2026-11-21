@@ -4,27 +4,28 @@ import { formatCoins } from '#shared/money'
 import { chip } from '~/utils/live-table/art'
 
 /** The chip rack: pick the chip the next click on a bet spot places. Chips you can't cover are off. */
-const props = defineProps<{ available: number, muted?: boolean }>()
+const props = defineProps<{ available: number, muted?: boolean, ladder?: readonly number[] }>()
 const model = defineModel<number>({ required: true })
+const values = computed(() => props.ladder ?? CHIPS.map(c => c.value))
 
 watch(() => props.available, (available) => {
     // Step down to the biggest chip still affordable.
-    if (model.value > available) model.value = [...CHIPS].reverse().find(c => c.value <= available)?.value ?? CHIPS[0]!.value
+    if (model.value > available) model.value = [...values.value].reverse().find(v => v <= available) ?? values.value[0]!
 }, { immediate: true })
 </script>
 
 <template>
   <div class="lt-rack" :class="{ muted }">
     <button
-      v-for="c in CHIPS"
-      :key="c.value"
+      v-for="value in values"
+      :key="value"
       type="button"
-      :class="{ sel: model === c.value }"
-      :disabled="c.value > available"
-      :aria-pressed="model === c.value"
-      :title="`${formatCoins(c.value, false)} coins`"
-      @click="model = c.value"
-      v-html="chip(c.value)"
+      :class="{ sel: model === value }"
+      :disabled="value > available"
+      :aria-pressed="model === value"
+      :title="`${formatCoins(value, false)} coins`"
+      @click="model = value"
+      v-html="chip(value)"
     />
   </div>
 </template>
