@@ -41,40 +41,7 @@ export interface SlotTheme {
 
 const card = (text: string, bg: string, fg: string): SymbolSkin => ({ label: text, text, bg, fg })
 
-const spinataImage = (name: string, label: string): SymbolSkin => ({ label, image: `/slots/spinata/${name}.png`, bg: 'transparent', fg: '#fff' })
-const SPINATA_SOUND = '/slots/spinata/sound'
-
 export const SLOT_THEMES: Record<string, SlotTheme> = {
-    spinata: {
-        backdrop: 'url(/slots/spinata/bg.jpg) center / cover',
-        frame: 'linear-gradient(180deg, rgb(255 244 214 / .92), rgb(255 226 170 / .92))',
-        accent: '#ff3d7f',
-        font: '\'Bricolage Grotesque\', sans-serif',
-        featureName: 'Festival of Spins',
-        symbols: {
-            ten: spinataImage('ten', '10'),
-            jack: spinataImage('jack', 'J'),
-            queen: spinataImage('queen', 'Q'),
-            king: spinataImage('king', 'K'),
-            ace: spinataImage('ace', 'A'),
-            maracas: spinataImage('maracas', 'Maracas'),
-            cactus: spinataImage('cactus', 'Cactus'),
-            sombrero: spinataImage('sombrero', 'Sombrero'),
-            flower: spinataImage('flower', 'Flower'),
-            wild: spinataImage('wild', 'Piñata wild'),
-            scatter: spinataImage('scatter', 'Scatter')
-        },
-        sounds: {
-            spin: `${SPINATA_SOUND}/sfx_generic_start_spin.mp3`,
-            stop: `${SPINATA_SOUND}/sp_sfx_reel_stop.mp3`,
-            win: `${SPINATA_SOUND}/sp_sfx_low_symbol_win.mp3`,
-            bigWin: `${SPINATA_SOUND}/sp_sfx_big_win_intro.mp3`,
-            scatter: `${SPINATA_SOUND}/sp_sfx_scatter_stop_1.mp3`,
-            feature: `${SPINATA_SOUND}/sp_sfx_free_spins_popup.mp3`,
-            buy: `${SPINATA_SOUND}/sfx_buy_feature_click.mp3`
-        }
-    },
-
     trashpanda: {
         backdrop: 'radial-gradient(circle at 30% 0%, #2f3b52, #121722 70%)',
         frame: 'linear-gradient(180deg, #1c2333, #151a26)',

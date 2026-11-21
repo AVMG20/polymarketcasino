@@ -43,9 +43,9 @@ export const GAMES: readonly GameInfo[] = [
         slug: 'spinata',
         name: 'Spiñata',
         kind: 'slot',
-        tagline: '20 lines and a wild multiplier that keeps climbing in free spins',
+        tagline: '50 lines, piñata prizes and a wild multiplier that climbs to ×20 in free spins',
         cover: '/images/games/spinata.jpg',
-        rtp: 0.96,
+        rtp: 0.966,
         volatility: 'medium',
         minBet: MIN_BET,
         maxBet: MAX_BET

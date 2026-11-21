@@ -1,11 +1,9 @@
 export * from './types'
 export { evaluateGrid, payFor } from './evaluate'
 export { playSlot, slotPayout, triggerCount, MAX_FREE_SPINS } from './engine'
-export { spinata, SPINATA_LINES } from './games/spinata'
 export { trashpanda } from './games/trashpanda'
 
-import { spinata } from './games/spinata'
 import { trashpanda } from './games/trashpanda'
 import type { SlotConfig } from './types'
 
-export const SLOT_CONFIGS: Readonly<Record<string, SlotConfig>> = { spinata, trashpanda }
+export const SLOT_CONFIGS: Readonly<Record<string, SlotConfig>> = { trashpanda }

@@ -147,7 +147,7 @@ describe('playSlot', () => {
     })
 
     it('pays whole coins, rounded down', () => {
-        const outcome = playSlot(SLOT_CONFIGS.spinata!, seededRng(11))
+        const outcome = playSlot(SLOT_CONFIGS.trashpanda!, seededRng(11))
         expect(slotPayout({ ...outcome, win: 1.239 }, 100)).toBe(123)
         expect(slotPayout({ ...outcome, win: 0 }, 100)).toBe(0)
     })

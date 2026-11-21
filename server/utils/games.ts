@@ -12,6 +12,7 @@ import { aetherPayout, aetherStake, parseAetherOptions, playAethergates } from '
 import { BOS_BUY_COST, playBookOfShadows } from '#shared/slots/bookofshadows'
 import { emberPortalsPayout, emberPortalsStake, parseEmberPortalsMode, playEmberPortals } from '#shared/slots/emberportals'
 import { FITH_BUY_COST, playFireInTheHole } from '#shared/slots/fireinthehole'
+import { parseSpinataOptions, playSpinata, spinataStake } from '#shared/slots/spinata'
 import { parseXenoSlotOptions, playXenoSlot, xenoSlotPayout, xenoSlotStake } from '#shared/slots/xenoslot'
 
 /**
@@ -106,7 +107,19 @@ function info(slug: string): GameInfo {
 }
 
 const implementations: Record<string, ServerGame> = {
-    spinata: slotGame(info('spinata'), SLOT_CONFIGS.spinata!),
+    spinata: {
+        info: info('spinata'),
+        play({ bet, options, rng }) {
+            const parsed = parseSpinataOptions(options)
+            const result = playSpinata(rng, bet, parsed)
+            return {
+                stake: spinataStake(bet, parsed),
+                payout: result.payout,
+                result,
+                summary: { bet, feature: parsed.feature ?? null, win: result.win, freeSpins: result.freeSpinsTriggered, capped: result.capped }
+            }
+        }
+    },
     trashpanda: slotGame(info('trashpanda'), SLOT_CONFIGS.trashpanda!),
     bookofshadows: bespokeSlot(info('bookofshadows'), BOS_BUY_COST, (rng, buy) => playBookOfShadows(rng, { buy })),
     fireinthehole: bespokeSlot(info('fireinthehole'), FITH_BUY_COST, (rng, buy) => playFireInTheHole(rng, { buy })),

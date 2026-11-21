@@ -22,7 +22,7 @@ export const GAME_COMPONENTS: Record<string, Component> = {
     'baccarat': defineAsyncComponent(() => import('~/components/games/BaccaratGame.vue')),
     'casino-holdem': defineAsyncComponent(() => import('~/components/games/CasinoHoldemGame.vue')),
     'three-card-poker': defineAsyncComponent(() => import('~/components/games/ThreeCardPokerGame.vue')),
-    'spinata': slot('spinata'),
+    'spinata': defineAsyncComponent(() => import('~/components/games/SpinataGame.vue')),
     'trashpanda': slot('trashpanda'),
     'aethergates': defineAsyncComponent(() => import('~/components/games/AethergatesGame.vue')),
     'emberportals': defineAsyncComponent(() => import('~/components/games/EmberPortalsGame.vue')),
