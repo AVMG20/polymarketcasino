@@ -1096,7 +1096,7 @@ onBeforeUnmount(() => {
 
 .bos-cabinet {
   position: relative;
-  width: min(100%, calc((100dvh - 150px) * 1.5), 1500px);
+  width: min(100%, calc((100dvh - 190px) * 1.5), 1500px);
   aspect-ratio: 1536 / 1024;
   filter: drop-shadow(0 30px 40px rgba(0, 0, 0, 0.75));
 }
