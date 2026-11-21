@@ -2,20 +2,24 @@
 // (SlotControlBar); only these values differ.
 import type { SlotTheme } from '~/utils/slots/slot-controls'
 
-/** Xeno Slot: semantic cockpit controls around the illustrated space stage. */
+/**
+ * Xeno Slot: semantic cockpit controls around the illustrated space stage. The
+ * game root defines the old site's --ui-* tokens; the fallbacks (the old dark
+ * theme) cover the dialogs teleported to <body>.
+ */
 export const XENO_BAR_THEME: SlotTheme = {
-    accent: 'var(--ui-primary)',
-    accentDeep: 'color-mix(in srgb, var(--ui-primary) 65%, var(--ui-bg))',
-    onAccent: 'var(--ui-bg)',
-    surface: 'var(--ui-bg-muted)',
-    control: 'var(--ui-bg-elevated)',
-    line: 'var(--ui-border-accented)',
-    text: 'var(--ui-text-highlighted)',
-    muted: 'var(--ui-text-muted)',
-    win: 'var(--ui-primary)',
-    buy: 'var(--ui-secondary)',
-    onBuy: 'var(--ui-bg)',
-    panel: 'var(--ui-bg)',
+    accent: 'var(--ui-primary, #00dc82)',
+    accentDeep: 'color-mix(in srgb, var(--ui-primary, #00dc82) 65%, var(--ui-bg, var(--background)))',
+    onAccent: 'var(--ui-bg, var(--background))',
+    surface: 'var(--ui-bg-muted, var(--card))',
+    control: 'var(--ui-bg-elevated, var(--muted))',
+    line: 'var(--ui-border-accented, var(--input))',
+    text: 'var(--ui-text-highlighted, var(--foreground))',
+    muted: 'var(--ui-text-muted, var(--muted-foreground))',
+    win: 'var(--ui-primary, #00dc82)',
+    buy: 'var(--ui-secondary, #51a2ff)',
+    onBuy: 'var(--ui-bg, var(--background))',
+    panel: 'var(--ui-bg, var(--background))',
     font: '\'Orbitron\', system-ui, sans-serif',
     numberFont: '\'Chakra Petch\', system-ui, sans-serif'
 }
