@@ -30,7 +30,7 @@ the Bun and Nuxt versions; don't move the dev server to Node (bun:sqlite would n
 ## Layout
 
 - `shared/`: rules and math used by both sides. `rng.ts` (CSPRNG + seeded), `money.ts`, `economy.ts`,
-  `stars.ts`, `games/` (registry, dice, limbo, roulette), `slots/` (the slot engine and slot configs),
+  `stars.ts`, `games/` (registry, dice, limbo, roulette), `slots/` (one rules module per slot),
   `tables/` (cards and shoe, chips and limits, the socket protocol, one rules file per live table).
 - `server/utils/`: `ledger.ts` (the only way coins move), `stars.ts`, `wallet.ts` (convert, allowance),
   `rounds.ts` (play and settle a round), `games.ts` (server half of every game), `hub.ts` (hub client),
@@ -45,15 +45,15 @@ the Bun and Nuxt versions; don't move the dev server to Node (bun:sqlite would n
   `useSlotSound`, `useLiveTable`, `useTableSound`), `components/casino/` (shell and lobby),
   `components/game/` (shared game UI), `components/table/` (felt, seats, cards, chips for live tables),
   `components/games/` (one component per game; ported slots sit on the old site's slot shell in
-  `components/slots/` + `useSlotGame`, see `docs/slot-porting.md`; `SlotGame.vue` plays the generic engine slots), `utils/slot-themes.ts`,
-  `utils/game-components.ts`.
+  `components/slots/` + `useSlotGame`, see `docs/slot-porting.md`), `utils/slots/` (slot art, synths,
+  control-bar themes), `utils/game-components.ts`.
 - `scripts/`: `migrate.ts` and `<game>-rtp.ts` balance simulations (`bun scripts/<name>.ts`). Feature buys
   are high variance: judge a buy price on 100k+ buys (the slot scripts take `[buys]` as a 4th argument).
 
 ## Adding a game
 
-1. Rules in `shared/` (pure, take an `Rng`). A slot is a `SlotConfig` in `shared/slots/games/` plus a
-   theme in `app/utils/slot-themes.ts`; no new engine code unless the mechanic is new.
+1. Rules in `shared/` (pure, take an `Rng`). A slot is its own module in `shared/slots/<game>/`, ported
+   from the old site (`docs/slot-porting.md`).
 2. Server half in `server/utils/games.ts`: validate options (throw `RangeError` for bad input), return
    `{ stake, payout, result, summary }`. `rounds.ts` settles it.
 3. Client in `app/components/games/`, registered in `app/utils/game-components.ts`.

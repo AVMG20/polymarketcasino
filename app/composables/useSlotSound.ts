@@ -1,4 +1,13 @@
-import type { SlotSounds } from '~/utils/slot-themes'
+/** A game's short effects, by name. */
+export interface SlotSounds {
+    spin?: string
+    stop?: string
+    win?: string
+    bigWin?: string
+    scatter?: string
+    feature?: string
+    buy?: string
+}
 
 const MUTE_KEY = 'casino:muted'
 

@@ -69,7 +69,7 @@ Coins and gems are whole numbers. Show them with `formatCoins(value, compact = t
 |---|---|---|
 | `TopBar` | Slim (44 px) inside the hub iframe: back link, coins, convert (the allowance lives in the lobby hero). Standalone adds the logo, mini star track, gems, name and sign-out. | Keep the embedded bar slim; the hub's own bar already shows gems and stars. |
 | `Lobby` | Balance hero (allowance, convert, "best ever"), star level with progress to the next threshold and the drop line, then tiles grouped Slots / Tables / Originals from `GAMES`. | The main restyle target. |
-| `GameTile` | Cover, name, tagline, RTP; springy hover. | Cover art: `public/images/games/<slug>.jpg`. The slot covers are screenshots of the old games: `trashpanda.jpg` advertises 98.1% RTP and a 10,000× max, so it needs new art. |
+| `GameTile` | Cover, name, tagline, RTP; springy hover. | Cover art: `public/images/games/<slug>.jpg`. The slot covers are screenshots of the old games: `trashpanda.jpg` advertises 98.1% RTP (now 96.3%), so it needs new art. |
 | `ConvertDialog` | Presets 1, 5, 10, Max; preview of coins; "Gems unavailable right now". | Gems flying into the coin chip would fit here. |
 | `AllowanceButton` | Claim button or "Next allowance in …". | Coins flying into the chip on claim. |
 | `StarTrack` | 10 rounded squares, the first `level` filled amber, tooltips with names and thresholds. | Same component on profile-like spots. |
@@ -82,7 +82,7 @@ scoreboard), `TableSeat`, `TablePlayingCard` (deals in, turns over in place), `T
 `TableChipRack`, `TableBetSpot`, `TableBetBar`, `TableTimer`, `TableFeed`, `TableAvatar`.
 
 Shared game UI (`app/components/game/`): `GameFrame` (title, RTP, rules dialog), `GameBetInput`,
-`GameRoundHistory`, `GameSlotSymbol`, `GameRouletteWheel`. Restyling these touches every game, so do it
+`GameRoundHistory`, `GameRouletteWheel`. Restyling these touches every game, so do it
 deliberately.
 
 ## Constraints

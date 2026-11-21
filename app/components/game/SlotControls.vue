@@ -5,8 +5,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { formatCoins } from '#shared/money'
 
 /**
- * The casino's control strip for the bespoke slots: the same bet field,
- * turbo, autoplay and spin button as the shell (SlotGame.vue), plus a buy
+ * The casino's control strip for the bespoke slots: a bet field, turbo,
+ * autoplay and spin button, plus a buy
  * dialog with one or more options. Games keep their own round logic and react
  * to the events. Space spins, stops or skips unless `spaceBlocked`.
  */
