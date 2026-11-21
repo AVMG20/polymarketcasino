@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { AG_ORB_TIERS, agOrbTier } from '~/utils/slots/aethergates-art'
-import { agCoins } from '~/utils/slots/aethergates-ui'
 
 // An orbital meter that takes the colour of the collected multiplier tier.
 // Keep the target ref stable: particles fly to this element when an orb lands.
@@ -45,7 +44,7 @@ watch(() => props.hit, () => {
     >
       <div class="ag-meter-ring" />
       <div class="ag-meter-orb">
-        <span class="ag-meter-value">×{{ agCoins(shown, shown >= 10000) }}</span>
+        <span class="ag-meter-value">×{{ formatNumber(shown, shown >= 10000, 0) }}</span>
       </div>
     </div>
     <p class="ag-meter-hint">

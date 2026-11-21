@@ -1,6 +1,7 @@
-// Aethergates sound playback. Every effect is synthesized on the fly
-// (app/utils/slots/aethergates-synth.ts); nothing is fetched. Per-event
-// levels, cooldowns and voice caps; on/off follows the casino's mute switch.
+// Aether Gates sound playback. Every effect is synthesized on the fly
+// (app/utils/slots/aethergates-synth.ts); nothing is fetched. Same shape as
+// pirate-sound.ts: per-event levels, cooldowns and voice caps, persisted
+// enable/volume.
 //
 // Signal chain: voice (level, pan) -> master gain (player volume) ->
 // compressor -> speakers, so a tumble chain with a dozen orbs squashes
@@ -24,10 +25,12 @@ import {
     type AetherLoopHandle
 } from '~/utils/slots/aethergates-synth'
 
+const STORAGE_ENABLED = 'aethergates-sound-enabled'
+const STORAGE_VOLUME = 'aethergates-sound-volume'
 const PAD_LEVEL = 0.14
 
 const soundEnabled = ref(true)
-const soundVolume = 70
+const soundVolume = ref(70)
 
 interface MasterBus {
     input: GainNode
@@ -45,6 +48,7 @@ const voices: ActiveVoice[] = []
 const lastPlayedAt = new Map<AetherSoundEvent, number>()
 let pad: AetherLoopHandle | null = null
 let padWanted = false
+let initialized = false
 
 function ensureContext(): AudioContext | null {
     if (!import.meta.client) return null
@@ -57,7 +61,7 @@ function ensureContext(): AudioContext | null {
 }
 
 function masterLevel(): number {
-    return Math.max(0, Math.min(1, soundVolume / 100))
+    return Math.max(0, Math.min(1, soundVolume.value / 100))
 }
 
 function ensureBus(context: AudioContext): MasterBus {
@@ -78,7 +82,7 @@ function ensureBus(context: AudioContext): MasterBus {
 
 /** A running context, resumed if a gesture allows it. Null while it can't play yet. */
 function runningContext(): AudioContext | null {
-    if (!import.meta.client || !soundEnabled.value) return null
+    if (!import.meta.client || !soundEnabled.value || soundVolume.value <= 0) return null
     const context = ensureContext()
     if (!context) return null
     if (context.state !== 'running') {
@@ -164,22 +168,54 @@ function stopAll() {
     for (const entry of voices.splice(0)) entry.voice.release(0.03)
 }
 
-function setEnabled(enabled: boolean) {
-    if (enabled === soundEnabled.value) return
-    soundEnabled.value = enabled
-    if (!enabled) {
-        const wanted = padWanted
-        stopAll()
-        padWanted = wanted
-    } else {
-        unlock()
-        if (padWanted) setTimeout(startPad, 120)
+function readStored(key: string): string | null {
+    try {
+        return localStorage.getItem(key)
+    } catch {
+        return null
     }
 }
 
+function store(key: string, value: string) {
+    try {
+        localStorage.setItem(key, value)
+    } catch {
+        // Private mode or blocked storage: the setting still works for this visit.
+    }
+}
+
+function initialize() {
+    if (!import.meta.client || initialized) return
+    initialized = true
+    const storedEnabled = readStored(STORAGE_ENABLED)
+    const storedVolume = readStored(STORAGE_VOLUME)
+    if (storedEnabled !== null) soundEnabled.value = storedEnabled === 'true'
+    // Number(null) is 0, so check for null before parsing or a first visit mutes the game.
+    if (storedVolume !== null && Number.isFinite(Number(storedVolume))) {
+        soundVolume.value = Math.max(0, Math.min(100, Number(storedVolume)))
+    }
+    // A detached scope: watchers made in the first caller's setup would stop
+    // when that game unmounts, and the next visit would no longer save.
+    effectScope(true).run(() => {
+        watch(soundEnabled, (enabled) => {
+            store(STORAGE_ENABLED, String(enabled))
+            if (!enabled) {
+                const wanted = padWanted
+                stopAll()
+                padWanted = wanted
+            } else {
+                unlock()
+                if (padWanted) setTimeout(startPad, 120)
+            }
+        })
+        watch(soundVolume, (volume) => {
+            store(STORAGE_VOLUME, String(volume))
+            if (ctx && bus) bus.input.gain.setTargetAtTime(masterLevel(), ctx.currentTime, 0.02)
+        })
+    })
+}
+
 export function useAethergatesSound() {
-    // The shell's mute switch (remembered per browser) turns the synth on and off.
-    const { muted, toggle } = useSlotSound({})
-    watch(muted, value => setEnabled(!value), { immediate: true })
-    return { muted, toggle, play, unlock, startPad, stopPad, stopAll }
+    initialize()
+    return { soundEnabled, soundVolume, play, unlock, startPad, stopPad, stopAll }
 }

@@ -47,7 +47,7 @@ const AG_MAX_TUMBLES = 64
  *
  * Tuned with `bun scripts/aethergates-rtp.ts`.
  */
-export const AG_BUY_FREESPINS_COST = 42.5
+export const AG_BUY_FREESPINS_COST = 42.5 // old site 43: buys read ~97.5% there
 export const AG_BUY_SUPERBONUS_COST = 58.5
 export const AG_BONUS_CHANCE_COST = 3.54
 
@@ -177,7 +177,7 @@ const PAYTABLE: Record<AetherPaySymbol, number[]> = {
 }
 
 /** Scales every pay alike in the base game and the bonus. */
-const PAY_SCALE = 0.394
+const PAY_SCALE = 0.394 // old site 0.40 (~97.5% RTP), retuned to ~96%
 
 // --- helpers -----------------------------------------------------------------
 
@@ -185,11 +185,15 @@ function weightedPick<T>(rng: Rng, items: readonly T[], weights: readonly number
     let total = 0
     for (const w of weights) total += w
     let r = rng.next() * total
+    let last = 0
     for (let i = 0; i < items.length; i++) {
+        if (weights[i]! <= 0) continue
+        last = i
         r -= weights[i]!
         if (r < 0) return items[i]!
     }
-    return items[items.length - 1]!
+    // Rounding can leave r a hair above 0: the last item that can land, never a zero-weight one.
+    return items[last]!
 }
 
 interface ValuePool { values: readonly number[], weights: readonly number[] }

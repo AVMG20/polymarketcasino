@@ -22,14 +22,15 @@ import {
     AG_SCATTER_TRIGGER_SUPER,
     aetherPayMult
 } from '#shared/slots/aethergates'
-import { X } from 'lucide-vue-next'
+import { XIcon } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import { AG_ORB_TIERS, AG_SYMBOL_INFO, agSymbolDataUrl } from '~/utils/slots/aethergates-art'
-import { agCoins, agTimes } from '~/utils/slots/aethergates-ui'
 
 // Paytable and rules, generated from the live game constants.
 
 const props = defineProps<{ bet: number }>()
+// The registry's measured paid-spin RTP (the old site said "about 96–98%").
+const RTP = Math.round((findGame('aethergates')?.rtp ?? 0.96) * 1000) / 10
 const emit = defineEmits<{ close: [] }>()
 
 const tab = ref<'pays' | 'features' | 'info'>('pays')
@@ -53,7 +54,7 @@ const rows = [...AETHER_PAY_SYMBOLS].reverse().map((sym: AetherPaySymbol) => ({
 }))
 
 function pay(mult: number): string {
-    return showCoins.value ? agCoins(mult * props.bet) : `${agTimes(mult)}×`
+    return showCoins.value ? formatNumber(mult * props.bet, true, 0) : `${formatNumber(mult, false, 0)}×`
 }
 
 const orbRanges = AG_ORB_TIERS.map((tier, i) => {
@@ -101,7 +102,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           aria-label="Close"
           @click="emit('close')"
         >
-          <X class="size-4" />
+          <XIcon class="size-4" />
         </button>
       </header>
       <nav class="ag-pt-tabs">
@@ -128,7 +129,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               :class="{ 'is-on': showCoins }"
               @click="showCoins = true"
             >
-              Coins at bet {{ agCoins(bet) }}
+              Coins at bet {{ formatNumber(bet, true, 0) }}
             </button>
             <button
               :class="{ 'is-on': !showCoins }"
@@ -247,10 +248,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           <dl class="ag-pt-facts">
             <div><dt>Grid</dt><dd>{{ AG_COLS }} reels × {{ AG_ROWS }} rows, pay anywhere</dd></div>
             <div><dt>Minimum win</dt><dd>{{ AG_MIN_MATCH }} matching symbols</dd></div>
-            <div><dt>Return to player</dt><dd>{{ ((findGame('aethergates')?.rtp ?? 0.96) * 100).toFixed(1) }}%</dd></div>
-            <div><dt>Free spins frequency</dt><dd>about 1 in {{ bonusOdds }} paid spins</dd></div>
-            <div><dt>Maximum win</dt><dd>{{ agCoins(AG_MAX_WIN_MULT, false) }}× bet per round</dd></div>
+            <div><dt>Return to player</dt><dd>{{ RTP }}%</dd></div>
+            <div><dt>Free spins frequency</dt><dd>about 1 in {{ formatNumber(bonusOdds) }} paid spins</dd></div>
+            <div><dt>Maximum win</dt><dd>{{ formatNumber(AG_MAX_WIN_MULT, false, 0) }}× bet per round</dd></div>
           </dl>
+          <div class="ag-pt-card">
+            <h3>Controls</h3>
+            <ul>
+              <li><b>Space</b> spins. Tap the grid during a big-win count to skip it.</li>
+              <li><b>Turbo</b> speeds up drops and tumbles. It doesn't change results.</li>
+              <li><b>Autoplay</b> runs a set number of spins and can stop on free spins or a big win.</li>
+              <li>Every outcome is decided on the server before the reels drop; the animation only shows it.</li>
+            </ul>
+          </div>
         </section>
       </div>
     </div>

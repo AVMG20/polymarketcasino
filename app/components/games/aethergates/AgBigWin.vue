@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AG_WIN_TIERS, agCoins, agTimes, agWinTier } from '~/utils/slots/aethergates-ui'
+import { AG_WIN_TIERS, agWinTier } from '~/utils/slots/aethergates-ui'
 
 // Big-win celebration: the amount counts up and the title climbs through the
 // tiers (Big -> Mega -> Epic -> Mythic) as it passes each threshold. Tap to
@@ -123,10 +123,10 @@ onBeforeUnmount(() => {
         class="ag-bigwin-amount"
         :class="{ 'is-landed': !counting }"
       >
-        {{ agCoins(shown, false) }}
+        {{ formatNumber(shown) }}
       </p>
       <p class="ag-bigwin-mult">
-        {{ agTimes(bet > 0 ? Math.floor(amount / bet * 10) / 10 : 0) }}× bet
+        {{ formatNumber(bet > 0 ? amount / bet : 0, false, 0) }}× bet
       </p>
       <p class="ag-bigwin-hint">
         {{ counting ? 'Tap to skip' : 'Tap to continue' }}

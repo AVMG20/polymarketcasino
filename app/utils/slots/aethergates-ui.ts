@@ -1,6 +1,5 @@
-// Presentation constants for Aethergates: win celebration tiers and number
-// formats. Game math lives in shared/slots/aethergates.
-import { formatCoins } from '#shared/money'
+// Presentation constants for Aether Gates: win celebration tiers and the bet
+// ladder. Game math lives in shared/slots/aethergates.
 
 export interface AgWinTier {
     /** Minimum win, in × total bet. */
@@ -26,12 +25,21 @@ export function agWinTier(mult: number): number {
     return tier
 }
 
-/** A coin amount as the server pays it: whole coins, rounded down. */
-export function agCoins(value: number, compact = true): string {
-    return formatCoins(Math.floor(value + 1e-9), compact)
+/** Bet steps for the − / + buttons: 1, 2, 5, 10, 20, 50 … up to the max bet. */
+export function agBetLadder(max: number): number[] {
+    const steps: number[] = []
+    for (let exp = 0; ; exp++) {
+        for (const m of [1, 2, 5]) {
+            const v = m * 10 ** exp
+            if (v > max) return steps
+            steps.push(v)
+        }
+    }
 }
 
-/** A multiple (0.08, 12.5, 500) for multipliers and pays in × bet. */
-export function agTimes(value: number): string {
-    return value.toLocaleString('en-US', { maximumFractionDigits: 2 })
+export interface AgAutoSettings {
+    count: number
+    stopOnFeature: boolean
+    /** Stop after a single round wins at least this many × bet; 0 = never. */
+    stopOnWin: number
 }

@@ -52,7 +52,7 @@ const stars = Array.from({ length: 48 }, (_, i) => ({
   inset: 0;
   background:
     radial-gradient(ellipse at 48% 15%, color-mix(in srgb, var(--ag-accent) 13%, transparent), transparent 60%),
-    radial-gradient(ellipse at 80% 85%, color-mix(in srgb, #8b5cf6 10%, transparent), transparent 55%);
+    radial-gradient(ellipse at 80% 85%, color-mix(in srgb, var(--ui-secondary) 10%, transparent), transparent 55%);
   transition: opacity 1s ease;
 }
 .ag-orrery {
@@ -81,7 +81,7 @@ const stars = Array.from({ length: 48 }, (_, i) => ({
   opacity: 0.5;
 }
 .is-bonus .ag-orrery {
-  color: #8b5cf6;
+  color: var(--ui-secondary);
   opacity: 0.4;
 }
 </style>
