@@ -1,19 +1,20 @@
 <script setup lang="ts">
-import { X } from 'lucide-vue-next'
 // Grimoire-styled dialog shell shared by the Book of Shadows info and
 // autoplay panels. Esc or the backdrop closes it.
+import { XIcon } from 'lucide-vue-next'
+
 const open = defineModel<boolean>('open', { required: true })
 
 defineProps<{
-  title: string
-  width?: string
+    title: string
+    width?: string
 }>()
 
 function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape' && open.value) {
-    e.stopPropagation()
-    open.value = false
-  }
+    if (e.key === 'Escape' && open.value) {
+        e.stopPropagation()
+        open.value = false
+    }
 }
 
 onMounted(() => window.addEventListener('keydown', onKey))
@@ -43,7 +44,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               aria-label="Close"
               @click="open = false"
             >
-              <X class="size-5" />
+              <XIcon class="size-5" />
             </button>
           </header>
           <slot name="tabs" />

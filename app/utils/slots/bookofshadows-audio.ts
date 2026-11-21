@@ -4,10 +4,9 @@
 // Chain: music gain ─┐
 //        sample/synth ├─> sfx gain ─> master (player volume) ─> compressor ─> out
 // The music bus ducks while a big win or the feature intro is on screen.
-// Mute is the casino's shared switch (passed in); volume and music persist in
-// localStorage (bos_volume, bos_music).
+// Settings persist in localStorage (bos_volume, bos_muted, bos_music).
 
-import { ref, watch, type Ref } from 'vue'
+import { ref, watch } from 'vue'
 import {
     BOS_SYNTH_COOLDOWNS,
     BOS_SYNTH_LEVELS,
@@ -15,7 +14,7 @@ import {
     BosSynthVoice,
     bosSynthWarmUp,
     type BosSynthEvent
-} from './synth'
+} from '~/utils/slots/bookofshadows-synth'
 
 const SAMPLES = {
     music: '/slots/bookofshadows/background-music.mp3',
@@ -53,6 +52,7 @@ const MAX_VOICES = 24
 
 export class BosAudio {
     readonly volume = ref(70)
+    readonly muted = ref(false)
     readonly music = ref(true)
 
     private ctx: AudioContext | null = null
@@ -69,11 +69,12 @@ export class BosAudio {
     private stops: (() => void)[] = []
     private disposed = false
 
-    constructor(readonly muted: Ref<boolean>) {
+    constructor() {
         if (!import.meta.client) return
         try {
             const volume = localStorage.getItem('bos_volume')
             if (volume !== null && Number.isFinite(Number(volume))) this.volume.value = Math.max(0, Math.min(100, Number(volume)))
+            this.muted.value = localStorage.getItem('bos_muted') === '1'
             this.music.value = localStorage.getItem('bos_music') !== '0'
         } catch { /* storage blocked: defaults */ }
 
@@ -82,6 +83,7 @@ export class BosAudio {
             this.applyMaster()
         }))
         this.stops.push(watch(this.muted, (value) => {
+            this.store('bos_muted', value ? '1' : '0')
             this.applyMaster()
             if (!value) this.unlock()
         }))

@@ -11,9 +11,9 @@
 import type { Application, Container, Graphics, Sprite, Text, Texture } from 'pixi.js'
 import type { ReelSet } from 'pixi-reels'
 import { BOS_COLS, BOS_ROWS, SYMBOL_WEIGHTS, type Cell, type ConnectionWin, type SlotSymbol } from '#shared/slots/bookofshadows'
-import { BOS_BONUS_SPRITE_SRC, BOS_SPRITE_SRC, bosSpriteCrop } from './sprite'
-import { formatCoins } from '#shared/money'
-import { initSlotPixiApp, safeDestroy } from '../slot-pixi'
+import { BOS_BONUS_SPRITE_SRC, BOS_SPRITE_SRC, bosSpriteCrop } from '~/utils/bookofshadows-sprite'
+import formatNumber from '~/utils/format-number'
+import { initSlotPixiApp, safeDestroy } from '~/utils/slot-pixi'
 
 type Pixi = typeof import('pixi.js')
 type Gsap = typeof import('gsap').gsap
@@ -1001,7 +1001,7 @@ export class BosStage {
                             return { x: acc.x + q.x / last.length, y: acc.y + q.y / last.length }
                         }, { x: 0, y: 0 })
                         const amount = opts.amounts[index] ?? win.amount
-                        this.floatPopup(this.popup(formatCoins(amount), p.x, p.y, 34, blood ? 0xffe1d8 : 0xffeab0, blood ? 0xff2a1a : 0xff9a1a), opts.turbo ? 0.6 : 1.1)
+                        this.floatPopup(this.popup(formatNumber(amount), p.x, p.y, 34, blood ? 0xffe1d8 : 0xffeab0, blood ? 0xff2a1a : 0xff9a1a), opts.turbo ? 0.6 : 1.1)
                     }
                     resolve()
                 }
@@ -1013,7 +1013,7 @@ export class BosStage {
 
         if (!labelEach) {
             const total = opts.amounts.reduce((a, b) => a + b, 0)
-            this.floatPopup(this.popup(formatCoins(total), BOS_STAGE_W / 2, BOS_STAGE_H / 2, 54, 0xffeab0, 0xff9a1a), opts.turbo ? 0.7 : 1.2)
+            this.floatPopup(this.popup(formatNumber(total), BOS_STAGE_W / 2, BOS_STAGE_H / 2, 54, 0xffeab0, 0xff9a1a), opts.turbo ? 0.7 : 1.2)
         }
         await wait(opts.hold ?? (opts.turbo ? 350 : 750))
     }

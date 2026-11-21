@@ -2,22 +2,22 @@
 // Free spins intro: announces the spins, then draws the bonus symbol on a
 // spinning strip. The symbol was already decided (and paid) by the server;
 // the strip only decelerates onto it.
-import { formatCoins } from '#shared/money'
-import { BONUS_TIERS, PAYTABLE, type BonusTier } from '#shared/slots/bookofshadows'
-import { bosIconStyle } from '~/utils/bookofshadows/sprite'
+import type { BonusTier } from '#shared/slots/bookofshadows'
+import { BONUS_TIERS, PAYTABLE } from '#shared/slots/bookofshadows'
+import { bosIconStyle } from '~/utils/bookofshadows-sprite'
 
 const props = defineProps<{
-  tier: BonusTier
-  spins: number
-  bet: number
-  auto?: boolean
-  fast?: boolean
+    tier: BonusTier
+    spins: number
+    bet: number
+    auto?: boolean
+    fast?: boolean
 }>()
 
 const emit = defineEmits<{
-  tick: []
-  reveal: []
-  done: []
+    tick: []
+    reveal: []
+    done: []
 }>()
 
 const TILE = 104
@@ -42,58 +42,58 @@ const stripStyle = computed(() => ({ transform: `translate3d(${viewportW.value /
 const wildPays = computed(() => PAYTABLE.bonuswild.map(p => p * props.tier.multiplier * props.bet))
 
 function roll() {
-  if (phase.value !== 'ready') return
-  phase.value = 'rolling'
-  const start = performance.now()
-  const duration = props.fast ? 2000 : 3400
-  const end = TARGET_INDEX * STEP
-  let lastIndex = 0
-  const frame = (now: number) => {
-    const k = Math.min(1, (now - start) / duration)
-    const eased = 1 - Math.pow(1 - k, 4)
-    offset.value = end * eased
-    const index = Math.round(offset.value / STEP)
-    if (index !== lastIndex) {
-      lastIndex = index
-      emit('tick')
+    if (phase.value !== 'ready') return
+    phase.value = 'rolling'
+    const start = performance.now()
+    const duration = props.fast ? 2000 : 3400
+    const end = TARGET_INDEX * STEP
+    let lastIndex = 0
+    const frame = (now: number) => {
+        const k = Math.min(1, (now - start) / duration)
+        const eased = 1 - Math.pow(1 - k, 4)
+        offset.value = end * eased
+        const index = Math.round(offset.value / STEP)
+        if (index !== lastIndex) {
+            lastIndex = index
+            emit('tick')
+        }
+        if (k < 1) {
+            raf = requestAnimationFrame(frame)
+        } else {
+            phase.value = 'revealed'
+            emit('reveal')
+            autoTimer = setTimeout(() => emit('done'), props.fast ? 1400 : 2600)
+        }
     }
-    if (k < 1) {
-      raf = requestAnimationFrame(frame)
-    } else {
-      phase.value = 'revealed'
-      emit('reveal')
-      autoTimer = setTimeout(() => emit('done'), props.fast ? 1400 : 2600)
-    }
-  }
-  raf = requestAnimationFrame(frame)
+    raf = requestAnimationFrame(frame)
 }
 
 function press() {
-  if (phase.value === 'ready') roll()
-  else if (phase.value === 'revealed') {
-    if (autoTimer) clearTimeout(autoTimer)
-    autoTimer = null
-    emit('done')
-  }
+    if (phase.value === 'ready') roll()
+    else if (phase.value === 'revealed') {
+        if (autoTimer) clearTimeout(autoTimer)
+        autoTimer = null
+        emit('done')
+    }
 }
 
 defineExpose({ press })
 
 onMounted(() => {
-  if (viewport.value) {
-    viewportW.value = viewport.value.clientWidth
-    resizeObserver = new ResizeObserver(() => {
-      if (viewport.value) viewportW.value = viewport.value.clientWidth
-    })
-    resizeObserver.observe(viewport.value)
-  }
-  if (props.auto) autoTimer = setTimeout(roll, 1200)
+    if (viewport.value) {
+        viewportW.value = viewport.value.clientWidth
+        resizeObserver = new ResizeObserver(() => {
+            if (viewport.value) viewportW.value = viewport.value.clientWidth
+        })
+        resizeObserver.observe(viewport.value)
+    }
+    if (props.auto) autoTimer = setTimeout(roll, 1200)
 })
 
 onBeforeUnmount(() => {
-  cancelAnimationFrame(raf)
-  if (autoTimer) clearTimeout(autoTimer)
-  resizeObserver?.disconnect()
+    cancelAnimationFrame(raf)
+    if (autoTimer) clearTimeout(autoTimer)
+    resizeObserver?.disconnect()
 })
 </script>
 
@@ -138,7 +138,7 @@ onBeforeUnmount(() => {
           {{ tier.label }} <strong>×{{ tier.multiplier }}</strong>
         </p>
         <p class="bos-intro-line">
-          Wild runs pay {{ formatCoins(wildPays[0]!) }} · {{ formatCoins(wildPays[1]!) }} · {{ formatCoins(wildPays[2]!) }}
+          Wild runs pay {{ formatNumber(wildPays[0]!) }} · {{ formatNumber(wildPays[1]!) }} · {{ formatNumber(wildPays[2]!) }}
           <span class="bos-intro-dim">(3 · 4 · 5 reels)</span>
         </p>
       </template>
@@ -146,7 +146,7 @@ onBeforeUnmount(() => {
         v-else
         class="bos-intro-line"
       >
-        Its multiplier hits every wild run.
+        Draw a symbol. Its multiplier applies to every wild run in the feature.
       </p>
     </div>
 

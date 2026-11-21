@@ -1,75 +1,94 @@
 <script setup lang="ts">
-import '@fontsource/cinzel/latin-400.css'
 import '@fontsource/cinzel/latin-700.css'
 import '@fontsource/cinzel/latin-900.css'
 import '@fontsource/cinzel-decorative/latin-700.css'
 import '@fontsource/cinzel-decorative/latin-900.css'
-import { Hand, LoaderCircle, Minus, Plus, RefreshCw, Repeat, ScrollText, Square, Volume2, VolumeX, Zap } from 'lucide-vue-next'
+import { HandIcon, LoaderCircleIcon, MinusIcon, PlusIcon, RefreshCwIcon, RepeatIcon, ScrollTextIcon, SquareIcon, Volume2Icon, VolumeXIcon, ZapIcon } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
-import { Button } from '@/components/ui/button'
 import { findGame } from '#shared/games/registry'
-import { formatCoins, parseAmount } from '#shared/money'
+import { cryptoRng } from '#shared/rng'
+import type { BonusResult as BonusOutcome, BonusSpin, BonusTier, BookOfShadowsOutcome, Cell, ConnectionWin, Grid, SlotSymbol } from '#shared/slots/bookofshadows'
 import {
     BONUS_RETRIGGER_SPINS,
     BONUS_SPINS,
     BONUS_TIERS,
     BONUS_TRIGGER_COUNT,
-    BOS_BUY_COST,
+    BOS_BUY_COST as BOS_BUY_BONUS_COST,
     BOS_COLS,
-    BOS_MAX_WIN,
-    BOS_ROWS,
+    BOS_MAX_WIN as BOS_MAX_WIN_MULT,
     PAYTABLE,
-    SYMBOL_WEIGHTS,
-    type BonusResult,
-    type BonusTier,
-    type BookOfShadowsOutcome,
-    type Cell,
-    type Grid,
-    type SlotSymbol
+    playBookOfShadows
 } from '#shared/slots/bookofshadows'
-import { BosAudio } from '~/utils/bookofshadows/audio'
-import { bosIconStyle } from '~/utils/bookofshadows/sprite'
-import { BosStage } from '~/utils/bookofshadows/stage'
+import { bosIconStyle } from '~/utils/bookofshadows-sprite'
+import { BosAudio } from '~/utils/slots/bookofshadows-audio'
+import { BosStage } from '~/utils/slots/bookofshadows-stage'
 import BosAutoplay from './bookofshadows/BosAutoplay.vue'
 import BosBigWin from './bookofshadows/BosBigWin.vue'
 import BosFeatureIntro from './bookofshadows/BosFeatureIntro.vue'
 import BosInfo from './bookofshadows/BosInfo.vue'
 
-/**
- * Book of Shadows. The server resolves the whole round (base grid, free
- * spins, the drawn symbol); this replays it on the pixi stage, then settles
- * the balance once the reveal is done.
- */
 const info = findGame('bookofshadows')!
-const round = useGameRound<BookOfShadowsOutcome>('bookofshadows')
-const { coins: balance } = useCasinoSession()
-const sound = useSlotSound({})
+useHead({ title: info.name })
+onMounted(() => useHubBridge().postTitle(info.name))
+
+const { bet, isSpinning, errorMsg, balance, setBalance, history, pushHistory, spin: requestSpin } = useSlotGame<BookOfShadowsOutcome, { payout: number, bet: number, bonus: boolean }>('bookofshadows')
+
+// The casino's rules module counts in multiples of the bet; the old client
+// read coins. toResult() puts a round back in the old shape so the replay
+// below reads as it did. `payout` is what the server paid (whole coins).
+interface BonusSpinResult extends BonusSpin {
+    ordinaryPayout: number
+    wildPayout: number
+}
+type BonusResult = Omit<BonusOutcome, 'spins'> & { spins: BonusSpinResult[] }
+interface BookOfShadowsResult {
+    bet: number
+    grid: Grid
+    wins: ConnectionWin[]
+    payout: number
+    basePayout: number
+    bonusTriggered: boolean
+    bonus: BonusResult | null
+}
+
+function toResult(outcome: BookOfShadowsOutcome, betAmount: number, payout: number): BookOfShadowsResult {
+    const coins = (wins: ConnectionWin[]) => wins.map(w => ({ ...w, amount: w.amount * betAmount }))
+    return {
+        bet: betAmount,
+        grid: outcome.grid,
+        wins: coins(outcome.wins),
+        payout,
+        basePayout: outcome.baseWin * betAmount,
+        bonusTriggered: outcome.feature,
+        bonus: outcome.bonus && {
+            ...outcome.bonus,
+            spins: outcome.bonus.spins.map(sp => ({ ...sp, wins: coins(sp.wins), ordinaryPayout: sp.ordinaryWin * betAmount, wildPayout: sp.wildWin * betAmount }))
+        }
+    }
+}
 
 // --- bet ------------------------------------------------------------------------
 
+// The casino's bet bounds (the old site took 1 to 100B).
 const MIN_BET = info.minBet
 const MAX_BET = info.maxBet
 const BIG_WIN_X = 15
 const BET_STEPS: number[] = []
-for (let e = 0; e <= 6; e++) {
+for (let e = 0; e <= 11; e++) {
     for (const m of [1, 2, 5]) {
         const v = m * 10 ** e
         if (v >= MIN_BET && v <= MAX_BET) BET_STEPS.push(v)
     }
 }
 
-const bet = ref(MIN_BET)
-const betText = ref(String(bet.value))
+const betDraft = ref(bet.value)
+const betText = useAmountInput(betDraft, { integer: true, shorthand: true })
 const betFocused = ref(false)
-const betPreview = computed(() => {
-    const parsed = parseAmount(betText.value)
-    return parsed !== null && /[kmbt]/i.test(betText.value) ? `= ${formatCoins(parsed, false)}` : ''
-})
 watch(bet, (v) => {
-    betText.value = String(v)
+    betDraft.value = v
 })
 
-const buyCost = computed(() => bet.value * BOS_BUY_COST)
+const buyCost = computed(() => Math.round(bet.value * BOS_BUY_BONUS_COST * 100) / 100)
 const turbo = ref(false)
 const showInfo = ref(false)
 const showAutoplay = ref(false)
@@ -84,7 +103,6 @@ const ready = ref(false)
 const winMeter = ref(0)
 const lastWin = ref(0)
 const winFlash = ref(0)
-const history = ref<{ payout: number, bet: number, bonus: boolean }[]>([])
 const feature = reactive({
     active: false,
     spin: 0,
@@ -101,23 +119,26 @@ const bigWinRef = ref<InstanceType<typeof BosBigWin> | null>(null)
 let introResolve: (() => void) | null = null
 let celebrationResolve: (() => void) | null = null
 
-const isSpinning = round.busy
 const busy = computed(() => isSpinning.value || feature.active || Boolean(intro.value) || Boolean(celebration.value))
 const locked = computed(() => busy.value || auto.on)
 
 const canvasHost = ref<HTMLDivElement | null>(null)
+const rootEl = ref<HTMLDivElement | null>(null)
 const soundEl = ref<HTMLDivElement | null>(null)
 let stage: BosStage | null = null
 let destroyed = false
 
-const audio = new BosAudio(sound.muted)
+const audio = new BosAudio()
 const volume = audio.volume
-const muted = sound.muted
+const muted = audio.muted
 const music = audio.music
 
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 const pace = (ms: number) => wait(turbo.value ? Math.round(ms * 0.5) : ms)
-const fmt = (value: number) => formatCoins(value)
+
+function fmt(value: number) {
+    return formatNumber(value)
+}
 
 const touchOnly = import.meta.client && window.matchMedia?.('(hover: none)').matches
 
@@ -131,21 +152,6 @@ const statusLine = computed(() => {
 const TOP_PAYS: SlotSymbol[] = ['book', 'hood', 'scythe', 'orb', 'sword']
 const topTier = BONUS_TIERS.reduce((a, b) => (b.multiplier > a.multiplier ? b : a))
 const DRAW_PREVIEW = [...BONUS_TIERS].sort((a, b) => b.multiplier - a.multiplier).slice(0, 3)
-
-// Cosmetic opening grid (no books): Math.random is fine here.
-function idleGrid(): Grid {
-    const table = Object.entries(SYMBOL_WEIGHTS).filter(([id]) => id !== 'book') as [SlotSymbol, number][]
-    const total = table.reduce((sum, [, w]) => sum + w, 0)
-    const pick = () => {
-        let roll = Math.random() * total
-        for (const [id, w] of table) {
-            roll -= w
-            if (roll < 0) return id
-        }
-        return table[0]![0]
-    }
-    return Array.from({ length: BOS_COLS }, () => Array.from({ length: BOS_ROWS }, pick))
-}
 
 // --- bet controls ---------------------------------------------------------------
 
@@ -162,8 +168,9 @@ function setBet(value: number) {
 
 function commitBet() {
     betFocused.value = false
-    setBet(parseAmount(betText.value) ?? bet.value)
-    betText.value = String(bet.value)
+    setBet(betDraft.value)
+    betDraft.value = bet.value
+    betText.value = amountShorthand(bet.value)
 }
 
 function betUp() {
@@ -280,8 +287,7 @@ function stopAuto() {
 
 // --- feature --------------------------------------------------------------------
 
-/** Plays the free spins. Amounts in the outcome are × bet; `baseWin` is in coins. */
-async function runFeature(bonus: BonusResult, baseWin: number, betAmount: number, maxWin: number) {
+async function runFeature(bonus: BonusResult, baseWin: number, betAmount: number) {
     audio.duck(true)
     intro.value = { tier: bonus.tier, spins: BONUS_SPINS, bet: betAmount }
     await new Promise<void>((resolve) => {
@@ -312,12 +318,11 @@ async function runFeature(bonus: BonusResult, baseWin: number, betAmount: number
         }
 
         if (sp.wins.length) {
-            const amounts = sp.wins.map(w => betAmount * (w.symbol === 'bonuswild' ? w.amount * tier.multiplier : w.amount))
+            const amounts = sp.wins.map(w => (w.symbol === 'bonuswild' ? w.amount * tier.multiplier : w.amount))
             const blood = sp.wins.map(w => w.symbol === 'bonuswild')
-            const spinPay = betAmount * (sp.ordinaryWin + sp.wildWin * tier.multiplier)
+            const spinPay = sp.ordinaryPayout + sp.wildPayout * tier.multiplier
             feature.won += spinPay
-            // The server caps the round at the max win; never count past it.
-            countWin(Math.min(maxWin, baseWin + feature.won), betAmount)
+            countWin(baseWin + feature.won, betAmount)
             audio.synth('win-chime', Math.min(3, Math.floor(Math.log10(1 + spinPay / betAmount) * 2)))
             await stage.showWins(sp.wins, { turbo: turbo.value, amounts, bloodWins: blood, hold: turbo.value ? 300 : 650 })
             stage.clearWins()
@@ -339,7 +344,7 @@ async function runFeature(bonus: BonusResult, baseWin: number, betAmount: number
 
 // --- spin -----------------------------------------------------------------------
 
-function bookCells(grid: Grid): Cell[] {
+function bookCells(grid: SlotSymbol[][]): Cell[] {
     const cells: Cell[] = []
     grid.forEach((col, c) => col.forEach((s, r) => {
         if (s === 'book') cells.push({ col: c, row: r })
@@ -351,58 +356,70 @@ async function spin(buy = false) {
     if (!ready.value || busy.value || !stage) return
     audio.unlock()
     confirmBuy.value = false
-    const betAmount = bet.value
-    const cost = buy ? buyCost.value : betAmount
+    const cost = buy ? buyCost.value : bet.value
     if (balance.value < cost) {
         stopAuto()
-        toast.error('Not enough coins')
+        toast.warning('Not enough coins', { description: `This ${buy ? 'feature buy' : 'spin'} costs ${fmt(cost)}.` })
+        return
+    }
+    const before = balance.value
+    const betAmount = bet.value
+    let debited = false
+
+    const data = await requestSpin(cost, buy ? { buy: true } : undefined, () => {
+        setBalance(before - cost)
+        debited = true
+        cancelAnimationFrame(countRaf)
+        winMeter.value = 0
+    })
+
+    if (!data) {
+        if (debited) {
+            // useGameRound has already toasted the server's reason.
+            setBalance(before)
+            stopAuto()
+        }
         return
     }
 
-    cancelAnimationFrame(countRaf)
-    winMeter.value = 0
-    const response = await round.play({ bet: betAmount, options: buy ? { buy: true } : {} })
-    if (!response) {
-        stopAuto()
-        return
-    }
-
-    const result = response.result
-    const maxWin = betAmount * BOS_MAX_WIN
-    const baseWin = betAmount * result.baseWin
+    const result = toResult(data.gameData, betAmount, data.payout)
     try {
         await stage.spin(result.grid, { turbo: turbo.value, anticipate: true })
 
         if (result.wins.length) {
-            countWin(baseWin, betAmount)
-            audio.synth('win-chime', Math.min(3, Math.floor(Math.log10(1 + result.baseWin) * 2)))
-            await stage.showWins(result.wins, { turbo: turbo.value, amounts: result.wins.map(w => w.amount * betAmount) })
+            countWin(result.basePayout, betAmount)
+            audio.synth('win-chime', Math.min(3, Math.floor(Math.log10(1 + result.basePayout / betAmount) * 2)))
+            await stage.showWins(result.wins, { turbo: turbo.value, amounts: result.wins.map(w => w.amount) })
             stage.clearWins()
         }
 
-        if (result.bonus) {
+        if (result.bonusTriggered && result.bonus) {
             audio.play('bonus')
             await stage.celebrateBooks(bookCells(result.grid), turbo.value)
-            await runFeature(result.bonus, baseWin, betAmount, maxWin)
-            countWin(response.payout, betAmount)
-            await celebrate(Math.max(0, response.payout - Math.floor(baseWin)), betAmount, 'feature', feature.total)
+            await runFeature(result.bonus, result.basePayout, betAmount)
+            const featureWin = Math.max(0, result.payout - result.basePayout)
+            countWin(result.payout, betAmount)
+            await celebrate(featureWin, betAmount, 'feature', feature.total)
             feature.active = false
-        } else if (response.payout >= betAmount * BIG_WIN_X) {
-            await celebrate(response.payout, betAmount, 'win')
+        } else if (result.payout >= betAmount * BIG_WIN_X) {
+            await celebrate(result.payout, betAmount, 'win')
         }
 
         cancelAnimationFrame(countRaf)
-        winMeter.value = response.payout
-        lastWin.value = response.payout
-        history.value = [{ payout: response.payout, bet: cost, bonus: result.feature }, ...history.value].slice(0, 10)
+        winMeter.value = result.payout
+        lastWin.value = result.payout
+        pushHistory({ payout: result.payout, bet: cost, bonus: Boolean(result.bonusTriggered) })
+        setBalance(data.balance)
 
-        if (auto.on && ((auto.stopOnFeature && result.feature) || (auto.stopOnBigWin && response.payout >= betAmount * BIG_WIN_X))) stopAuto()
-    } catch {
+        if (auto.on && ((auto.stopOnFeature && result.bonusTriggered) || (auto.stopOnBigWin && result.payout >= betAmount * BIG_WIN_X))) stopAuto()
+    } catch (e) {
         feature.active = false
-        winMeter.value = response.payout
+        errorMsg.value = e instanceof Error ? e.message : 'Animation error'
+        setBalance(data.balance)
         stopAuto()
     }
-    round.settle()
+
+    isSpinning.value = false
 
     if (auto.on && !destroyed) {
         auto.left--
@@ -442,12 +459,8 @@ function isTyping(target: EventTarget | null) {
     return target instanceof HTMLElement && Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
 }
 
-function dialogOpen() {
-    return showInfo.value || showAutoplay.value || Boolean(document.querySelector('[role="dialog"]'))
-}
-
 function onKeyDown(e: KeyboardEvent) {
-    if (e.code !== 'Space' || isTyping(e.target) || dialogOpen()) return
+    if (e.code !== 'Space' || isTyping(e.target) || showInfo.value || showAutoplay.value) return
     e.preventDefault()
     if (e.repeat) return
     audio.unlock()
@@ -458,7 +471,7 @@ function onKeyDown(e: KeyboardEvent) {
 
 // Stop a focused button from also "clicking" on Space.
 function onKeyUp(e: KeyboardEvent) {
-    if (e.code === 'Space' && !isTyping(e.target) && !dialogOpen()) e.preventDefault()
+    if (e.code === 'Space' && !isTyping(e.target) && !showInfo.value && !showAutoplay.value) e.preventDefault()
 }
 
 function onPointerDown(e: PointerEvent) {
@@ -489,13 +502,12 @@ onMounted(async () => {
             audio.synth('rune', step)
         },
         onWildCell: () => audio.play('wildSpawn')
-    }, idleGrid(), () => destroyed)
+    }, playBookOfShadows(cryptoRng).grid, () => destroyed)
     if (stage && !destroyed) ready.value = true
 })
 
 onBeforeUnmount(() => {
     destroyed = true
-    stopAuto()
     window.removeEventListener('keydown', onKeyDown)
     window.removeEventListener('keyup', onKeyUp)
     window.removeEventListener('pointerdown', onPointerDown)
@@ -509,495 +521,473 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <GameFrame slug="bookofshadows">
-    <template #actions>
-      <Button size="icon" variant="ghost" :title="muted ? 'Sound on' : 'Sound off'" @click="sound.toggle()">
-        <VolumeX v-if="muted" class="size-5" />
-        <Volume2 v-else class="size-5" />
-      </Button>
-    </template>
-
+  <div
+    ref="rootEl"
+    class="bos-root"
+    :class="{ 'bos-in-feature': feature.active }"
+  >
     <div
-      class="bos-root"
-      :class="{ 'bos-in-feature': feature.active }"
+      class="bos-scene"
+      aria-hidden="true"
     >
-      <div
-        class="bos-scene"
-        aria-hidden="true"
-      >
-        <div class="bos-scene-img" />
-        <div class="bos-scene-tint" />
-        <div class="bos-scene-fog" />
-        <span
-          v-for="i in 14"
-          :key="i"
-          class="bos-scene-ember"
-          :style="{ left: `${(i * 37) % 100}%`, animationDelay: `${(i * 1.7) % 9}s`, animationDuration: `${9 + (i % 5) * 2}s` }"
-        />
-      </div>
-
-      <div class="bos-stagewrap">
-        <div class="bos-cabinet">
-          <div class="bos-cab-inner">
-            <div class="bos-plaque-glow" />
-
-            <!-- phone status strip (the side panels collapse into this) -->
-            <div class="bos-strip">
-              <template v-if="feature.active && feature.tier">
-                <span class="bos-strip-item"><em>Spin</em> {{ feature.spin }}/{{ feature.total }}</span>
-                <span class="bos-strip-item">
-                  <span
-                    class="bos-strip-icon"
-                    :style="bosIconStyle(feature.tier.symbol, true, 20)"
-                  />
-                  ×{{ feature.tier.multiplier }}
-                </span>
-                <span class="bos-strip-item"><em>Wilds</em> {{ feature.locked.length }}/{{ BOS_COLS }}</span>
-              </template>
-              <template v-else>
-                <span class="bos-strip-item">
-                  <span
-                    class="bos-strip-icon"
-                    :style="bosIconStyle('book', false, 20)"
-                  />
-                  {{ BONUS_TRIGGER_COUNT }}+ Books = {{ BONUS_SPINS }} free spins
-                </span>
-              </template>
-            </div>
-
-            <aside class="bos-side bos-side-left">
-              <template v-if="feature.active && feature.tier">
-                <div class="bos-panel bos-panel-hot">
-                  <p class="bos-panel-title">
-                    Free Spins
-                  </p>
-                  <p class="bos-spincount">
-                    <strong>{{ feature.spin }}</strong><span>/{{ feature.total }}</span>
-                  </p>
-                  <div class="bos-progress">
-                    <div :style="{ width: `${(feature.spin / feature.total) * 100}%` }" />
-                  </div>
-                </div>
-                <div class="bos-panel bos-panel-hot">
-                  <p class="bos-panel-title">
-                    Drawn symbol
-                  </p>
-                  <div class="bos-drawn">
-                    <span :style="bosIconStyle(feature.tier.symbol, true, 92)" />
-                    <strong>×{{ feature.tier.multiplier }}</strong>
-                    <em>{{ feature.tier.label }}</em>
-                  </div>
-                </div>
-              </template>
-              <template v-else>
-                <div class="bos-panel">
-                  <p class="bos-panel-title">
-                    Free Spins
-                  </p>
-                  <div class="bos-books">
-                    <span
-                      v-for="i in BONUS_TRIGGER_COUNT"
-                      :key="i"
-                      :style="bosIconStyle('book', false, 40)"
-                    />
-                  </div>
-                  <p class="bos-panel-big">
-                    {{ BONUS_TRIGGER_COUNT }}+ Books
-                  </p>
-                  <p class="bos-panel-sub">
-                    {{ BONUS_SPINS }} free spins with sticky wild columns
-                  </p>
-                  <div class="bos-draw-preview">
-                    <span
-                      v-for="t in DRAW_PREVIEW"
-                      :key="t.id"
-                      :style="bosIconStyle(t.symbol, true, 34)"
-                    />
-                  </div>
-                  <p class="bos-panel-sub">
-                    Wild runs pay up to <strong>×{{ topTier.multiplier }}</strong>
-                  </p>
-                </div>
-                <div class="bos-panel bos-buy">
-                  <template v-if="!confirmBuy">
-                    <button
-                      type="button"
-                      class="bos-buy-btn"
-                      :disabled="!ready || locked || balance < buyCost"
-                      @click="buyPress"
-                    >
-                      <span class="bos-buy-label">Buy Feature</span>
-                      <strong>{{ fmt(buyCost) }}</strong>
-                    </button>
-                  </template>
-                  <template v-else>
-                    <p class="bos-buy-q">
-                      Buy {{ BONUS_SPINS }} free spins for <strong>{{ fmt(buyCost) }}</strong>?
-                    </p>
-                    <div class="bos-buy-row">
-                      <button
-                        type="button"
-                        class="bos-buy-yes"
-                        :disabled="locked || balance < buyCost"
-                        @click="buyPress"
-                      >
-                        Buy
-                      </button>
-                      <button
-                        type="button"
-                        class="bos-buy-no"
-                        @click="confirmBuy = false"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </template>
-                </div>
-              </template>
-            </aside>
-
-            <div class="bos-reels">
-              <div
-                ref="canvasHost"
-                class="bos-canvas-host"
-              />
-              <div
-                v-if="!ready"
-                class="bos-loading"
-              >
-                <LoaderCircle class="size-10 animate-spin" />
-              </div>
-              <Transition name="bos-pop">
-                <div
-                  v-if="retrigger"
-                  class="bos-retrigger"
-                >
-                  <strong>+{{ BONUS_RETRIGGER_SPINS }}</strong>
-                  <span>Free spins</span>
-                </div>
-              </Transition>
-            </div>
-
-            <aside class="bos-side bos-side-right">
-              <template v-if="feature.active && feature.tier">
-                <div class="bos-panel bos-panel-hot">
-                  <p class="bos-panel-title">
-                    Wild columns
-                  </p>
-                  <div class="bos-pips">
-                    <span
-                      v-for="c in BOS_COLS"
-                      :key="c"
-                      :class="{ 'bos-pip-on': feature.locked.includes(c - 1) }"
-                    >{{ c }}</span>
-                  </div>
-                  <p class="bos-panel-title mt-3">
-                    Wild run pays
-                  </p>
-                  <ul class="bos-mini-pays">
-                    <li
-                      v-for="(p, i) in PAYTABLE.bonuswild"
-                      :key="i"
-                    >
-                      <span>{{ i + 3 }} reels</span>
-                      <strong>{{ fmt(p * feature.tier.multiplier * bet) }}</strong>
-                    </li>
-                  </ul>
-                </div>
-                <div class="bos-panel bos-panel-hot">
-                  <p class="bos-panel-title">
-                    Feature win
-                  </p>
-                  <p class="bos-feature-win">
-                    {{ fmt(feature.won) }}
-                  </p>
-                </div>
-              </template>
-              <template v-else>
-                <div class="bos-panel">
-                  <p class="bos-panel-title">
-                    Top pays · 5 reels
-                  </p>
-                  <ul class="bos-mini-pays">
-                    <li
-                      v-for="id in TOP_PAYS"
-                      :key="id"
-                    >
-                      <span
-                        class="bos-mini-icon"
-                        :style="bosIconStyle(id, false, 36)"
-                      />
-                      <strong>{{ fmt(PAYTABLE[id][2] * bet) }}</strong>
-                    </li>
-                  </ul>
-                  <button
-                    type="button"
-                    class="bos-link"
-                    @click="showInfo = true"
-                  >
-                    Full paytable
-                  </button>
-                </div>
-                <div class="bos-panel">
-                  <p class="bos-panel-title">
-                    Max win
-                  </p>
-                  <p class="bos-panel-big">
-                    {{ BOS_MAX_WIN.toLocaleString('en-US') }}×
-                  </p>
-                  <p class="bos-panel-title mt-2">
-                    Volatility
-                  </p>
-                  <div
-                    class="bos-vol"
-                    aria-label="Volatility 5 of 5"
-                  >
-                    <span
-                      v-for="i in 5"
-                      :key="i"
-                    />
-                  </div>
-                </div>
-              </template>
-            </aside>
-
-            <BosFeatureIntro
-              v-if="intro"
-              ref="introRef"
-              :tier="intro.tier"
-              :spins="intro.spins"
-              :bet="intro.bet"
-              :auto="auto.on"
-              :fast="turbo"
-              @tick="audio.synth('roll-tick')"
-              @reveal="audio.synth('reveal')"
-              @done="onIntroDone"
-            />
-            <BosBigWin
-              v-if="celebration"
-              ref="bigWinRef"
-              :amount="celebration.amount"
-              :bet="celebration.bet"
-              :mode="celebration.mode"
-              :spins="celebration.spins"
-              :fast="turbo || auto.on"
-              @tier="audio.synth('tier-up', $event)"
-              @tick="audio.synth('tick', $event)"
-              @settled="audio.synth('count-end')"
-              @done="onCelebrationDone"
-            />
-          </div>
-          <div
-            class="bos-frame"
-            aria-hidden="true"
-          />
-        </div>
-
-        <!-- control deck -->
-        <div class="bos-deck">
-          <div class="bos-deck-left">
-            <div
-              class="bos-meter bos-bet"
-              :class="{ 'bos-bet-locked': locked }"
-            >
-              <span>Bet</span>
-              <div class="bos-bet-row">
-                <button
-                  type="button"
-                  class="bos-step"
-                  aria-label="Lower bet"
-                  :disabled="locked || bet <= MIN_BET"
-                  @click="betDown"
-                >
-                  <Minus class="size-4" />
-                </button>
-                <input
-                  v-model="betText"
-                  class="bos-bet-input"
-                  inputmode="decimal"
-                  aria-label="Bet amount"
-                  :disabled="locked"
-                  @focus="betFocused = true"
-                  @blur="commitBet"
-                  @keydown.enter="($event.target as HTMLInputElement).blur()"
-                >
-                <button
-                  type="button"
-                  class="bos-step"
-                  aria-label="Raise bet"
-                  :disabled="locked || bet >= MAX_BET"
-                  @click="betUp"
-                >
-                  <Plus class="size-4" />
-                </button>
-              </div>
-              <output
-                v-if="betFocused && betPreview"
-                class="bos-bet-preview"
-              >{{ betPreview }}</output>
-            </div>
-            <button
-              type="button"
-              class="bos-max"
-              :disabled="locked"
-              @click="maxBet"
-            >
-              Max
-            </button>
-          </div>
-
-          <div
-            :key="winFlash"
-            class="bos-win"
-            :class="{ 'bos-win-on': winMeter > 0 }"
-          >
-            <span>{{ feature.active ? 'Total win' : 'Win' }}</span>
-            <strong>{{ fmt(winMeter) }}</strong>
-            <em>{{ statusLine }}</em>
-          </div>
-
-          <div class="bos-deck-right">
-            <button
-              type="button"
-              class="bos-pill bos-pill-buy"
-              :disabled="!ready || locked || balance < buyCost"
-              @click="buyPress"
-            >
-              {{ confirmBuy ? `Confirm ${fmt(buyCost)}` : 'Buy' }}
-            </button>
-            <button
-              type="button"
-              class="bos-pill"
-              :class="{ 'bos-pill-on': auto.on }"
-              :disabled="!ready || (!auto.on && busy)"
-              @click="toggleAutoplay"
-            >
-              <Repeat class="size-4" />
-              <span :class="{ 'bos-pill-text': !auto.on }">{{ auto.on ? auto.left : 'Auto' }}</span>
-            </button>
-            <button
-              type="button"
-              class="bos-spin"
-              :class="{ 'bos-spin-busy': isSpinning, 'bos-spin-auto': auto.on }"
-              :disabled="!ready || ((feature.active || !!intro || !!celebration) && !auto.on)"
-              :aria-label="auto.on ? 'Stop autoplay' : isSpinning ? 'Stop reels' : 'Spin'"
-              @click="spinPress"
-            >
-              <span class="bos-spin-ring" />
-              <span class="bos-spin-core">
-                <Square
-                  v-if="auto.on"
-                  class="size-7"
-                />
-                <Hand
-                  v-else-if="isSpinning"
-                  class="size-8"
-                />
-                <RefreshCw
-                  v-else
-                  class="size-9"
-                />
-              </span>
-            </button>
-            <button
-              type="button"
-              class="bos-pill"
-              :class="{ 'bos-pill-on': turbo }"
-              :aria-pressed="turbo"
-              @click="toggleTurbo"
-            >
-              <Zap class="size-4" />
-              <span class="bos-pill-text">Turbo</span>
-            </button>
-            <button
-              type="button"
-              class="bos-round-btn"
-              aria-label="Paytable and rules"
-              @click="audio.play('button'); showInfo = true"
-            >
-              <ScrollText class="size-[18px]" />
-            </button>
-            <div
-              ref="soundEl"
-              class="bos-sound"
-            >
-              <button
-                type="button"
-                class="bos-round-btn"
-                aria-label="Sound settings"
-                @click="soundOpen = !soundOpen"
-              >
-                <VolumeX
-                  v-if="muted || volume === 0"
-                  class="size-[18px]"
-                />
-                <Volume2
-                  v-else
-                  class="size-[18px]"
-                />
-              </button>
-              <Transition name="bos-pop">
-                <div
-                  v-if="soundOpen"
-                  class="bos-sound-pop"
-                >
-                  <label class="bos-sound-row">
-                    <span>Volume</span>
-                    <input
-                      v-model.number="volume"
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="5"
-                      :disabled="muted"
-                      aria-label="Volume"
-                    >
-                  </label>
-                  <button
-                    type="button"
-                    class="bos-sound-toggle"
-                    :class="{ 'bos-on': !muted }"
-                    @click="sound.toggle()"
-                  >
-                    <span>Sound</span><em>{{ muted ? 'Off' : 'On' }}</em>
-                  </button>
-                  <button
-                    type="button"
-                    class="bos-sound-toggle"
-                    :class="{ 'bos-on': music }"
-                    @click="music = !music"
-                  >
-                    <span>Music</span><em>{{ music ? 'On' : 'Off' }}</em>
-                  </button>
-                </div>
-              </Transition>
-            </div>
-
-          </div>
-        </div>
-      </div>
-
-      <BosInfo
-        v-model:open="showInfo"
-        :bet="bet"
-        :history="history"
-      />
-      <BosAutoplay
-        v-model:open="showAutoplay"
-        :bet="bet"
-        :balance="balance"
-        @start="startAuto"
+      <div class="bos-scene-img" />
+      <div class="bos-scene-tint" />
+      <div class="bos-scene-fog" />
+      <span
+        v-for="i in 14"
+        :key="i"
+        class="bos-scene-ember"
+        :style="{ left: `${(i * 37) % 100}%`, animationDelay: `${(i * 1.7) % 9}s`, animationDuration: `${9 + (i % 5) * 2}s` }"
       />
     </div>
 
-    <template #rules>
-      <p>Wins run from the leftmost reel to the right; on each next reel the symbol may sit one row up or down. 3 to 5 connected reels pay. The Book is wild and scatter.</p>
-      <p>{{ BONUS_TRIGGER_COUNT }}+ Books start {{ BONUS_SPINS }} free spins. A drawn symbol multiplies every wild run; wild columns stick until the feature ends.</p>
-      <p>Max win {{ BOS_MAX_WIN.toLocaleString('en-US') }}× bet.</p>
-    </template>
-  </GameFrame>
-</template>
+    <div class="bos-stagewrap">
+      <div class="bos-cabinet">
+        <div class="bos-cab-inner">
+          <div class="bos-plaque-glow" />
 
+          <!-- phone status strip (the side panels collapse into this) -->
+          <div class="bos-strip">
+            <template v-if="feature.active && feature.tier">
+              <span class="bos-strip-item"><em>Spin</em> {{ feature.spin }}/{{ feature.total }}</span>
+              <span class="bos-strip-item">
+                <span
+                  class="bos-strip-icon"
+                  :style="bosIconStyle(feature.tier.symbol, true, 20)"
+                />
+                ×{{ feature.tier.multiplier }}
+              </span>
+              <span class="bos-strip-item"><em>Wilds</em> {{ feature.locked.length }}/{{ BOS_COLS }}</span>
+            </template>
+            <template v-else>
+              <span class="bos-strip-item">
+                <span
+                  class="bos-strip-icon"
+                  :style="bosIconStyle('book', false, 20)"
+                />
+                {{ BONUS_TRIGGER_COUNT }}+ Books = {{ BONUS_SPINS }} free spins
+              </span>
+            </template>
+          </div>
+
+          <aside class="bos-side bos-side-left">
+            <template v-if="feature.active && feature.tier">
+              <div class="bos-panel bos-panel-hot">
+                <p class="bos-panel-title">
+                  Free Spins
+                </p>
+                <p class="bos-spincount">
+                  <strong>{{ feature.spin }}</strong><span>/{{ feature.total }}</span>
+                </p>
+                <div class="bos-progress">
+                  <div :style="{ width: `${(feature.spin / feature.total) * 100}%` }" />
+                </div>
+              </div>
+              <div class="bos-panel bos-panel-hot">
+                <p class="bos-panel-title">
+                  Drawn symbol
+                </p>
+                <div class="bos-drawn">
+                  <span :style="bosIconStyle(feature.tier.symbol, true, 92)" />
+                  <strong>×{{ feature.tier.multiplier }}</strong>
+                  <em>{{ feature.tier.label }}</em>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div class="bos-panel">
+                <p class="bos-panel-title">
+                  Free Spins
+                </p>
+                <div class="bos-books">
+                  <span
+                    v-for="i in BONUS_TRIGGER_COUNT"
+                    :key="i"
+                    :style="bosIconStyle('book', false, 40)"
+                  />
+                </div>
+                <p class="bos-panel-big">
+                  {{ BONUS_TRIGGER_COUNT }}+ Books
+                </p>
+                <p class="bos-panel-sub">
+                  {{ BONUS_SPINS }} free spins with sticky wild columns
+                </p>
+                <div class="bos-draw-preview">
+                  <span
+                    v-for="t in DRAW_PREVIEW"
+                    :key="t.id"
+                    :style="bosIconStyle(t.symbol, true, 34)"
+                  />
+                </div>
+                <p class="bos-panel-sub">
+                  Wild runs pay up to <strong>×{{ topTier.multiplier }}</strong>
+                </p>
+              </div>
+              <div class="bos-panel bos-buy">
+                <template v-if="!confirmBuy">
+                  <button
+                    type="button"
+                    class="bos-buy-btn"
+                    :disabled="!ready || locked || balance < buyCost"
+                    @click="buyPress"
+                  >
+                    <span class="bos-buy-label">Buy Feature</span>
+                    <strong>{{ fmt(buyCost) }}</strong>
+                  </button>
+                </template>
+                <template v-else>
+                  <p class="bos-buy-q">
+                    Buy {{ BONUS_SPINS }} free spins for <strong>{{ fmt(buyCost) }}</strong>?
+                  </p>
+                  <div class="bos-buy-row">
+                    <button
+                      type="button"
+                      class="bos-buy-yes"
+                      :disabled="locked || balance < buyCost"
+                      @click="buyPress"
+                    >
+                      Buy
+                    </button>
+                    <button
+                      type="button"
+                      class="bos-buy-no"
+                      @click="confirmBuy = false"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </aside>
+
+          <div class="bos-reels">
+            <div
+              ref="canvasHost"
+              class="bos-canvas-host"
+            />
+            <div
+              v-if="!ready"
+              class="bos-loading"
+            >
+              <LoaderCircleIcon class="size-10 animate-spin" />
+            </div>
+            <Transition name="bos-pop">
+              <div
+                v-if="retrigger"
+                class="bos-retrigger"
+              >
+                <strong>+{{ BONUS_RETRIGGER_SPINS }}</strong>
+                <span>Free spins</span>
+              </div>
+            </Transition>
+          </div>
+
+          <aside class="bos-side bos-side-right">
+            <template v-if="feature.active && feature.tier">
+              <div class="bos-panel bos-panel-hot">
+                <p class="bos-panel-title">
+                  Wild columns
+                </p>
+                <div class="bos-pips">
+                  <span
+                    v-for="c in BOS_COLS"
+                    :key="c"
+                    :class="{ 'bos-pip-on': feature.locked.includes(c - 1) }"
+                  >{{ c }}</span>
+                </div>
+                <p class="bos-panel-title mt-3">
+                  Wild run pays
+                </p>
+                <ul class="bos-mini-pays">
+                  <li
+                    v-for="(p, i) in PAYTABLE.bonuswild"
+                    :key="i"
+                  >
+                    <span>{{ i + 3 }} reels</span>
+                    <strong>{{ fmt(p * feature.tier.multiplier * bet) }}</strong>
+                  </li>
+                </ul>
+              </div>
+              <div class="bos-panel bos-panel-hot">
+                <p class="bos-panel-title">
+                  Feature win
+                </p>
+                <p class="bos-feature-win">
+                  {{ fmt(feature.won) }}
+                </p>
+              </div>
+            </template>
+            <template v-else>
+              <div class="bos-panel">
+                <p class="bos-panel-title">
+                  Top pays · 5 reels
+                </p>
+                <ul class="bos-mini-pays">
+                  <li
+                    v-for="id in TOP_PAYS"
+                    :key="id"
+                  >
+                    <span
+                      class="bos-mini-icon"
+                      :style="bosIconStyle(id, false, 36)"
+                    />
+                    <strong>{{ fmt(PAYTABLE[id][2] * bet) }}</strong>
+                  </li>
+                </ul>
+                <button
+                  type="button"
+                  class="bos-link"
+                  @click="showInfo = true"
+                >
+                  Full paytable
+                </button>
+              </div>
+              <div class="bos-panel">
+                <p class="bos-panel-title">
+                  Max win
+                </p>
+                <p class="bos-panel-big">
+                  {{ formatNumber(BOS_MAX_WIN_MULT, false) }}×
+                </p>
+                <p class="bos-panel-title mt-2">
+                  Volatility
+                </p>
+                <div
+                  class="bos-vol"
+                  aria-label="Volatility 5 of 5"
+                >
+                  <span
+                    v-for="i in 5"
+                    :key="i"
+                  />
+                </div>
+              </div>
+            </template>
+          </aside>
+
+          <BosFeatureIntro
+            v-if="intro"
+            ref="introRef"
+            :tier="intro.tier"
+            :spins="intro.spins"
+            :bet="intro.bet"
+            :auto="auto.on"
+            :fast="turbo"
+            @tick="audio.synth('roll-tick')"
+            @reveal="audio.synth('reveal')"
+            @done="onIntroDone"
+          />
+          <BosBigWin
+            v-if="celebration"
+            ref="bigWinRef"
+            :amount="celebration.amount"
+            :bet="celebration.bet"
+            :mode="celebration.mode"
+            :spins="celebration.spins"
+            :fast="turbo || auto.on"
+            @tier="audio.synth('tier-up', $event)"
+            @tick="audio.synth('tick', $event)"
+            @settled="audio.synth('count-end')"
+            @done="onCelebrationDone"
+          />
+        </div>
+        <div
+          class="bos-frame"
+          aria-hidden="true"
+        />
+      </div>
+
+      <!-- control deck -->
+      <div class="bos-deck">
+        <div class="bos-deck-left">
+          <div class="bos-meter bos-meter-balance">
+            <span>Balance</span>
+            <strong class="bos-full">{{ fmt(balance) }}</strong>
+            <strong class="bos-compact">{{ formatNumber(balance) }}</strong>
+          </div>
+
+          <div
+            class="bos-meter bos-bet"
+            :class="{ 'bos-bet-locked': locked }"
+          >
+            <span>Bet</span>
+            <div class="bos-bet-row">
+              <button
+                type="button"
+                class="bos-step"
+                aria-label="Lower bet"
+                :disabled="locked || bet <= MIN_BET"
+                @click="betDown"
+              >
+                <MinusIcon class="size-4" />
+              </button>
+              <input
+                v-model="betText"
+                class="bos-bet-input"
+                inputmode="decimal"
+                aria-label="Bet amount"
+                :disabled="locked"
+                @focus="betFocused = true"
+                @blur="commitBet"
+                @keydown.enter="($event.target as HTMLInputElement).blur()"
+              >
+              <button
+                type="button"
+                class="bos-step"
+                aria-label="Raise bet"
+                :disabled="locked || bet >= MAX_BET"
+                @click="betUp"
+              >
+                <PlusIcon class="size-4" />
+              </button>
+            </div>
+            <output
+              v-if="betFocused && amountPreview(betText)"
+              class="bos-bet-preview"
+            >{{ amountPreview(betText, true) }}</output>
+          </div>
+          <button
+            type="button"
+            class="bos-max"
+            :disabled="locked"
+            @click="maxBet"
+          >
+            Max
+          </button>
+        </div>
+
+        <div
+          :key="winFlash"
+          class="bos-win"
+          :class="{ 'bos-win-on': winMeter > 0 }"
+        >
+          <span>{{ feature.active ? 'Total win' : 'Win' }}</span>
+          <strong>{{ fmt(winMeter) }}</strong>
+          <em>{{ statusLine }}</em>
+        </div>
+
+        <div class="bos-deck-right">
+          <button
+            type="button"
+            class="bos-pill bos-pill-buy"
+            :disabled="!ready || locked || balance < buyCost"
+            @click="buyPress"
+          >
+            {{ confirmBuy ? `Confirm ${fmt(buyCost)}` : 'Buy' }}
+          </button>
+          <button
+            type="button"
+            class="bos-pill"
+            :class="{ 'bos-pill-on': auto.on }"
+            :disabled="!ready || (!auto.on && busy)"
+            @click="toggleAutoplay"
+          >
+            <RepeatIcon class="size-4" />
+            <span :class="{ 'bos-pill-text': !auto.on }">{{ auto.on ? auto.left : 'Auto' }}</span>
+          </button>
+          <button
+            type="button"
+            class="bos-spin"
+            :class="{ 'bos-spin-busy': isSpinning, 'bos-spin-auto': auto.on }"
+            :disabled="!ready || ((feature.active || !!intro || !!celebration) && !auto.on)"
+            :aria-label="auto.on ? 'Stop autoplay' : isSpinning ? 'Stop reels' : 'Spin'"
+            @click="spinPress"
+          >
+            <span class="bos-spin-ring" />
+            <span class="bos-spin-core">
+              <SquareIcon v-if="auto.on" class="size-7" />
+              <HandIcon v-else-if="isSpinning" class="size-8" />
+              <RefreshCwIcon v-else class="size-9" />
+            </span>
+          </button>
+          <button
+            type="button"
+            class="bos-pill"
+            :class="{ 'bos-pill-on': turbo }"
+            :aria-pressed="turbo"
+            @click="toggleTurbo"
+          >
+            <ZapIcon class="size-4" />
+            <span class="bos-pill-text">Turbo</span>
+          </button>
+          <button
+            type="button"
+            class="bos-round-btn"
+            aria-label="Paytable and rules"
+            @click="audio.play('button'); showInfo = true"
+          >
+            <ScrollTextIcon class="size-[18px]" />
+          </button>
+          <div
+            ref="soundEl"
+            class="bos-sound"
+          >
+            <button
+              type="button"
+              class="bos-round-btn"
+              :aria-label="muted ? 'Sound off' : 'Sound settings'"
+              @click="soundOpen = !soundOpen"
+            >
+              <component
+                :is="muted || volume === 0 ? VolumeXIcon : Volume2Icon"
+                class="size-[18px]"
+              />
+            </button>
+            <Transition name="bos-pop">
+              <div
+                v-if="soundOpen"
+                class="bos-sound-pop"
+              >
+                <label class="bos-sound-row">
+                  <span>Volume</span>
+                  <input
+                    v-model.number="volume"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    :disabled="muted"
+                    aria-label="Volume"
+                  >
+                </label>
+                <button
+                  type="button"
+                  class="bos-sound-toggle"
+                  :class="{ 'bos-on': !muted }"
+                  @click="muted = !muted"
+                >
+                  <span>Sound</span><em>{{ muted ? 'Off' : 'On' }}</em>
+                </button>
+                <button
+                  type="button"
+                  class="bos-sound-toggle"
+                  :class="{ 'bos-on': music }"
+                  @click="music = !music"
+                >
+                  <span>Music</span><em>{{ music ? 'On' : 'Off' }}</em>
+                </button>
+              </div>
+            </Transition>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <BosInfo
+      v-model:open="showInfo"
+      :bet="bet"
+      :history="history"
+    />
+    <BosAutoplay
+      v-model:open="showAutoplay"
+      :bet="bet"
+      :balance="balance"
+      @start="startAuto"
+    />
+  </div>
+</template>
 
 <style scoped>
 .bos-root {
@@ -1011,8 +1001,8 @@ onBeforeUnmount(() => {
   --u: calc(min(100cqw - 24px, 560px) / 1300);
 
   position: relative;
+  min-height: 100%;
   overflow: hidden;
-  border-radius: 1rem;
   container: bosroot / inline-size;
   background: #070504;
   color: var(--parch);
@@ -1106,7 +1096,7 @@ onBeforeUnmount(() => {
 
 .bos-cabinet {
   position: relative;
-  width: min(100%, calc((100dvh - 290px) * 1.5), 1500px);
+  width: min(100%, calc((100dvh - 150px) * 1.5), 1500px);
   aspect-ratio: 1536 / 1024;
   filter: drop-shadow(0 30px 40px rgba(0, 0, 0, 0.75));
 }
@@ -1623,6 +1613,10 @@ onBeforeUnmount(() => {
 }
 
 .bos-strip,
+.bos-compact {
+  display: none;
+}
+
 /* --- deck ------------------------------------------------------------------ */
 
 .bos-deck {
@@ -1759,6 +1753,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.bos-meter-balance {
+  flex: 1 1 auto;
+  min-width: 118px;
+  max-width: 200px;
+}
 
 .bos-bet {
   flex: 0 0 auto;
@@ -2013,6 +2012,9 @@ onBeforeUnmount(() => {
 /* --- narrower desktop: tighten the deck ------------------------------------ */
 
 @container bosroot (max-width: 1180px) {
+  .bos-meter-balance {
+    max-width: 150px;
+  }
 
   .bos-win {
     min-width: 180px;
@@ -2128,6 +2130,9 @@ onBeforeUnmount(() => {
     justify-content: center;
   }
 
+  .bos-meter-balance {
+    max-width: none;
+  }
 
   .bos-deck-right {
     justify-content: center;
@@ -2153,8 +2158,8 @@ onBeforeUnmount(() => {
 
   .bos-deck-right .bos-pill,
   .bos-deck-right .bos-round-btn {
-    width: 44px;
-    height: 44px;
+    width: 38px;
+    height: 38px;
   }
 
   .bos-pill-buy {
@@ -2167,42 +2172,26 @@ onBeforeUnmount(() => {
     width: 100%;
   }
 
+  .bos-meter-balance {
+    min-width: 0;
+  }
 
   .bos-bet-input {
     width: 64px;
   }
-
-  .bos-step {
-    width: 40px;
-    height: 40px;
-  }
-
-  .bos-max {
-    min-height: 44px;
-  }
 }
 
 @container bosroot (max-width: 420px) {
+  .bos-full {
+    display: none;
+  }
+
+  .bos-compact {
+    display: block;
+  }
+
   .bos-bet-input {
     width: 76px;
-  }
-
-  .bos-deck-right {
-    gap: 4px;
-  }
-
-  .bos-spin {
-    width: 76px;
-    height: 76px;
-  }
-
-  .bos-spin-core {
-    width: 62px;
-    height: 62px;
-  }
-
-  .bos-pill-buy {
-    padding: 0 8px;
   }
 }
 </style>

@@ -1,22 +1,21 @@
 <script setup lang="ts">
-import { formatCoins } from '#shared/money'
 import BosDialog from './BosDialog.vue'
 
 interface BosAutoplaySettings {
-  count: number
-  stopOnFeature: boolean
-  stopOnBigWin: boolean
+    count: number
+    stopOnFeature: boolean
+    stopOnBigWin: boolean
 }
 
 const open = defineModel<boolean>('open', { required: true })
 
 const props = defineProps<{
-  bet: number
-  balance: number
+    bet: number
+    balance: number
 }>()
 
 const emit = defineEmits<{
-  start: [settings: BosAutoplaySettings]
+    start: [settings: BosAutoplaySettings]
 }>()
 
 const COUNTS = [10, 25, 50, 100, 250, 500]
@@ -27,7 +26,7 @@ const stopOnBigWin = ref(false)
 const cost = computed(() => count.value * props.bet)
 
 function start() {
-  emit('start', { count: count.value, stopOnFeature: stopOnFeature.value, stopOnBigWin: stopOnBigWin.value })
+    emit('start', { count: count.value, stopOnFeature: stopOnFeature.value, stopOnBigWin: stopOnBigWin.value })
 }
 </script>
 
@@ -74,7 +73,7 @@ function start() {
     </label>
 
     <p class="bos-ap-note">
-      Up to {{ formatCoins(cost) }} at {{ formatCoins(bet) }} per spin.
+      Up to {{ formatNumber(cost) }} at {{ formatNumber(bet) }} per spin. Autoplay also stops when your balance can't cover the next spin.
     </p>
 
     <button

@@ -1,52 +1,51 @@
 <script setup lang="ts">
 // Paytable, feature and rules for Book of Shadows, generated from the game's
 // real constants so it can never drift from what the server pays.
-import { formatCoins } from '#shared/money'
+import type { SlotSymbol } from '#shared/slots/bookofshadows'
 import {
-  BONUS_RETRIGGER_BOOKS,
-  BONUS_RETRIGGER_SPINS,
-  BONUS_SPINS,
-  BONUS_TIERS,
-  BONUS_TRIGGER_COUNT,
-  BOS_BUY_COST,
-  BOS_COLS,
-  BOS_MAX_WIN,
-  BOS_MIN_CONNECTION,
-  BOS_ROWS,
-  PAYTABLE,
-  type SlotSymbol
+    BONUS_RETRIGGER_BOOKS,
+    BONUS_RETRIGGER_SPINS,
+    BONUS_SPINS,
+    BONUS_TIERS,
+    BONUS_TRIGGER_COUNT,
+    BOS_BUY_COST as BOS_BUY_BONUS_COST,
+    BOS_COLS,
+    BOS_MAX_WIN as BOS_MAX_WIN_MULT,
+    BOS_MIN_CONNECTION,
+    BOS_ROWS,
+    PAYTABLE
 } from '#shared/slots/bookofshadows'
-import { bosIconStyle } from '~/utils/bookofshadows/sprite'
+import { bosIconStyle } from '~/utils/bookofshadows-sprite'
 import BosDialog from './BosDialog.vue'
 
 const open = defineModel<boolean>('open', { required: true })
 
 const props = defineProps<{
-  bet: number
-  history: { payout: number, bet: number, bonus: boolean }[]
+    bet: number
+    history: { payout: number, bet: number, bonus: boolean }[]
 }>()
 
 type Tab = 'pays' | 'feature' | 'rules' | 'history'
 const tab = ref<Tab>('pays')
 const TABS: { id: Tab, label: string }[] = [
-  { id: 'pays', label: 'Paytable' },
-  { id: 'feature', label: 'Free Spins' },
-  { id: 'rules', label: 'Rules' },
-  { id: 'history', label: 'History' }
+    { id: 'pays', label: 'Paytable' },
+    { id: 'feature', label: 'Free Spins' },
+    { id: 'rules', label: 'Rules' },
+    { id: 'history', label: 'History' }
 ]
 
 const NAMES: Record<SlotSymbol, string> = {
-  book: 'Book',
-  hood: 'Hood',
-  scythe: 'Scythe',
-  orb: 'Orb',
-  sword: 'Sword',
-  ace: 'Ace',
-  king: 'King',
-  queen: 'Queen',
-  jack: 'Jack',
-  ten: 'Ten',
-  bonuswild: 'Wild column'
+    book: 'Book',
+    hood: 'Hood',
+    scythe: 'Scythe',
+    orb: 'Orb',
+    sword: 'Sword',
+    ace: 'Ace',
+    king: 'King',
+    queen: 'Queen',
+    jack: 'Jack',
+    ten: 'Ten',
+    bonuswild: 'Wild column'
 }
 
 const ORDER: SlotSymbol[] = ['book', 'hood', 'scythe', 'orb', 'sword', 'ace', 'king', 'queen', 'jack', 'ten']
@@ -55,8 +54,8 @@ const rows = computed(() => ORDER.map(id => ({ id, name: NAMES[id], pays: PAYTAB
 const tierWeight = BONUS_TIERS.reduce((sum, t) => sum + t.weight, 0)
 const tiers = BONUS_TIERS.map(t => ({ ...t, odds: `1 in ${Math.round(tierWeight / t.weight)}` }))
 
-const x = (n: number) => `${n.toLocaleString('en-US')}×`
-const at = (mult: number) => formatCoins(mult * props.bet)
+const x = (n: number) => `${formatNumber(n, false)}×`
+const at = (mult: number) => formatNumber(mult * props.bet)
 </script>
 
 <template>
@@ -82,7 +81,7 @@ const at = (mult: number) => formatCoins(mult * props.bet)
     <!-- Paytable -->
     <div v-if="tab === 'pays'">
       <p class="bos-info-lead">
-        {{ BOS_MIN_CONNECTION }}, 4 or 5 connected reels at your bet of <strong>{{ formatCoins(bet) }}</strong>.
+        Pays for {{ BOS_MIN_CONNECTION }}, 4 or 5 connected reels, shown at your bet of <strong>{{ formatNumber(bet) }}</strong>. The small figure is the multiple of your bet.
       </p>
       <div class="bos-pay-grid">
         <div
@@ -170,7 +169,7 @@ const at = (mult: number) => formatCoins(mult * props.bet)
       <p>{{ BONUS_RETRIGGER_BOOKS }} Books on a single free spin add <strong>{{ BONUS_RETRIGGER_SPINS }} spins</strong>. This happens at most once per feature; Books stop appearing after it.</p>
 
       <h3>Buy feature</h3>
-      <p>Start the free spins straight away for <strong>{{ BOS_BUY_COST }}× bet</strong> ({{ formatCoins(BOS_BUY_COST * bet) }} at your bet).</p>
+      <p>Start the free spins straight away for <strong>{{ BOS_BUY_BONUS_COST }}× bet</strong> ({{ formatNumber(BOS_BUY_BONUS_COST * bet) }} at your bet).</p>
     </div>
 
     <!-- Rules -->
@@ -186,7 +185,15 @@ const at = (mult: number) => formatCoins(mult * props.bet)
       <p>The Book is wild: it stands in for every symbol. It is also the scatter that starts the free spins.</p>
 
       <h3>Limits</h3>
-      <p>All pays are multiples of your total bet. One round, including its free spins, pays at most <strong>{{ BOS_MAX_WIN.toLocaleString('en-US') }}× bet</strong>.</p>
+      <p>All pays are multiples of your total bet. One round, including its free spins, pays at most <strong>{{ formatNumber(BOS_MAX_WIN_MULT, false) }}× bet</strong>.</p>
+      <p>Volatility is very high: long dry spells, with most of the value in the feature.</p>
+
+      <h3>Controls</h3>
+      <ul>
+        <li><kbd>Space</kbd> spins. Press it again while the reels turn to stop them early.</li>
+        <li>Turbo shortens every animation.</li>
+        <li>Autoplay runs a set number of spins and can stop on the feature or a big win.</li>
+      </ul>
     </div>
 
     <!-- History -->
@@ -214,9 +221,9 @@ const at = (mult: number) => formatCoins(mult * props.bet)
             :key="i"
           >
             <td>{{ h.bonus ? 'Free spins' : 'Spin' }}</td>
-            <td>{{ formatCoins(h.bet) }}</td>
+            <td>{{ formatNumber(h.bet) }}</td>
             <td :class="{ 'bos-info-win': h.payout > 0 }">
-              {{ formatCoins(h.payout) }}
+              {{ formatNumber(h.payout) }}
             </td>
           </tr>
         </tbody>
@@ -388,6 +395,21 @@ const at = (mult: number) => formatCoins(mult * props.bet)
 
 .bos-info-prose strong {
   color: #fff0c8;
+}
+
+.bos-info-prose ul {
+  display: grid;
+  gap: 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.bos-info-prose kbd {
+  border: 1px solid rgba(214, 170, 90, 0.45);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 1px 6px;
+  font-size: 12px;
 }
 
 .bos-tier-grid {

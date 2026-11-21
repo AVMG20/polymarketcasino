@@ -3,14 +3,14 @@
 // these recipes cover the moments the samples don't: bet clicks, reel stops,
 // book landings, the anticipation riser, count-up ticks and win-tier stings.
 //
-// Every recipe schedules nodes on the synth voice (voice.ts), which cleans up
+// Every recipe schedules nodes on the SHAPEZZ synth voice, which cleans up
 // after itself. Palette: D minor for anything melodic, bells and glassy
 // partials for magic, pitch-dropping sines for weight.
 
-import { SynthVoice, synthNote } from '../slots/synth-voice'
+import { SynthVoice as ShapezzSynthVoice, synthNote as shapezzNote } from '~/utils/slots/synth-voice'
 
-export { SynthVoice as BosSynthVoice }
-export { synthWarmUp as bosSynthWarmUp } from '../slots/synth-voice'
+export { ShapezzSynthVoice as BosSynthVoice }
+export { synthWarmUp as bosSynthWarmUp } from '~/utils/slots/synth-voice'
 
 export type BosSynthEvent
     = | 'bet-up'
@@ -30,32 +30,32 @@ export type BosSynthEvent
         | 'rune'
 
 /** `intensity` is a per-event hint: book count, tier index, count-up progress... */
-type Recipe = (v: SynthVoice, intensity: number) => void
+type Recipe = (v: ShapezzSynthVoice, intensity: number) => void
 
 // D minor, as semitone offsets from A4.
 const D_MINOR = [-7, -5, -4, -2, 0, 1, 3]
 
 function scale(step: number): number {
     const octave = Math.floor(step / D_MINOR.length)
-    return synthNote(D_MINOR[((step % D_MINOR.length) + D_MINOR.length) % D_MINOR.length]! + octave * 12)
+    return shapezzNote(D_MINOR[((step % D_MINOR.length) + D_MINOR.length) % D_MINOR.length]! + octave * 12)
 }
 
 /** A struck bell: triangle fundamental plus inharmonic partials. */
-function bell(v: SynthVoice, freq: number, at: number, dur: number, gain = 0.5) {
+function bell(v: ShapezzSynthVoice, freq: number, at: number, dur: number, gain = 0.5) {
     v.tone({ type: 'triangle', freq, dur, gain, at })
     v.tone({ freq: freq * 2.76, dur: dur * 0.45, gain: gain * 0.28, at })
     v.tone({ freq: freq * 5.4, dur: dur * 0.2, gain: gain * 0.1, at })
 }
 
 /** Glassy shimmer: a few quick high partials. */
-function glitter(v: SynthVoice, base: number, count: number, spread: number, at = 0, gain = 0.12) {
+function glitter(v: ShapezzSynthVoice, base: number, count: number, spread: number, at = 0, gain = 0.12) {
     for (let i = 0; i < count; i++) {
         const f = base * (1 + Math.random() * 1.5)
         v.tone({ freq: f, dur: 0.18 + Math.random() * 0.2, gain: gain * v.vary(0.4), at: at + Math.random() * spread })
     }
 }
 
-function thump(v: SynthVoice, from: number, to: number, dur: number, gain = 1, at = 0) {
+function thump(v: ShapezzSynthVoice, from: number, to: number, dur: number, gain = 1, at = 0) {
     v.tone({ freq: from, to, glide: dur * 0.7, dur, gain, at })
 }
 

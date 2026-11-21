@@ -20,10 +20,13 @@ export const BOS_COLS = 5
 export const BOS_ROWS = 6
 export const BOS_MIN_CONNECTION = 3
 
-/** Hard cap on a round's total win, in × bet. */
-export const BOS_MAX_WIN = 10_000
+/** Hard cap on a round's total win, in × bet (the old site's cap). */
+export const BOS_MAX_WIN = 20_000
 
-/** A feature buy costs this many bets and starts the free spins for sure. */
+/**
+ * A feature buy costs this many bets and starts the free spins for sure.
+ * Old site 56.5; the casino's buy costs are whole multiples of the bet.
+ */
 export const BOS_BUY_COST = 56
 
 export const BONUS_TRIGGER_COUNT = 3
@@ -52,7 +55,11 @@ const NO_BOOK_WEIGHTS: Readonly<Record<Exclude<ReelSymbol, 'book'>, number>> = (
     return rest
 })()
 
-/** × bet for a connected run of [3, 4, 5] reels. One table for base and free spins. */
+/**
+ * × bet for a connected run of [3, 4, 5] reels. One table for base and free spins.
+ * RTP retune: bonuswild was [4.6, 14, 42] on the old site (paid spins ~96.8% → ~95.5%,
+ * the buy ~98% → ~97%; scripts/bookofshadows-rtp.ts).
+ */
 export const PAYTABLE: Readonly<Record<SlotSymbol, readonly [number, number, number]>> = {
     ten: [0.18, 0.45, 0.9],
     jack: [0.18, 0.45, 0.9],

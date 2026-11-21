@@ -100,7 +100,7 @@ export const GAMES: readonly GameInfo[] = [
         kind: 'slot',
         tagline: 'Zigzag connections on a 5×6 grid and sticky wild columns in free spins',
         cover: '/images/games/bookofshadows.jpg',
-        rtp: 0.96,
+        rtp: 0.955,
         volatility: 'high',
         minBet: MIN_BET,
         maxBet: MAX_BET
