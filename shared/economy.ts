@@ -1,0 +1,37 @@
+/** Casino economy constants (docs/casino-economy.md). */
+
+/** One gem converts into this many coins. One-way: coins never become gems. */
+export const COINS_PER_GEM = 1_000
+
+export const CONVERT_MIN_GEMS = 1
+/** The hub caps a player's gem pile at 100, so one conversion can take it all. */
+export const CONVERT_MAX_GEMS = 100
+
+/** Free coins once per Europe/Amsterdam day, so the casino plays with zero gems. */
+export const DAILY_ALLOWANCE_COINS = 2_500
+
+export const CASINO_TIME_ZONE = 'Europe/Amsterdam'
+
+/** The calendar day (YYYY-MM-DD) in Amsterdam at `at`. */
+export function amsterdamDay(at: Date = new Date()): string {
+    // en-CA formats as YYYY-MM-DD.
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: CASINO_TIME_ZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).format(at)
+}
+
+/** The instant the next Amsterdam day starts, after `at`. */
+export function nextAmsterdamMidnight(at: Date = new Date()): Date {
+    const today = amsterdamDay(at)
+    // Amsterdam midnight is 22:00 or 23:00 UTC; step through whole UTC hours
+    // from 21:00 on the local date until the day flips.
+    const start = new Date(`${today}T21:00:00Z`).getTime()
+    for (let hour = 0; hour < 30; hour++) {
+        const candidate = new Date(start + hour * 3_600_000)
+        if (candidate > at && amsterdamDay(candidate) !== today) return candidate
+    }
+    return new Date(at.getTime() + 86_400_000)
+}

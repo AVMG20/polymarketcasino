@@ -1,0 +1,109 @@
+/**
+ * Every game the lobby lists. A game appears here only when it is complete:
+ * rules in shared/, a server implementation in server/utils/games.ts and a
+ * client in app/games/. The lobby, the routes and the server all read this.
+ */
+
+export type GameKind = 'slot' | 'table' | 'original'
+
+export interface GameInfo {
+    slug: string
+    name: string
+    kind: GameKind
+    tagline: string
+    /** Cover art under public/. */
+    cover: string
+    /** Return to player, as a fraction (0.96 = 96%). */
+    rtp: number
+    volatility: 'low' | 'medium' | 'high'
+    minBet: number
+    maxBet: number
+}
+
+/**
+ * Payouts are whole coins, rounded down. Below ~100 coins that rounding eats
+ * a visible slice of a fractional multiplier (dice 1.96× on 10 pays 19), so
+ * games with fractional pays start at 100. Roulette pays whole multiples and
+ * starts at 10.
+ */
+export const MIN_BET = 100
+export const MAX_BET = 1_000_000
+
+export const GAMES: readonly GameInfo[] = [
+    {
+        slug: 'spinata',
+        name: 'Spiñata',
+        kind: 'slot',
+        tagline: '20 lines and a wild multiplier that keeps climbing in free spins',
+        cover: '/images/games/spinata.jpg',
+        rtp: 0.96,
+        volatility: 'medium',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'trashpanda',
+        name: 'Trash Panda Heist',
+        kind: 'slot',
+        tagline: '1,024 ways and sticky panda wilds in the heist',
+        cover: '/images/games/trashpanda.jpg',
+        rtp: 0.96,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'candyrush',
+        name: 'Candy Rush',
+        kind: 'slot',
+        tagline: 'Cluster pops on a 7×7 grid with a multiplier that never resets in free spins',
+        cover: '/images/games/candyrush.svg',
+        rtp: 0.96,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'roulette',
+        name: 'Roulette',
+        kind: 'table',
+        tagline: 'Single-zero European wheel',
+        cover: '/images/games/roulette.jpg',
+        rtp: 0.973,
+        volatility: 'low',
+        minBet: 10,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'dice',
+        name: 'Dice',
+        kind: 'original',
+        tagline: 'Pick your odds, roll over or under',
+        cover: '/images/games/dice.jpg',
+        rtp: 0.98,
+        volatility: 'low',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'limbo',
+        name: 'Limbo',
+        kind: 'original',
+        tagline: 'Name a multiplier and hope the result clears it',
+        cover: '/images/games/limbo.jpg',
+        rtp: 0.98,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    }
+]
+
+export const GAME_KINDS: readonly { kind: GameKind, label: string }[] = [
+    { kind: 'slot', label: 'Slots' },
+    { kind: 'table', label: 'Tables' },
+    { kind: 'original', label: 'Originals' }
+]
+
+export function findGame(slug: string): GameInfo | undefined {
+    return GAMES.find(game => game.slug === slug)
+}
