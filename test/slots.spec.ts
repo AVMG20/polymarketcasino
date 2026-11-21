@@ -122,7 +122,7 @@ describe('playSlot', () => {
     })
 
     it('adds up step wins, scatter pays and free spins into the round win', () => {
-        const config = SLOT_CONFIGS.candyrush!
+        const config = SLOT_CONFIGS.trashpanda!
         for (let seed = 0; seed < 50; seed++) {
             const outcome = playSlot(config, seededRng(seed), { buy: seed % 2 === 0 })
             const spins = [outcome.base, ...outcome.freeSpins]

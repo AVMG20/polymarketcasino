@@ -34,10 +34,10 @@ describe('playRound', () => {
 
     it('settles slot rounds and feature buys', async () => {
         const id = seedPlayer(100_000)
-        const spin = await playRound(id, 'candyrush', { bet: 100 })
+        const spin = await playRound(id, 'trashpanda', { bet: 100 })
         expect(spin.stake).toBe(100)
-        const buy = await playRound(id, 'candyrush', { bet: 100, options: { buy: true } })
-        expect(buy.stake).toBe(100 * SLOT_CONFIGS.candyrush!.buyCost!)
+        const buy = await playRound(id, 'trashpanda', { bet: 100, options: { buy: true } })
+        expect(buy.stake).toBe(100 * SLOT_CONFIGS.trashpanda!.buyCost!)
         expect((buy.result as { freeSpins: unknown[] }).freeSpins.length).toBeGreaterThan(0)
     })
 

@@ -24,7 +24,6 @@ export const GAME_COMPONENTS: Record<string, Component> = {
     'three-card-poker': defineAsyncComponent(() => import('~/components/games/ThreeCardPokerGame.vue')),
     'spinata': slot('spinata'),
     'trashpanda': slot('trashpanda'),
-    'candyrush': slot('candyrush'),
     'aethergates': defineAsyncComponent(() => import('~/components/games/AethergatesGame.vue')),
     'emberportals': defineAsyncComponent(() => import('~/components/games/EmberPortalsGame.vue')),
     'xenoslot': defineAsyncComponent(() => import('~/components/games/XenoSlotGame.vue')),

@@ -108,7 +108,6 @@ function info(slug: string): GameInfo {
 const implementations: Record<string, ServerGame> = {
     spinata: slotGame(info('spinata'), SLOT_CONFIGS.spinata!),
     trashpanda: slotGame(info('trashpanda'), SLOT_CONFIGS.trashpanda!),
-    candyrush: slotGame(info('candyrush'), SLOT_CONFIGS.candyrush!),
     bookofshadows: bespokeSlot(info('bookofshadows'), BOS_BUY_COST, (rng, buy) => playBookOfShadows(rng, { buy })),
     fireinthehole: bespokeSlot(info('fireinthehole'), FITH_BUY_COST, (rng, buy) => playFireInTheHole(rng, { buy })),
     aethergates: {

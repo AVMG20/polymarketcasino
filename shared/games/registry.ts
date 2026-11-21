@@ -62,17 +62,6 @@ export const GAMES: readonly GameInfo[] = [
         maxBet: MAX_BET
     },
     {
-        slug: 'candyrush',
-        name: 'Candy Rush',
-        kind: 'slot',
-        tagline: 'Cluster pops on a 7×7 grid with a multiplier that never resets in free spins',
-        cover: '/images/games/candyrush.svg',
-        rtp: 0.96,
-        volatility: 'high',
-        minBet: MIN_BET,
-        maxBet: MAX_BET
-    },
-    {
         slug: 'aethergates',
         name: 'Aethergates',
         kind: 'slot',

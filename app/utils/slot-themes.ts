@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { Apple, Candy, Cherry, Citrus, Cookie, CupSoda, Donut, Fish, Grape, Lollipop, PawPrint, Pizza, Trash2 } from 'lucide-vue-next'
+import { CupSoda, Donut, Fish, PawPrint, Pizza, Trash2 } from 'lucide-vue-next'
 
 /**
  * How each slot looks and sounds. The engine (shared/slots) knows symbols by
@@ -93,23 +93,6 @@ export const SLOT_THEMES: Record<string, SlotTheme> = {
             donut: { label: 'Donut', icon: Donut, bg: '#4b2b3f', fg: '#ff8ac4' },
             wild: { label: 'Panda wild', icon: PawPrint, bg: '#f5f5f0', fg: '#1a1a1a' },
             scatter: { label: 'Dumpster', icon: Trash2, bg: '#3f7a3a', fg: '#dfffd0' }
-        }
-    },
-
-    candyrush: {
-        backdrop: 'radial-gradient(circle at 50% 0%, #ffd1ec, #b48cff 75%)',
-        frame: 'linear-gradient(180deg, rgb(255 255 255 / .55), rgb(255 240 250 / .45))',
-        accent: '#ff4fa3',
-        font: '\'Bricolage Grotesque\', sans-serif',
-        featureName: 'Sugar Rush',
-        symbols: {
-            grape: { label: 'Grape', icon: Grape, bg: '#8e5bd8', fg: '#f3e8ff' },
-            berry: { label: 'Blue candy', icon: Candy, bg: '#4a8df0', fg: '#e6f0ff' },
-            lemon: { label: 'Lemon', icon: Citrus, bg: '#f2c531', fg: '#5a4500' },
-            apple: { label: 'Apple', icon: Apple, bg: '#47c26b', fg: '#eaffef' },
-            orange: { label: 'Cookie', icon: Cookie, bg: '#f08a3c', fg: '#fff1e3' },
-            cherry: { label: 'Cherry', icon: Cherry, bg: '#e8365d', fg: '#ffe6ec' },
-            scatter: { label: 'Lollipop', icon: Lollipop, bg: '#ffffff', fg: '#ff4fa3' }
         }
     }
 }
