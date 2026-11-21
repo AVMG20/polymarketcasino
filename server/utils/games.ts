@@ -7,12 +7,12 @@ import { GAMES, type GameInfo } from '#shared/games/registry'
 import { parseRouletteBets, playRoulette, totalStake } from '#shared/games/roulette'
 import { parseWheelOptions, playWheel } from '#shared/games/wheel'
 import type { Rng } from '#shared/rng'
-import { playSlot, SLOT_CONFIGS, slotPayout, type SlotConfig } from '#shared/slots'
 import { aetherPayout, aetherStake, parseAetherOptions, playAethergates } from '#shared/slots/aethergates'
 import { BOS_BUY_COST, playBookOfShadows } from '#shared/slots/bookofshadows'
 import { emberPortalsPayout, emberPortalsStake, parseEmberPortalsMode, playEmberPortals } from '#shared/slots/emberportals'
 import { FITH_BUY_COST, playFireInTheHole } from '#shared/slots/fireinthehole'
 import { parseSpinataOptions, playSpinata, spinataStake } from '#shared/slots/spinata'
+import { parseTrashPandaOptions, playTrashPanda, trashPandaStake } from '#shared/slots/trashpanda'
 import { parseXenoSlotOptions, playXenoSlot, xenoSlotPayout, xenoSlotStake } from '#shared/slots/xenoslot'
 
 /**
@@ -44,23 +44,6 @@ export interface ServerGame {
     play(input: PlayInput): PlayOutcome
 }
 
-function slotGame(info: GameInfo, config: SlotConfig): ServerGame {
-    return {
-        info,
-        play({ bet, options, rng }) {
-            const buy = options.buy === true
-            if (buy && !config.buyCost) throw new RangeError('This slot has no feature buy')
-            const outcome = playSlot(config, rng, { buy })
-            return {
-                stake: buy ? bet * config.buyCost! : bet,
-                payout: slotPayout(outcome, bet),
-                result: outcome,
-                summary: { bet, buy, win: outcome.win, freeSpins: outcome.freeSpins.length, capped: outcome.capped }
-            }
-        }
-    }
-}
-
 /** What a bespoke slot's round says about itself: the total win in × bet, already capped. */
 interface BespokeOutcome {
     win: number
@@ -70,7 +53,7 @@ interface BespokeOutcome {
 }
 
 /**
- * A slot with its own rules module (not the generic engine). The module
+ * A slot with its own rules module that only knows a buy flag. The module
  * resolves the whole round in multiples of the bet; this pays it in whole
  * coins and bounds the stake (bet, or bet × the integer buy cost).
  */
@@ -120,7 +103,19 @@ const implementations: Record<string, ServerGame> = {
             }
         }
     },
-    trashpanda: slotGame(info('trashpanda'), SLOT_CONFIGS.trashpanda!),
+    trashpanda: {
+        info: info('trashpanda'),
+        play({ bet, options, rng }) {
+            const parsed = parseTrashPandaOptions(options)
+            const result = playTrashPanda(rng, bet, parsed)
+            return {
+                stake: trashPandaStake(bet, parsed),
+                payout: result.payout,
+                result,
+                summary: { bet, feature: parsed.feature ?? null, win: result.win, dive: result.dive !== null, freeSpins: result.freeSpins?.spins.length ?? 0, capped: result.capped }
+            }
+        }
+    },
     bookofshadows: bespokeSlot(info('bookofshadows'), BOS_BUY_COST, (rng, buy) => playBookOfShadows(rng, { buy })),
     fireinthehole: bespokeSlot(info('fireinthehole'), FITH_BUY_COST, (rng, buy) => playFireInTheHole(rng, { buy })),
     aethergates: {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { GAMES } from '../shared/games/registry'
-import { SLOT_CONFIGS } from '../shared/slots'
+import { TPH_BUY_FREE_SPINS_COST } from '../shared/slots/trashpanda'
 import { serverGame } from '../server/utils/games'
 import { playRound } from '../server/utils/rounds'
 import { TABLES } from '../server/utils/tables'
@@ -36,9 +36,9 @@ describe('playRound', () => {
         const id = seedPlayer(100_000)
         const spin = await playRound(id, 'trashpanda', { bet: 100 })
         expect(spin.stake).toBe(100)
-        const buy = await playRound(id, 'trashpanda', { bet: 100, options: { buy: true } })
-        expect(buy.stake).toBe(100 * SLOT_CONFIGS.trashpanda!.buyCost!)
-        expect((buy.result as { freeSpins: unknown[] }).freeSpins.length).toBeGreaterThan(0)
+        const buy = await playRound(id, 'trashpanda', { bet: 100, options: { feature: 'buyFreeSpins' } })
+        expect(buy.stake).toBe(100 * TPH_BUY_FREE_SPINS_COST)
+        expect((buy.result as { freeSpins: { spins: unknown[] } }).freeSpins.spins.length).toBeGreaterThan(0)
     })
 
     it('takes the roulette stake from the bets on the layout', async () => {

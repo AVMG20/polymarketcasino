@@ -54,9 +54,9 @@ export const GAMES: readonly GameInfo[] = [
         slug: 'trashpanda',
         name: 'Trash Panda Heist',
         kind: 'slot',
-        tagline: '1,024 ways and sticky panda wilds in the heist',
+        tagline: '1,024 ways, sticky multiplier wilds and a Dumpster Dive pick game',
         cover: '/images/games/trashpanda.jpg',
-        rtp: 0.96,
+        rtp: 0.963,
         volatility: 'high',
         minBet: MIN_BET,
         maxBet: MAX_BET
