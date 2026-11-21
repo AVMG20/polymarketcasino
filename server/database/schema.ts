@@ -1,0 +1,111 @@
+import { sql } from 'drizzle-orm'
+import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+
+/**
+ * Coins are whole integers (SQLite INTEGER is 64-bit). Payouts round down to
+ * the coin, so rounding never creates coins. Timestamps are Unix milliseconds.
+ */
+
+const createdAt = () => integer('created_at', { mode: 'timestamp_ms' }).notNull().default(sql`(unixepoch('subsec') * 1000)`)
+
+/**
+ * A hub account as the casino knows it. The id is the hub user id (the launch
+ * token's `sub`); name, image and title mirror the token at each launch.
+ * `coins` and `peak_coins` only move through server/utils/ledger.ts.
+ */
+export const players = sqliteTable('players', {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    image: text('image'),
+    title: text('title'),
+    // 'hub' players arrived with a launch token and exist at the hub; 'dev'
+    // players come from the dev login and never touch the hub.
+    origin: text('origin', { enum: ['hub', 'dev'] }).notNull().default('hub'),
+    coins: integer('coins').notNull().default(0),
+    // Highest balance ever held (a stat), raised in the same statement as the
+    // credit that beats it.
+    peakCoins: integer('peak_coins').notNull().default(0),
+    // The star level the hub last confirmed, and the ledger row id (`seq`) it
+    // was reported with. When starLevel(coins) differs, a report is due.
+    starsReported: integer('stars_reported').notNull().default(0),
+    starsSeq: integer('stars_seq').notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(sql`(unixepoch('subsec') * 1000)`)
+})
+
+/** The coin ledger: one row per credit or debit. Category is the game's plain lowercase name. */
+export const coinTransactions = sqliteTable(
+    'coin_transactions',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        // Always positive; `type` says which way it moved.
+        amount: integer('amount').notNull(),
+        type: text('type', { enum: ['credit', 'debit'] }).notNull(),
+        category: text('category').notNull(),
+        // The player's own money coming back (a crash refund): never income.
+        refund: integer('refund', { mode: 'boolean' }).notNull().default(false),
+        balanceAfter: integer('balance_after').notNull(),
+        createdAt: createdAt()
+    },
+    table => [index('coin_transactions_player_idx').on(table.playerId, table.id)]
+)
+
+/** Launch-token ids already exchanged for a session; a jti is accepted once. */
+export const launchTokens = sqliteTable('launch_tokens', {
+    jti: text('jti').primaryKey(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull()
+}, table => [index('launch_tokens_expires_idx').on(table.expiresAt)])
+
+/**
+ * Gem to coin conversions. A row is `pending` before the hub is asked to spend,
+ * so a crash between the spend and the credit leaves a row to retry with the
+ * same idempotency key (the hub replays it and never charges twice).
+ */
+export const gemConversions = sqliteTable(
+    'gem_conversions',
+    {
+        id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        gems: integer('gems').notNull(),
+        coins: integer('coins').notNull(),
+        status: text('status', { enum: ['pending', 'done', 'failed'] }).notNull().default('pending'),
+        idempotencyKey: text('idempotency_key').notNull().unique(),
+        spendId: text('spend_id'),
+        error: text('error'),
+        attempts: integer('attempts').notNull().default(0),
+        createdAt: createdAt(),
+        settledAt: integer('settled_at', { mode: 'timestamp_ms' })
+    },
+    table => [index('gem_conversions_status_idx').on(table.status, table.createdAt)]
+)
+
+/** One row per player per Amsterdam day. The primary key is the claim guard. */
+export const allowanceClaims = sqliteTable(
+    'allowance_claims',
+    {
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        day: text('day').notNull(),
+        amount: integer('amount').notNull(),
+        createdAt: createdAt()
+    },
+    table => [primaryKey({ columns: [table.playerId, table.day] })]
+)
+
+/**
+ * One settled round of any game: stake, payout and a small summary. Written in
+ * the same transaction as its ledger rows.
+ */
+export const gameRounds = sqliteTable(
+    'game_rounds',
+    {
+        id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        game: text('game').notNull(),
+        stake: integer('stake').notNull(),
+        payout: integer('payout').notNull(),
+        summary: text('summary', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+        createdAt: createdAt()
+    },
+    table => [index('game_rounds_player_idx').on(table.playerId, table.createdAt)]
+)
