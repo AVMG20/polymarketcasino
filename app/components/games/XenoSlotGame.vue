@@ -1,21 +1,25 @@
 <script setup lang="ts">
 // Xeno Slot: a 5×3, 5-line slot with a Hold & Win collector bonus. The server
 // decides every outcome (shared/slots/xenoslot); this component only presents
-// it, then settles the balance. Artwork shares vector paths between SVGs and
-// reel textures (~/utils/slots/xenoslot-art) and every sound is synthesized
-// (~/composables/useXenoSlotSound), so the game loads no image or audio files.
+// it. Artwork shares vector paths between SVGs and reel textures
+// (~/utils/slots/xenoslot-art) and every sound is synthesized
+// (~/composables/xenoslot-sound), so the game loads no image or audio files.
 import '@fontsource/orbitron/400.css'
+import '@fontsource/orbitron/500.css'
+import '@fontsource/orbitron/600.css'
 import '@fontsource/orbitron/700.css'
+import '@fontsource/orbitron/800.css'
 import '@fontsource/orbitron/900.css'
 import '@fontsource/audiowide/400.css'
 import '@fontsource/chakra-petch/500.css'
+import '@fontsource/chakra-petch/600.css'
 import '@fontsource/chakra-petch/700.css'
+import { ArrowRightIcon, LoaderCircleIcon, OrbitIcon, TriangleAlertIcon, XIcon, ZapIcon } from 'lucide-vue-next'
 import type { Container, Graphics, Sprite, Text, Texture } from 'pixi.js'
-import { ArrowRight, Loader2, Volume2, VolumeX } from 'lucide-vue-next'
-import { Button } from '@/components/ui/button'
 import { findGame } from '#shared/games/registry'
-import { formatCoins } from '#shared/money'
-import { XS_BONUS_SPINS as BONUS_FREE_SPINS, XS_BONUS_TRIGGER as BONUS_TRIGGER_COUNT, XS_BUY_COST, XS_LINES, XS_MAX_WIN, XS_WEIGHTS, type Cell, type XenoSlotResult, type XsLineWin, type XsSymbol as SlotSymbol, type XsWave } from '#shared/slots/xenoslot'
+import type { XenoSlotResult as XsResult } from '#shared/slots/xenoslot'
+import { XS_LINES as XENOSLOT_LINES, XS_MAX_WIN as XENOSLOT_MAX_WIN_MULT, XS_BUY_COST as XENOSLOT_BUY_BONUS_COST, XS_BONUS_SPINS as BONUS_FREE_SPINS, XS_BONUS_TRIGGER as BONUS_TRIGGER_COUNT } from '#shared/slots/xenoslot'
+import { xenoRound, type BonusWave, type Cell, type LineWin, type SlotSymbol, type XenoSlotResult } from '~/utils/slots/xenoslot-round'
 import { initSlotPixiApp, safeDestroy } from '~/utils/slot-pixi'
 import {
     XENO_COIN_TIER_INDEX,
@@ -34,63 +38,73 @@ import {
 import { XenoFx } from '~/utils/slots/xenoslot-fx'
 import { XENO_LINE_COLORS, XENO_PAYLINES } from '~/utils/slots/xenoslot-lines'
 import { makeXenoSymbols, type XenoSymbolClasses, type XenoSymbolTextures } from '~/utils/slots/xenoslot-symbols'
-import { suspenseStopDelays, teaseReelSpeed } from '~/utils/slots/reel-suspense'
 import XenoPaytable from '~/components/games/xenoslot/XenoPaytable.vue'
 import XenoBigWin from '~/components/games/xenoslot/XenoBigWin.vue'
-import type { SlotBuyOption, SlotSpinMode } from '~/components/game/SlotControls.vue'
+import SlotControlBar from '~/components/slots/SlotControlBar.vue'
+import type { SlotAutoSettings, SlotBuyOption, SlotSpinMode } from '~/utils/slots/slot-controls'
+import { XENO_BAR_THEME } from '~/utils/slots/slot-themes'
+import { suspenseStopDelays, teaseReelSpeed } from '~/utils/slots/reel-suspense'
 
 const info = findGame('xenoslot')!
-const round = useGameRound<XenoSlotResult>('xenoslot')
-const { coins: balance } = useCasinoSession()
+useHead({ title: info.name })
+onMounted(() => useHubBridge().postTitle(info.name))
+
+// Shown in the header and rules. The volatility rating sits a tier below
+// Fire in the Hole, whose max win is twice as high.
+const XS_RTP = `${Math.round(info.rtp * 1000) / 10}%`
+const XS_VOLATILITY = 4
+
+const { bet, isSpinning, errorMsg, balance, setBalance, history, pushHistory, spin: requestSpin } = useSlotGame<XsResult, { payout: number, bet: number, bonus: boolean }>('xenoslot')
 const sound = useXenoSlotSound()
-const bet = ref(info.minBet)
+const { soundEnabled, soundVolume, musicVolume } = sound
 
-// The round as the presentation reads it: every amount in coins at the
-// round's bet. Coin values on the board stay in × bet.
-interface LineWin extends XsLineWin { amount: number }
-interface BonusWave extends XsWave { hit: boolean }
-interface RoundView {
-    bet: number
-    cost: number
-    grid: SlotSymbol[][]
-    lines: LineWin[]
-    basePayout: number
-    bonusTriggered: boolean
-    bonusCells: Cell[]
-    bonus: { seed: XsWave['board'], waves: BonusWave[], bonusPayout: number } | null
-    payout: number
-}
+// --- bet --------------------------------------------------------------------
+// The casino's bet bounds (the old site took 1 to 100B).
+const MIN_BET = info.minBet
+const MAX_BET = info.maxBet
+// 1, 2, 5, 10, 20, 50 … within the bounds.
+const BET_LADDER: number[] = []
+for (let e = 0; e <= 11; e++) for (const m of [1, 2, 5]) if (m * 10 ** e >= MIN_BET && m * 10 ** e <= MAX_BET) BET_LADDER.push(m * 10 ** e)
 
-function viewOf(result: XenoSlotResult, theBet: number, stake: number, payout: number): RoundView {
-    // Whole coins as paid: the line part rounded down, the bonus the rest.
-    const basePayout = Math.min(payout, Math.floor(theBet * result.baseWin + 1e-9))
-    return {
-        bet: theBet,
-        cost: stake,
-        grid: result.grid,
-        lines: result.lines.map(l => ({ ...l, amount: l.win * theBet })),
-        basePayout,
-        bonusTriggered: result.bonus !== null,
-        bonusCells: result.bonusCells,
-        bonus: result.bonus
-            ? {
-                    seed: result.bonus.seed,
-                    waves: result.bonus.waves.map(w => ({ ...w, hit: w.coins.length + w.glovers.length + w.collectors.length > 0 })),
-                    bonusPayout: payout - basePayout
-                }
-            : null,
-        payout
-    }
+function clampBet(v: number): number {
+    if (!Number.isFinite(v) || v < MIN_BET) return MIN_BET
+    return Math.min(MAX_BET, Math.floor(v))
 }
 
 const betLocked = computed(() => phase.value !== 'idle' || autoplay.active)
 
-const buyBonusCost = computed(() => bet.value * XS_BUY_COST)
+function setBet(v: number, sfx?: 'bet-up' | 'bet-down') {
+    if (betLocked.value) return
+    const next = clampBet(v)
+    if (next === bet.value) return
+    bet.value = next
+    if (sfx) sound.play(sfx)
+}
+
+function betUp() {
+    setBet(BET_LADDER.find(v => v > bet.value) ?? MAX_BET, 'bet-up')
+}
+
+function betDown() {
+    setBet([...BET_LADDER].reverse().find(v => v < bet.value) ?? MIN_BET, 'bet-down')
+}
+
+function maxBet() {
+    const affordable = [...BET_LADDER].reverse().find(v => v <= balance.value) ?? MIN_BET
+    setBet(affordable, 'bet-up')
+}
+
+function typeBet(v: number) {
+    setBet(v, v > bet.value ? 'bet-up' : 'bet-down')
+}
+
+const buyBonusCost = computed(() => bet.value * XENOSLOT_BUY_BONUS_COST)
 const buyOptions = computed<SlotBuyOption[]>(() => [{
     id: 'holdwin',
     title: 'Hold & Win',
-    description: `${BONUS_TRIGGER_COUNT} coins, ${BONUS_FREE_SPINS} spins`,
-    cost: buyBonusCost.value
+    description: `Start the bonus with ${BONUS_TRIGGER_COUNT} coins, ${XENOSLOT_BUY_BONUS_COST}× bet`,
+    cost: buyBonusCost.value,
+    image: ufoArt.value
 }])
 
 // --- round / HUD state --------------------------------------------------------
@@ -103,7 +117,7 @@ const showHelp = ref(false)
 
 const winMeter = ref(0)
 const winning = ref(false)
-const message = ref('')
+const message = ref('Place your bet and spin')
 const messageTone = ref<'idle' | 'win' | 'bonus' | 'warn'>('idle')
 
 const inBonus = ref(false)
@@ -307,7 +321,7 @@ function buildStage() {
         gsap: GSAP!,
         tex,
         reelsMoving: () => reelsMoving,
-        format: v => formatCoins(v)
+        format: v => formatNumber(v, true)
     })
 
     reelSet = new R.ReelSetBuilder()
@@ -315,7 +329,7 @@ function buildStage() {
         .symbols((r: any) => {
             for (const id of SYMBOL_IDS) r.register(id, symbols!.XenoReelSymbol, {})
         })
-        .weights(XS_WEIGHTS)
+        .weights({ ten: 30, jack: 28, queen: 24, king: 20, ace: 16, bell: 12, seven: 7, diamond: 4, wild: 4, bonus: 5 })
         .speed('normal', { ...R.SpeedPresets.NORMAL, spinSpeed: 34, stopDelay: 170, bounceDistance: 30, bounceDuration: 380, anticipationDelay: 1500 })
         .speed('turbo', { ...R.SpeedPresets.TURBO, anticipationDelay: 700 })
         .initialFrame(INITIAL_GRID.map(col => ({ visible: col })))
@@ -387,6 +401,7 @@ onUnmounted(() => {
     destroyed = true
     window.removeEventListener('pointerdown', onFirstGesture)
     resizeObs?.disconnect()
+    stopAutoplay()
     requestSkip()
     sound.stopMusic()
     sound.stopEffects()
@@ -410,20 +425,22 @@ function onFirstGesture() {
     sound.startMusic()
 }
 
-function toggleSound() {
-    sound.toggle()
-    if (!sound.muted.value) sound.startMusic()
-}
-
 function click() {
     sound.unlock()
     sound.play('click')
 }
 
-watch(turbo, (on) => {
-    sound.play('toggle', on ? 1 : 0)
+function toggleTurbo() {
+    turbo.value = !turbo.value
+    sound.play('toggle', turbo.value ? 1 : 0)
     try {
-        localStorage.setItem('xenoslot-turbo', String(on))
+        localStorage.setItem('xenoslot-turbo', String(turbo.value))
+    } catch { /* storage blocked */ }
+}
+
+onMounted(() => {
+    try {
+        turbo.value = localStorage.getItem('xenoslot-turbo') === 'true'
     } catch { /* storage blocked */ }
 })
 
@@ -551,7 +568,7 @@ function onReelLanded(reelIndex: number) {
     if (anticipation.includes(reelIndex + 1) && !slammed) {
         reelGlow(reelIndex + 1, true)
         sound.play('anticipation')
-        say(`${scattersSeen} portals...`, 'bonus')
+        say(`${scattersSeen} portals... one more!`, 'bonus')
         teaseReelSpeed(GSAP!, reelSet.getReel(reelIndex + 1), reelSet.speed.active.spinSpeed, suspenseTiming().tease)
     }
 }
@@ -717,7 +734,7 @@ function winPop(cells: Cell[], amount: number, multiple: number, seconds: number
     const y = Math.min(APP_H - 60, Math.max(60, pts.reduce((s, p) => s + p.y, 0) / pts.length))
     const size = multiple >= 5 ? 88 : multiple >= 1.5 ? 74 : 62
     const t = new PIXI.Text({
-        text: `+${formatCoins(0)}`,
+        text: `+${formatNumber(0)}`,
         style: {
             fontFamily: '"Chakra Petch", system-ui, sans-serif',
             fontSize: size,
@@ -738,11 +755,11 @@ function winPop(cells: Cell[], amount: number, multiple: number, seconds: number
         duration: skipping ? 0 : seconds * speed(),
         ease: 'power1.out',
         onUpdate: () => {
-            if (!t.destroyed) t.text = `+${formatCoins(obj.v)}`
+            if (!t.destroyed) t.text = `+${formatNumber(obj.v)}`
         },
         onComplete: () => {
             if (t.destroyed) return
-            t.text = `+${formatCoins(amount)}`
+            t.text = `+${formatNumber(amount)}`
             GSAP!.fromTo(t.scale, { x: 1.18, y: 1.18 }, { x: 1, y: 1, duration: 0.3, ease: 'back.out(3)' })
         }
     })
@@ -754,10 +771,10 @@ function winPop(cells: Cell[], amount: number, multiple: number, seconds: number
 }
 
 function lineLabel(win: LineWin) {
-    return `Line ${win.line + 1} · ${win.count}× ${XENO_SYMBOLS[win.symbol].name} · ${formatCoins(win.amount)}`
+    return `Line ${win.line + 1} · ${win.count}× ${XENO_SYMBOLS[win.symbol].name} · ${formatNumber(win.amount)}`
 }
 
-async function presentLineWins(result: RoundView) {
+async function presentLineWins(result: XenoSlotResult) {
     const lines = result.lines
     if (!lines.length || !reelSet) return
     const multiple = result.basePayout / result.bet
@@ -771,7 +788,7 @@ async function presentLineWins(result: RoundView) {
         const p = cellCenter(c)
         fx?.burst(p.x, p.y, { count: multiple >= 5 ? 14 : 8, colors: [0xfde047, 0xffffff, 0xa3e635], speed: 240 })
     }
-    say(lines.length > 1 ? `${lines.length} lines win ${formatCoins(result.basePayout)}` : lineLabel(lines[0]!), 'win')
+    say(lines.length > 1 ? `${lines.length} lines win ${formatNumber(result.basePayout)}` : lineLabel(lines[0]!), 'win')
 
     const tier = tierFor(multiple)
     if (tier >= 0) {
@@ -799,7 +816,7 @@ async function presentLineWins(result: RoundView) {
             spotlight(l.cells)
             sound.play('line-show', l.line)
             const mid = cellCenter(l.cells[Math.floor((l.cells.length - 1) / 2)]!)
-            floatAmount(mid.x, mid.y, `+${formatCoins(l.amount)}`)
+            floatAmount(mid.x, mid.y, `+${formatNumber(l.amount)}`)
             say(lineLabel(l), 'win')
             await delay(1000)
         }
@@ -870,44 +887,53 @@ async function showBigWin(amount: number, multiple: number, base = 0) {
 
 // --- spin flow -----------------------------------------------------------------
 async function spin(buy = false) {
-    if (!ready.value || phase.value !== 'idle' || !reelSet || round.busy.value) return
+    if (!ready.value || phase.value !== 'idle' || !reelSet) return
     sound.unlock()
     sound.startMusic()
-    const theBet = bet.value
-    const cost = buy ? buyBonusCost.value : theBet
+    const cost = buy ? buyBonusCost.value : bet.value
     if (balance.value < cost) {
-        say('Not enough coins', 'warn')
+        say('Not enough coins for this bet', 'warn')
         sound.play('error')
         stopAutoplay()
         return
     }
+    const balanceBefore = balance.value
+    const theBet = bet.value
+    let debited = false
     skipping = false
 
-    phase.value = 'spinning'
-    resetRound()
-    sound.play(buy ? 'buy-bonus' : 'spin-start')
-    sound.startWhir()
-    say(buy ? 'Hold & Win bought' : '')
-    reelsMoving = true
-    reelSet.setSpeed(turbo.value ? 'turbo' : 'normal')
-    slammed = false
-    setSuspense([])
-    reelSpin = reelSet.spin()
+    const data = await requestSpin(cost, buy ? { buy: true } : undefined, () => {
+        phase.value = 'spinning'
+        debited = true
+        setBalance(balanceBefore - cost)
+        resetRound()
+        sound.play(buy ? 'buy-bonus' : 'spin-start')
+        sound.startWhir()
+        say(buy ? 'Bonus bought. Opening the portals' : 'Good luck!')
+        reelsMoving = true
+        reelSet.setSpeed(turbo.value ? 'turbo' : 'normal')
+        slammed = false
+        setSuspense([])
+        reelSpin = reelSet.spin()
+    })
 
-    const response = await round.play({ bet: theBet, options: buy ? { buy: true } : {} })
-    if (!response) {
-        // Land the reels back where they were; useGameRound showed the error.
-        reelSet.setResult(reelSet.getVisibleGrid().map((col: string[]) => ({ visible: col })))
-        await reelSpin
-        reelsMoving = false
-        sound.stopWhir()
-        say('')
-        phase.value = 'idle'
-        stopAutoplay()
+    if (!data) {
+        if (debited) {
+            setBalance(balanceBefore)
+            // Land the reels back where they were.
+            reelSet.setResult(reelSet.getVisibleGrid().map((col: string[]) => ({ visible: col })))
+            await reelSpin
+            reelsMoving = false
+            sound.stopWhir()
+            say(errorMsg.value || 'Spin failed', 'warn')
+            phase.value = 'idle'
+            stopAutoplay()
+        }
         return
     }
 
-    const result = viewOf(response.result, theBet, response.stake, response.payout)
+    const result = xenoRound(data.gameData, theBet, cost)
+    let roundWin = 0
     try {
         roundGrid = result.grid
         anticipation = anticipationReels(result.grid)
@@ -925,32 +951,36 @@ async function spin(buy = false) {
 
         if (result.lines.length) {
             await presentLineWins(result)
+            roundWin = result.basePayout
         } else if (!result.bonusTriggered) {
-            say(autoplay.active ? `Auto · ${autoplay.left} left` : '')
+            say(autoplay.active ? `Autoplay · ${autoplay.left} left` : 'No win this time. Spin again')
         }
 
         if (result.bonusTriggered && result.bonus && !destroyed) {
             skipping = false
             phase.value = 'bonus'
             await playBonus(result)
+            roundWin = result.payout
         }
 
         winMeter.value = result.payout
-        if (result.payout > 0 && !result.bonusTriggered) say(`Win ${formatCoins(result.payout)}`, 'win')
+        setBalance(data.balance)
+        pushHistory({ payout: result.payout, bet: result.cost, bonus: result.bonusTriggered })
+        if (result.payout > 0 && !result.bonusTriggered) say(`You won ${formatNumber(result.payout)}`, 'win')
     } catch (e) {
-        console.error(e)
+        errorMsg.value = e instanceof Error ? e.message : 'Animation error'
+        setBalance(data.balance)
         stopAutoplay()
     } finally {
-        // The balance lands only now, after the reveal.
-        round.settle()
         reelsMoving = false
         sound.stopWhir()
+        isSpinning.value = false
         phase.value = 'idle'
         winning.value = false
     }
 
     if (destroyed) return
-    continueAutoplay(result)
+    continueAutoplay(result, roundWin)
 }
 
 let reelSpin: Promise<unknown> | null = null
@@ -963,6 +993,7 @@ function resetRound() {
     scattersSeen = 0
     anticipation = []
     roundGrid = null
+    errorMsg.value = ''
     meterTween?.kill()
     clearLines()
     clearFloats()
@@ -989,7 +1020,7 @@ function onSpinButton() {
         hurry()
         return
     }
-    void spin()
+    spin()
 }
 
 // --- Hold & Win --------------------------------------------------------------------
@@ -997,7 +1028,7 @@ function absCenter(cell: Cell) {
     return cellCenter(cell)
 }
 
-async function playBonus(result: RoundView) {
+async function playBonus(result: XenoSlotResult) {
     const bonus = result.bonus!
     if (!PIXI || !REELS || !GSAP || !app || !symbols || !stageRoot) return
 
@@ -1166,7 +1197,7 @@ async function playBonus(result: RoundView) {
     bonusOutro.value = true
     if (dimLayer) void tween(dimLayer, { alpha: 0.6, duration: 0.3 })
     sound.play('bonus-end')
-    say(bonus.bonusPayout > 0 ? `Hold & Win paid ${formatCoins(bonus.bonusPayout)}` : 'No UFO landed. The coins stay behind', bonus.bonusPayout > 0 ? 'win' : 'idle')
+    say(bonus.bonusPayout > 0 ? `Hold & Win paid ${formatNumber(bonus.bonusPayout)}` : 'No UFO landed. The coins stay behind', bonus.bonusPayout > 0 ? 'win' : 'idle')
     if (bonus.bonusPayout > 0) fx?.burst(APP_W / 2, APP_H / 2, { count: 60, kind: 'mix', speed: 520, colors: [0xfde047, 0xffffff, 0xf0abfc] })
     await delay(2400)
     bonusOutro.value = false
@@ -1250,7 +1281,7 @@ function flyCoin(fromCell: Cell, toCell: Cell, amount: number, mult: number, onA
     s.anchor.set(0.5)
     s.width = 58
     s.height = 58
-    const t: Text = new PIXI.Text({ text: formatCoins(amount, true), style: { fontFamily: '"Chakra Petch", system-ui, sans-serif', fontSize: 16, fontWeight: '700', fill: 0xffffff, stroke: { color: 0x1a0b2e, width: 4, join: 'round' } } })
+    const t: Text = new PIXI.Text({ text: formatNumber(amount, true), style: { fontFamily: '"Chakra Petch", system-ui, sans-serif', fontSize: 16, fontWeight: '700', fill: 0xffffff, stroke: { color: 0x1a0b2e, width: 4, join: 'round' } } })
     t.anchor.set(0.5)
     if (t.width > 46) t.scale.set(46 / t.width)
     clone.addChild(s, t)
@@ -1279,28 +1310,31 @@ function flyCoin(fromCell: Cell, toCell: Cell, amount: number, mult: number, onA
 }
 
 // --- autoplay ----------------------------------------------------------------------
-function startAutoplay() {
-    autoplay.start({ count: 10, stopOnBonus: true, stopOnWinX: 0, stopOnLossPct: 0 }, balance.value)
-    click()
-    if (phase.value === 'idle') void spin()
+function startAutoplay(settings: SlotAutoSettings) {
+    autoplay.start(settings, balance.value)
+    sound.play('click')
+    if (phase.value === 'idle') spin()
 }
 
 function stopAutoplay() {
     autoplay.stop()
 }
 
-function continueAutoplay(result: RoundView) {
+function continueAutoplay(result: XenoSlotResult, _roundWin: number) {
     if (!autoplay.active) return
-    if (!autoplay.finish({ payout: result.payout, bet: result.bet, bonus: result.bonusTriggered }, balance.value, bet.value)) return
+    if (!autoplay.finish({ payout: result.payout, bet: result.bet, bonus: result.bonusTriggered }, balance.value, bet.value)) {
+        if (balance.value < bet.value) say('Autoplay stopped: balance too low', 'warn')
+        return
+    }
     setTimeout(() => {
-        if (!destroyed && autoplay.active) void spin()
+        if (!destroyed && autoplay.active) spin()
     }, turbo.value ? 150 : 350)
 }
 
 // --- buy bonus -----------------------------------------------------------------
 function buyBonus() {
     if (phase.value !== 'idle' || autoplay.active) return
-    void spin(true)
+    spin(true)
 }
 
 // --- template helpers ---------------------------------------------------------------
@@ -1310,165 +1344,227 @@ const spinMode = computed<SlotSpinMode>(() => {
     if (phase.value !== 'idle') return 'skip'
     return 'spin'
 })
+const xenoTheme = {
+    // The old site's Nuxt UI tokens, on the casino's colours.
+    '--ui-bg': 'var(--background)',
+    '--ui-bg-muted': 'var(--card)',
+    '--ui-bg-elevated': 'var(--muted)',
+    '--ui-bg-inverted': 'var(--foreground)',
+    '--ui-border': 'var(--border)',
+    '--ui-border-accented': 'var(--input)',
+    '--ui-text': 'var(--foreground)',
+    '--ui-text-highlighted': 'var(--foreground)',
+    '--ui-text-muted': 'var(--muted-foreground)',
+    // Tailwind's lime-400 and violet-400.
+    '--ui-primary': 'oklch(84.1% 0.238 128.85)',
+    '--ui-secondary': 'oklch(70.2% 0.183 293.541)'
+}
+const volatilityPips = Array.from({ length: 5 }, (_, i) => i < XS_VOLATILITY)
 </script>
 
 <template>
-  <GameFrame slug="xenoslot">
-    <template #actions>
-      <Button size="icon" variant="ghost" :title="sound.muted.value ? 'Sound on' : 'Sound off'" @click="toggleSound">
-        <VolumeX v-if="sound.muted.value" class="size-5" />
-        <Volume2 v-else class="size-5" />
-      </Button>
-    </template>
+  <div class="xs-page" :style="xenoTheme" :class="{ 'is-bonus': inBonus }">
+    <!-- Deep-space backdrop -->
+    <div class="xs-sky" aria-hidden="true">
+      <div class="xs-sky__stars" />
+      <div class="xs-sky__stars xs-sky__stars--far" />
+      <div class="xs-sky__planet" />
+      <div class="xs-sky__grid" />
+    </div>
 
-    <div class="xs-page" :class="{ 'is-bonus': inBonus }">
-      <!-- Deep-space backdrop -->
-      <div class="xs-sky" aria-hidden="true">
-        <div class="xs-sky__stars" />
-        <div class="xs-sky__stars xs-sky__stars--far" />
-        <div class="xs-sky__planet" />
-        <div class="xs-sky__grid" />
-      </div>
+    <div class="xs-stage">
+      <!-- Cabinet -->
+      <div class="xs-cabinet">
+        <div class="xs-lights" aria-hidden="true" />
 
-      <div class="xs-stage">
-        <!-- Cabinet -->
-        <div class="xs-cabinet">
-          <div class="xs-lights" aria-hidden="true" />
-
-          <header class="xs-marquee">
-            <div class="xs-logo">
-              <img v-if="ufoArt" :src="ufoArt" alt="" class="xs-logo__ufo">
-              <p class="xs-logo__word">XENO</p>
-              <span class="xs-logo__slot">SLOT</span>
-            </div>
-
-            <Transition name="xs-fade" mode="out-in">
-              <div v-if="inBonus" key="hud" class="xs-hud">
-                <div class="xs-hud__block">
-                  <span class="xs-hud__label">Hold &amp; Win · {{ bonusSpinsLeft }} {{ bonusSpinsLeft === 1 ? 'spin' : 'spins' }} left</span>
-                  <div class="xs-hud__pips">
-                    <span v-for="i in BONUS_FREE_SPINS" :key="i" class="xs-hud__pip" :class="{ 'is-on': i <= bonusSpinsLeft }" />
-                  </div>
-                </div>
-              </div>
-              <div v-else key="badges" class="xs-badges">
-                <span class="xs-badge">{{ XS_LINES }} lines</span>
-                <span class="xs-badge xs-badge--hot">Hold &amp; Win</span>
-                <span class="xs-badge">Max {{ formatCoins(XS_MAX_WIN, false) }}×</span>
-              </div>
-            </Transition>
-          </header>
-
-          <!-- Reel window -->
-          <div ref="windowEl" class="xs-window" :data-xs-idle="phase === 'idle' && ready" :data-xs-winning="winning">
-            <div class="xs-window__inner">
-              <div ref="canvasWrap" class="xs-canvas" />
-              <div class="xs-window__glass" aria-hidden="true" />
-
-              <div v-if="!ready && !loadError" class="xs-overlay xs-overlay--loading">
-                <Loader2 class="size-8 animate-spin text-[#a3e635]" role="status" aria-label="Loading" />
-              </div>
-              <div v-if="loadError" class="xs-overlay">
-                <p class="xs-card__sub">
-                  {{ loadError }}
-                </p>
-              </div>
-
-              <Transition name="xs-pop">
-                <div v-if="bonusIntro" class="xs-overlay" @click="requestSkip">
-                  <div class="xs-card xs-card--bonus">
-                    <img v-if="ufoArt" :src="ufoArt" alt="" class="xs-card__ufo">
-                    <p class="xs-card__title">
-                      HOLD &amp; WIN
-                    </p>
-                    <p class="xs-card__sub">
-                      {{ BONUS_FREE_SPINS }} spins
-                    </p>
-                    <Button class="mt-4 h-11" @click.stop="requestSkip">
-                      Start <ArrowRight class="size-4" />
-                    </Button>
-                  </div>
-                </div>
-              </Transition>
-
-              <Transition name="xs-pop">
-                <div v-if="bonusOutro" class="xs-overlay" @click="requestSkip">
-                  <div class="xs-card">
-                    <p class="xs-card__kicker">
-                      Hold &amp; Win
-                    </p>
-                    <p class="xs-card__amount" :class="{ 'is-zero': bonusOutroAmount <= 0 }">
-                      {{ formatCoins(bonusOutroAmount) }}
-                    </p>
-                    <Button class="mt-4 h-11" @click.stop="requestSkip">
-                      Continue <ArrowRight class="size-4" />
-                    </Button>
-                  </div>
-                </div>
-              </Transition>
-
-              <Transition name="xs-pop">
-                <XenoBigWin
-                  v-if="bigWin.show"
-                  :label="bigWin.label"
-                  :tier="bigWin.tier"
-                  :amount="bigWin.amount"
-                  :multiple="bigWin.multiple"
-                  @skip="requestSkip"
-                />
-              </Transition>
-            </div>
+        <header class="xs-marquee">
+          <p class="xs-marquee__eyebrow">Deep-space salvage</p>
+          <div class="xs-logo">
+            <img v-if="ufoArt" :src="ufoArt" alt="" class="xs-logo__ufo">
+            <h1 class="xs-logo__word">
+              XENO
+            </h1>
+            <span class="xs-logo__slot">SLOT</span>
           </div>
 
-          <!-- Message strip -->
-          <div class="xs-ticker" :class="`is-${messageTone}`" role="status">
-            <Transition name="xs-fade" mode="out-in">
-              <span :key="message" class="xs-ticker__msg">{{ message || '\u00a0' }}</span>
+          <Transition name="xs-fade" mode="out-in">
+            <div v-if="inBonus" key="hud" class="xs-hud">
+              <div class="xs-hud__block">
+                <span class="xs-hud__label">Hold &amp; Win · {{ bonusSpinsLeft }} {{ bonusSpinsLeft === 1 ? 'spin' : 'spins' }} left</span>
+                <div class="xs-hud__pips">
+                  <span v-for="i in BONUS_FREE_SPINS" :key="i" class="xs-hud__pip" :class="{ 'is-on': i <= bonusSpinsLeft }" />
+                </div>
+              </div>
+            </div>
+            <div v-else key="badges" class="xs-badges">
+              <span class="xs-badge">{{ XENOSLOT_LINES }} lines</span>
+              <span class="xs-badge xs-badge--hot">Hold &amp; Win</span>
+              <span class="xs-badge">RTP {{ XS_RTP }}</span>
+              <span class="xs-badge">Max {{ formatNumber(XENOSLOT_MAX_WIN_MULT, false) }}×</span>
+              <span class="xs-badge xs-badge--vol" :title="`Volatility ${XS_VOLATILITY} of 5`">
+                <ZapIcon v-for="(on, i) in volatilityPips" :key="i" class="size-3" :class="on ? 'is-on' : ''" />
+              </span>
+            </div>
+          </Transition>
+        </header>
+
+        <!-- Reel window -->
+        <div ref="windowEl" class="xs-window" :data-xs-idle="phase === 'idle' && ready" :data-xs-winning="winning">
+          <div class="xs-window__inner">
+            <div ref="canvasWrap" class="xs-canvas" />
+            <div class="xs-window__glass" aria-hidden="true" />
+
+            <div v-if="!ready && !loadError" class="xs-overlay xs-overlay--loading">
+              <div class="flex flex-col items-center gap-3" role="status">
+                <LoaderCircleIcon class="size-8 animate-spin text-(--ui-primary)" />
+                <span class="text-sm text-muted-foreground">Preparing for launch...</span>
+              </div>
+            </div>
+            <div v-if="loadError" class="xs-overlay">
+              <p class="xs-card__sub">
+                {{ loadError }}
+              </p>
+            </div>
+
+            <Transition name="xs-pop">
+              <div v-if="bonusIntro" class="xs-overlay" @click="requestSkip">
+                <div class="xs-card xs-card--bonus">
+                  <img v-if="ufoArt" :src="ufoArt" alt="" class="xs-card__ufo">
+                  <p class="xs-card__kicker">
+                    Bonus unlocked
+                  </p>
+                  <p class="xs-card__title">
+                    HOLD &amp; WIN
+                  </p>
+                  <p class="xs-card__sub">
+                    {{ BONUS_FREE_SPINS }} spins. Coins stick, cores multiply, a UFO collects.
+                  </p>
+                  <button type="button" class="xs-ubutton mt-4" @click.stop="requestSkip">Enter Hold &amp; Win<ArrowRightIcon class="size-5 shrink-0" /></button>
+                </div>
+              </div>
             </Transition>
-            <span v-if="winMeter > 0" class="xs-ticker__win">{{ formatCoins(winMeter) }}</span>
+
+            <Transition name="xs-pop">
+              <div v-if="bonusOutro" class="xs-overlay" @click="requestSkip">
+                <div class="xs-card">
+                  <p class="xs-card__kicker">
+                    Bonus complete
+                  </p>
+                  <p class="xs-card__amount" :class="{ 'is-zero': bonusOutroAmount <= 0 }">
+                    {{ formatNumber(bonusOutroAmount) }}
+                  </p>
+                  <p class="xs-card__sub">
+                    {{ bonusOutroAmount > 0 ? 'collected by the UFOs' : 'No UFO landed this time' }}
+                  </p>
+                  <button type="button" class="xs-ubutton mt-4" @click.stop="requestSkip">Continue<ArrowRightIcon class="size-5 shrink-0" /></button>
+                </div>
+              </div>
+            </Transition>
+
+            <Transition name="xs-pop">
+              <XenoBigWin
+                v-if="bigWin.show"
+                :label="bigWin.label"
+                :tier="bigWin.tier"
+                :amount="bigWin.amount"
+                :multiple="bigWin.multiple"
+                @skip="requestSkip"
+              />
+            </Transition>
+
           </div>
         </div>
+
+        <!-- Message strip -->
+        <div class="xs-ticker" :class="`is-${messageTone}`" role="status">
+          <Transition name="xs-fade" mode="out-in">
+            <span :key="message">{{ message }}</span>
+          </Transition>
+        </div>
+
+        <SlotControlBar
+          class="xs-bar"
+          :theme="XENO_BAR_THEME"
+          :balance="balance"
+          :bet="bet"
+          :bet-min="MIN_BET"
+          :bet-max="MAX_BET"
+          :bet-locked="betLocked"
+          :win="winMeter"
+          :win-label="inBonus ? 'Bonus win' : 'Win'"
+          :spin-mode="spinMode"
+          :spin-disabled="!canSpin"
+          :auto-left="autoplay.left"
+          :auto-disabled="!canSpin || phase !== 'idle'"
+          :turbo="turbo"
+          :buys="buyOptions"
+          :buy-disabled="!ready || phase !== 'idle' || autoplay.active"
+          :space-blocked="showHelp"
+          v-model:sound-on="soundEnabled"
+          v-model:volume="soundVolume"
+          v-model:music-volume="musicVolume"
+          @spin="onSpinButton"
+          @bet-down="betDown"
+          @bet-up="betUp"
+          @bet-max="maxBet"
+          @bet-set="typeBet"
+          @auto-start="startAutoplay"
+          @auto-stop="click(); stopAutoplay()"
+          @toggle-turbo="toggleTurbo"
+          @buy="buyBonus"
+          @info="click(); showHelp = true"
+          @ui-click="click"
+        />
+
+        <Transition name="xs-fade">
+          <div v-if="errorMsg" class="xs-error">
+            <TriangleAlertIcon class="size-4 shrink-0" />
+            <span class="flex-1">{{ errorMsg }}</span>
+            <button aria-label="Dismiss" @click="errorMsg = ''">
+              <XIcon class="size-4" />
+            </button>
+          </div>
+        </Transition>
       </div>
     </div>
 
-    <GameSlotControls
-      v-model:bet="bet"
-      v-model:turbo="turbo"
-      :min="info.minBet"
-      :max="info.maxBet"
-      :locked="betLocked"
-      :spin-mode="spinMode"
-      :spin-disabled="!canSpin"
-      :auto-left="autoplay.left"
-      :auto-disabled="!canSpin || phase !== 'idle'"
-      :buys="buyOptions"
-      :buy-disabled="!ready || phase !== 'idle'"
-      @spin="onSpinButton"
-      @auto-start="startAutoplay"
-      @auto-stop="click(); stopAutoplay()"
-      @buy="buyBonus"
-    />
+    <!-- History -->
+    <div v-if="history.length" class="xs-history">
+      <span class="xs-history__label">Last rounds</span>
+      <span
+        v-for="(h, i) in history"
+        :key="i"
+        class="xs-history__chip"
+        :class="{ 'is-win': h.payout > h.bet, 'is-bonus': h.bonus }"
+      >
+        <OrbitIcon v-if="h.bonus" class="size-3" />
+        {{ h.payout > 0 ? formatNumber(h.payout) : '–' }}
+      </span>
+    </div>
 
-    <template #rules>
-      <XenoPaytable :bet="bet" />
-    </template>
-  </GameFrame>
+    <XenoPaytable v-model:open="showHelp" :bet="bet" :rtp="XS_RTP" :volatility="XS_VOLATILITY" />
+  </div>
 </template>
 
 <style scoped>
+/* Nuxt UI's solid primary button, as the old bonus cards had it. */
+.xs-ubutton { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; font-family: var(--font-sans), sans-serif; font-size: 14px; font-weight: 500; color: var(--ui-bg); background: var(--ui-primary); transition: background-color 0.15s; }
+.xs-ubutton:hover { background: color-mix(in srgb, var(--ui-primary) 75%, transparent); }
+.xs-ubutton:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
+.xs-marquee__eyebrow { font-family: var(--font-sans), sans-serif; font-size: 10px; text-transform: uppercase; letter-spacing: 0.24em; color: var(--ui-text-muted); }
 
 /* ── Page & deep-space backdrop ─────────────────────────────────────────── */
 .xs-page {
-  --xs-shell: color-mix(in srgb, var(--xs-violet) 22%, var(--background));
-  --xs-shell-deep: color-mix(in srgb, var(--xs-violet) 9%, var(--background));
-  --xs-violet: #a78bfa;
+  --xs-shell: color-mix(in srgb, var(--ui-secondary) 22%, var(--ui-bg));
+  --xs-shell-deep: color-mix(in srgb, var(--ui-secondary) 9%, var(--ui-bg));
+  --xs-violet: var(--ui-secondary);
   --xs-magenta: #d946ef;
   --xs-cyan: #22d3ee;
   --xs-lime: #a3e635;
   --xs-gold: #facc15;
   --xs-ink: #0a0518;
-  --xs-text: var(--foreground);
-  --xs-dim: var(--muted-foreground);
+  --xs-text: var(--ui-text-highlighted);
+  --xs-dim: var(--ui-text-muted);
   --xs-chrome: linear-gradient(180deg, rgba(196, 181, 253, 0.55) 0%, rgba(139, 92, 246, 0.28) 30%, rgba(76, 29, 149, 0.2) 70%, rgba(167, 139, 250, 0.4) 100%);
   position: relative;
   min-height: 100%;
@@ -1476,12 +1572,11 @@ const spinMode = computed<SlotSpinMode>(() => {
   flex-direction: column;
   align-items: center;
   padding: 24px 14px 28px;
-  border-radius: 1rem;
   overflow: hidden;
   isolation: isolate;
   color: var(--xs-text);
   font-family: 'Orbitron', system-ui, sans-serif;
-  background: var(--background);
+  background: var(--ui-bg);
   container-type: inline-size;
   container-name: xs-page;
 }
@@ -1579,6 +1674,7 @@ const spinMode = computed<SlotSpinMode>(() => {
   gap: 12px;
 }
 
+
 /* ── Buy card ──────────────────────────────────────────────────────────── */
 
 @keyframes xs-bob {
@@ -1597,9 +1693,9 @@ const spinMode = computed<SlotSpinMode>(() => {
   position: relative;
   padding: 18px 14px 14px;
   border-radius: 24px;
-  border: 1px solid color-mix(in srgb, var(--xs-violet) 40%, var(--border));
-  background: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--xs-violet) 20%, transparent), transparent 70%), linear-gradient(180deg, var(--xs-shell), var(--xs-shell-deep));
-  box-shadow: 0 24px 64px color-mix(in srgb, var(--foreground) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ui-secondary) 40%, var(--ui-border));
+  background: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--ui-secondary) 20%, transparent), transparent 70%), linear-gradient(180deg, var(--xs-shell), var(--xs-shell-deep));
+  box-shadow: 0 24px 64px color-mix(in srgb, var(--ui-bg-inverted) 12%, transparent);
   container-type: inline-size;
   container-name: xs-cab;
   transition: box-shadow 0.6s;
@@ -1619,12 +1715,12 @@ const spinMode = computed<SlotSpinMode>(() => {
   right: 32px;
   top: 0;
   height: 2px;
-  background: linear-gradient(90deg, transparent, var(--xs-lime), var(--xs-violet), transparent);
+  background: linear-gradient(90deg, transparent, var(--ui-primary), var(--ui-secondary), transparent);
 }
 
 .is-bonus .xs-lights {
-  background: var(--xs-violet);
-  box-shadow: 0 0 12px var(--xs-violet);
+  background: var(--ui-secondary);
+  box-shadow: 0 0 12px var(--ui-secondary);
 }
 
 @keyframes xs-chase {
@@ -1657,17 +1753,17 @@ const spinMode = computed<SlotSpinMode>(() => {
   font-size: clamp(32px, 7cqw, 52px);
   line-height: 1;
   letter-spacing: 0.06em;
-  color: var(--foreground);
+  color: var(--ui-text-highlighted);
 }
 
 .xs-logo__slot {
   padding: 5px 9px;
-  border: 1px solid var(--xs-lime);
+  border: 1px solid var(--ui-primary);
   border-radius: 5px;
   font-family: 'Audiowide', sans-serif;
   font-size: clamp(12px, 2.4cqw, 17px);
   letter-spacing: 0.2em;
-  color: var(--xs-lime);
+  color: var(--ui-primary);
 }
 
 @keyframes xs-flicker {
@@ -1707,7 +1803,10 @@ const spinMode = computed<SlotSpinMode>(() => {
   background: rgba(167, 139, 250, 0.5);
 }
 
-.xs-badge--hot { color: var(--xs-violet); }
+.xs-badge--hot { color: var(--ui-secondary); }
+
+.xs-badge--vol :deep(.iconify) { color: rgba(167, 139, 250, 0.35); }
+.xs-badge--vol :deep(.is-on) { color: #facc15; filter: drop-shadow(0 0 3px rgba(250, 204, 21, 0.8)); }
 
 .xs-hud {
   display: flex;
@@ -1750,10 +1849,10 @@ const spinMode = computed<SlotSpinMode>(() => {
 .xs-window {
   position: relative;
   padding: 3px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ui-border-accented);
   border-radius: 19px;
-  background: color-mix(in srgb, var(--xs-violet) 65%, var(--border));
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--foreground) 10%, transparent);
+  background: color-mix(in srgb, var(--ui-secondary) 65%, var(--ui-border));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ui-bg-inverted) 10%, transparent);
   transition: box-shadow 0.4s;
 }
 
@@ -1817,9 +1916,9 @@ const spinMode = computed<SlotSpinMode>(() => {
   padding: 24px;
   border-radius: 20px;
   text-align: center;
-  background: var(--background);
-  border: 1px solid var(--border);
-  box-shadow: 0 16px 48px color-mix(in srgb, var(--foreground) 20%, transparent);
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border-accented);
+  box-shadow: 0 16px 48px color-mix(in srgb, var(--ui-bg-inverted) 20%, transparent);
 }
 
 .xs-card--bonus { padding-top: 54px; }
@@ -1882,16 +1981,14 @@ const spinMode = computed<SlotSpinMode>(() => {
   display: grid;
   place-items: center;
   padding: 5px 0;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans), sans-serif;
   font-size: 13px;
   font-weight: 500;
   text-align: center;
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
 }
 
-.xs-ticker { grid-template-columns: minmax(0, 1fr) auto; }
-.xs-ticker__msg { grid-column: 1; grid-row: 1; justify-self: start; min-width: 0; max-width: 100%; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.xs-ticker__win { grid-column: 2; grid-row: 1; padding: 0 10px; font-family: 'Chakra Petch', monospace; font-weight: 700; font-size: 16px; font-variant-numeric: tabular-nums; color: #fde68a; text-shadow: 0 0 8px rgba(250, 204, 21, 0.6); }
+.xs-ticker > span { max-width: 100%; padding: 0 10px; }
 .xs-ticker.is-win { color: #fde68a; text-shadow: 0 0 8px rgba(250, 204, 21, 0.7); }
 .xs-ticker.is-bonus { color: #f5d0fe; text-shadow: 0 0 8px rgba(217, 70, 239, 0.8); }
 .xs-ticker.is-warn { color: #fca5a5; }
@@ -1910,8 +2007,65 @@ const spinMode = computed<SlotSpinMode>(() => {
 }
 
 /* The controls sit on the cabinet itself, split off by a hairline, not boxed in a second card. */
+.xs-bar {
+  margin-top: 6px;
+  border-top: 1px solid rgba(196, 181, 253, 0.1);
+}
+
+.xs-bar :deep(.sc-grid) {
+  background: transparent;
+  padding: 14px 6px 4px;
+}
+
+.xs-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.4);
+}
 
 /* ── History ───────────────────────────────────────────────────────────── */
+.xs-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+  max-width: 860px;
+}
+
+.xs-history__label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(167, 139, 250, 0.7);
+}
+
+.xs-history__chip {
+  font-family: 'Chakra Petch', 'Orbitron', monospace;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(221, 214, 254, 0.45);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(167, 139, 250, 0.15);
+}
+
+.xs-history__chip.is-win { color: #fde68a; border-color: rgba(250, 204, 21, 0.4); }
+.xs-history__chip.is-bonus { color: #f5d0fe; border-color: rgba(217, 70, 239, 0.5); }
 
 /* ── Transitions ───────────────────────────────────────────────────────── */
 .xs-fade-enter-active, .xs-fade-leave-active { transition: opacity 0.2s, transform 0.2s; }
@@ -1925,14 +2079,31 @@ const spinMode = computed<SlotSpinMode>(() => {
 
 /* ── Narrow cabinets (phones, small windows) ───────────────────────────── */
 @container xs-cab (max-width: 620px) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   .xs-marquee { justify-content: center; }
   .xs-badges { justify-content: center; }
 }
 
 @container xs-cab (max-width: 440px) {
   .xs-cabinet { padding: 10px; }
+
+
   .xs-badge { font-size: 9px; letter-spacing: 0.1em; }
   .xs-badge + .xs-badge::before { margin: 0 7px; }
+
   .xs-ticker { font-size: 10px; letter-spacing: 0.08em; }
 }
 
@@ -1945,7 +2116,12 @@ const spinMode = computed<SlotSpinMode>(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .xs-sky__stars,
-  .xs-lights,
-  .xs-logo__ufo { animation: none !important; }
+.xs-lights,
+.xs-logo__ufo { animation: none !important; }
 }
+</style>
+
+<style>
+/* Sound popover content is teleported. */
+
 </style>

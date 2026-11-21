@@ -1,6 +1,7 @@
 // Xeno Slot sound playback. Every effect is synthesized on the fly
-// (app/utils/slots/xenoslot-synth.ts); nothing is fetched: per-event levels,
-// cooldowns and voice caps, muted with the shell's switch.
+// (app/utils/slots/xenoslot-synth.ts); nothing is fetched. Same shape as
+// pirate-sound.ts: per-event levels, cooldowns and voice caps, persisted
+// enable/volume.
 //
 // Signal chain: voice (level) -> master gain (player volume) -> compressor ->
 // speakers. The reel whir feeds the same master gain; the ambient music has
@@ -24,10 +25,14 @@ import {
 
 export type { XenoSoundEvent }
 
+const STORAGE_ENABLED = 'xenoslot-sound-enabled'
+const STORAGE_VOLUME = 'xenoslot-sound-volume'
+const STORAGE_MUSIC = 'xenoslot-music-volume'
+const STORAGE_MUSIC_LEGACY = 'xenoslot-music-enabled'
+
 const soundEnabled = ref(true)
-/** Effects and music levels, 0-1. */
-const EFFECTS_VOLUME = 0.7
-const MUSIC_VOLUME = 0.6
+const soundVolume = ref(70)
+const musicVolume = ref(60)
 
 const WHIR_LEVEL = 0.1
 const MUSIC_LEVEL = 0.5
@@ -51,6 +56,7 @@ let whir: XenoReelWhir | null = null
 let music: XenoAmbient | null = null
 let musicWanted = false
 let bonusMode = false
+let initialized = false
 
 function ensureContext(): AudioContext | null {
     if (!import.meta.client) return null
@@ -63,11 +69,11 @@ function ensureContext(): AudioContext | null {
 }
 
 function masterLevel(): number {
-    return EFFECTS_VOLUME
+    return Math.max(0, Math.min(1, soundVolume.value / 100))
 }
 
 function musicLevel(): number {
-    return MUSIC_VOLUME
+    return Math.max(0, Math.min(1, musicVolume.value / 100))
 }
 
 function ensureBus(context: AudioContext): MasterBus {
@@ -91,7 +97,7 @@ function ensureBus(context: AudioContext): MasterBus {
 
 /** A running context, resumed if a gesture allows it. Null while it can't play yet. */
 function runningContext(): AudioContext | null {
-    if (!import.meta.client || !soundEnabled.value) return null
+    if (!import.meta.client || !soundEnabled.value || soundVolume.value <= 0) return null
     const context = ensureContext()
     if (!context) return null
     if (context.state !== 'running') {
@@ -162,7 +168,7 @@ function stopWhir() {
 
 function startMusic() {
     musicWanted = true
-    if (!import.meta.client || !soundEnabled.value || music) return
+    if (!import.meta.client || !soundEnabled.value || musicVolume.value <= 0 || music) return
     const context = ensureContext()
     if (!context) return
     if (context.state !== 'running') {
@@ -226,22 +232,65 @@ function stopAll() {
     }, 80)
 }
 
-/**
- * The shell's mute switch (shared with every casino game) turns effects and
- * music off and on; there is no separate volume.
- */
-export function useXenoSlotSound() {
-    const shell = useSlotSound({})
-    soundEnabled.value = !shell.muted.value
-    watch(shell.muted, (muted) => {
-        soundEnabled.value = !muted
-        if (muted) stopAll()
-        else unlock()
+function readStorage(key: string): string | null {
+    try {
+        return localStorage.getItem(key)
+    } catch {
+        return null
+    }
+}
+
+function writeStorage(key: string, value: string) {
+    try {
+        localStorage.setItem(key, value)
+    } catch {
+        // Private mode or blocked storage: the setting just won't persist.
+    }
+}
+
+function initialize() {
+    if (!import.meta.client || initialized) return
+    initialized = true
+    const storedEnabled = readStorage(STORAGE_ENABLED)
+    const storedVolume = readStorage(STORAGE_VOLUME)
+    const storedMusic = readStorage(STORAGE_MUSIC)
+    if (storedEnabled !== null) soundEnabled.value = storedEnabled === 'true'
+    if (storedMusic !== null && Number.isFinite(Number(storedMusic))) {
+        musicVolume.value = Math.max(0, Math.min(100, Number(storedMusic)))
+    } else if (readStorage(STORAGE_MUSIC_LEGACY) === 'false') {
+        musicVolume.value = 0
+    }
+    if (storedVolume !== null && Number.isFinite(Number(storedVolume))) {
+        soundVolume.value = Math.max(0, Math.min(100, Number(storedVolume)))
+    }
+    // A detached scope: watchers made in the first caller's setup would stop
+    // when that game unmounts, and the next visit would no longer save.
+    effectScope(true).run(() => {
+        watch(soundEnabled, (enabled) => {
+            writeStorage(STORAGE_ENABLED, String(enabled))
+            if (!enabled) stopAll()
+            else unlock()
+        })
+        watch(musicVolume, (volume) => {
+            writeStorage(STORAGE_MUSIC, String(volume))
+            if (ctx && bus) bus.music.gain.setTargetAtTime(musicLevel(), ctx.currentTime, 0.02)
+            if (volume <= 0) silenceMusic()
+            else if (musicWanted && !music) startMusic()
+        })
+        watch(soundVolume, (volume) => {
+            writeStorage(STORAGE_VOLUME, String(volume))
+            if (ctx && bus) bus.input.gain.setTargetAtTime(masterLevel(), ctx.currentTime, 0.02)
+        })
     })
+}
+
+export function useXenoSlotSound() {
+    initialize()
 
     return {
-        muted: shell.muted,
-        toggle: shell.toggle,
+        soundEnabled,
+        soundVolume,
+        musicVolume,
         play,
         unlock,
         startWhir,

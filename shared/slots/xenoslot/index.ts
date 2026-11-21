@@ -36,7 +36,7 @@ export type XsSymbol
         | 'wild' | 'bonus'
 export type XsPaySymbol = Exclude<XsSymbol, 'bonus'>
 
-/** Reel weights, the same on every reel. */
+/** Reel weights, the same on every reel. RTP retune: wild 4 → 3.6 (the old site ran ~98%). */
 export const XS_WEIGHTS: Record<XsSymbol, number> = {
     ten: 30, jack: 28, queen: 24, king: 20, ace: 16,
     bell: 12, seven: 7, diamond: 4,
@@ -76,6 +76,7 @@ const P_GLOVER = 0.028
 
 /** Coin faces, × bet. */
 export const XS_COIN_VALUES = [0.2, 0.5, 1, 2, 5, 10, 25, 50] as const
+// RTP retune for the buy (~98% → ~96%): 0.2× 0.360 → 0.3625, 10× 0.033 → 0.0305.
 const COIN_WEIGHTS = [0.3625, 0.254, 0.17, 0.1, 0.06, 0.0305, 0.02, 0.003] as const
 export const XS_GLOVER_MULTS = [2, 5, 10] as const
 const GLOVER_WEIGHTS = [0.7, 0.24, 0.06] as const

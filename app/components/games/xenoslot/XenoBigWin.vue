@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { formatCoins } from '#shared/money'
-
 // Big-win showcase text over the reel window. The dimming, coin fountain and
 // bursts are drawn in the Pixi canvas underneath; this layer is the label and
 // the counting amount. `tier` 0..3 = BIG, MEGA, EPIC, COSMIC.
@@ -40,16 +38,18 @@ const style = computed(() => {
       </span>
     </Transition>
     <span class="xs-bw__amount">
-      {{ formatCoins(amount, false) }}
+      {{ formatNumber(amount) }}
     </span>
     <span class="xs-bw__mult">
-      {{ multiple.toFixed(1) }}× bet
+      {{ formatNumber(multiple, false) }}× bet
     </span>
+    <span class="xs-bw__hint">Tap to skip count-up</span>
   </button>
 </template>
 
 <style scoped>
-.xs-bw:focus-visible { outline: 3px solid #a3e635; outline-offset: -6px; }
+.xs-bw__hint { position: relative; margin-top: 16px; font-size: 11px; color: var(--ui-primary); }
+.xs-bw:focus-visible { outline: 3px solid var(--ui-primary); outline-offset: -6px; }
 
 .xs-bw {
   position: absolute;
