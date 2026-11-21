@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import '~/assets/css/candy-madness.css'
-// Rules and paytable for Candy Madness, shown in the game frame's rules
-// dialog. Every figure comes from the live game constants.
+// Rules and paytable for Candy Madness. Every figure comes from the live game
+// constants, so this panel can't drift from the maths. Nuxt UI's UModal
+// rebuilt on reka-ui's dialog with the same overlay, panel and sizes.
+import { XIcon } from 'lucide-vue-next'
+import { DialogContent, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui'
 import {
+    candyMadnessStake,
     CM_BONUS_HUNT_COST,
     CM_BUY_FREESPINS_COST,
     CM_COLS,
@@ -14,29 +18,35 @@ import {
     CM_ROWS,
     CM_SCATTER_TRIGGER
 } from '#shared/games/candymadness'
-import { CANDY_INFO, candyDataUrl } from '~/utils/candymadness/art'
+import { findGame } from '#shared/games/registry'
+import { CANDY_INFO, candyDataUrl } from '~/utils/slots/candymadness-art'
 import {
     CANDY_BONUS_ODDS,
     CANDY_HUNT_BONUS_ODDS,
     CANDY_PAY_SIZES,
     candyPaytable,
     formatPayMult
-} from '~/utils/candymadness/ui'
+} from '~/utils/slots/candymadness-ui'
 
-import { candyMadnessStake } from '#shared/games/candymadness'
-import { findGame } from '#shared/games/registry'
-import { formatCoins } from '#shared/money'
-
+const open = defineModel<boolean>('open', { default: false })
 defineProps<{ bet: number }>()
-const rtp = findGame('candymadness')!.rtp
-const formatNumber = (value: number, compact = true) => formatCoins(Math.floor(value), compact)
 
+const rtp = Math.round(findGame('candymadness')!.rtp * 1000) / 10
 const rows = candyPaytable()
 const tab = ref<'rules' | 'pays'>('rules')
 </script>
 
 <template>
-  <div class="candy-theme">
+  <DialogRoot v-model:open="open">
+    <DialogPortal>
+      <DialogOverlay class="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
+      <DialogContent
+        class="candy-theme fixed top-1/2 left-1/2 z-[101] flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-background shadow-lg ring ring-border focus:outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 sm:max-h-[calc(100dvh-4rem)] max-w-[620px]"
+        :aria-describedby="undefined"
+      >
+        <DialogTitle class="sr-only">
+          Candy Madness rules
+        </DialogTitle>
       <div class="cmr__panel">
         <header class="cmr__head">
           <div class="cmr__tabs">
@@ -55,6 +65,13 @@ const tab = ref<'rules' | 'pays'>('rules')
               Paytable
             </button>
           </div>
+          <button
+            class="cmr__close"
+            aria-label="Close"
+            @click="open = false"
+          >
+            <XIcon />
+          </button>
         </header>
 
         <div
@@ -125,7 +142,7 @@ const tab = ref<'rules' | 'pays'>('rules')
           </div>
 
           <ul class="cmr__facts">
-            <li><span>Return to player</span><b>{{ (rtp * 100).toFixed(1) }}%</b></li>
+            <li><span>Return to player</span><b>{{ rtp }}%</b></li>
             <li><span>Max win</span><b>{{ formatNumber(CM_MAX_WIN_MULT, false) }}× bet</b></li>
             <li><span>Controls</span><b>Space spins</b></li>
           </ul>
@@ -180,7 +197,9 @@ const tab = ref<'rules' | 'pays'>('rules')
           </p>
         </div>
       </div>
-  </div>
+      </DialogContent>
+    </DialogPortal>
+  </DialogRoot>
 </template>
 
 <style scoped>

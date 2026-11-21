@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import '~/assets/css/candy-madness.css'
-// Auto-spin picker for Candy Madness.
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { formatCoins } from '#shared/money'
+// Auto-spin picker for Candy Madness. Nuxt UI's UModal rebuilt on reka-ui's
+// dialog with the same overlay, panel and sizes.
+import { DialogContent, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui'
 
-const formatNumber = (value: number) => formatCoins(Math.floor(value))
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ spinCost: number }>()
 const emit = defineEmits<{ start: [opts: { count: number, stopOnBonus: boolean }] }>()
@@ -22,13 +21,17 @@ function start() {
 </script>
 
 <template>
-  <Dialog v-model:open="open">
-    <DialogContent class="candy-theme max-w-[400px] gap-0 overflow-hidden rounded-2xl p-0">
+  <DialogRoot v-model:open="open">
+    <DialogPortal>
+      <DialogOverlay class="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
+      <DialogContent
+        class="candy-theme fixed top-1/2 left-1/2 z-[101] flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-background shadow-lg ring ring-border focus:outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 sm:max-h-[calc(100dvh-4rem)] max-w-[400px]"
+        :aria-describedby="undefined"
+      >
       <div class="cma__panel">
         <DialogTitle class="cma__title">
           Auto spin
         </DialogTitle>
-        <DialogDescription class="sr-only">How many spins to play</DialogDescription>
         <div class="cma__opts">
           <button
             v-for="n in OPTIONS"
@@ -42,7 +45,8 @@ function start() {
         </div>
         <label class="cma__row">
           <span>
-            <b>Stop on free spins</b>
+            <b>Stop when free spins trigger</b>
+            <small>Otherwise auto spin waits for a tap before each bonus.</small>
           </span>
           <input
             v-model="stopOnBonus"
@@ -51,7 +55,7 @@ function start() {
           <i class="cma__switch" />
         </label>
         <p class="cma__total">
-          <b>{{ formatNumber(total) }}</b>
+          Up to <b>{{ formatNumber(total) }}</b> over {{ count }} spins
         </p>
         <div class="cma__actions">
           <button
@@ -68,8 +72,9 @@ function start() {
           </button>
         </div>
       </div>
-    </DialogContent>
-  </Dialog>
+      </DialogContent>
+    </DialogPortal>
+  </DialogRoot>
 </template>
 
 <style scoped>

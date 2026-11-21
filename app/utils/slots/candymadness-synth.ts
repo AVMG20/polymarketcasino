@@ -1,12 +1,12 @@
 // Candy Madness sound effects, synthesized at play time on the shared synth
-// voice (./voice.ts). Nothing is fetched.
+// voice (app/utils/slots/synth-voice.ts). Nothing is fetched.
 //
 // Palette: C major pentatonic for anything melodic, sine "bloops" that glide
 // up for popping candies, band-passed noise ticks for sugar rattle, detuned
 // saws through a closing low-pass for the brassy fanfares and inharmonic
 // triangle partials for glass bells.
 
-import { ShapezzSynthVoice, shapezzNote } from './voice'
+import { SynthVoice as ShapezzSynthVoice, synthNote as shapezzNote } from '~/utils/slots/synth-voice'
 
 export { ShapezzSynthVoice as CandySynthVoice }
 

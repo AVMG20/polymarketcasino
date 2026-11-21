@@ -27,7 +27,8 @@ port (`app/components/games/SpinataGame.vue`, `shared/slots/spinata/`).
   `useGameRound().settle()` (balance + star celebration); otherwise it is `setCoins`. Leaving mid-round
   settles on its own. Never refetch the session per spin.
 - **Rounds.** `spin(cost, options, onStart)` posts `{ bet, options }` to `/api/games/<slug>/play` and
-  returns `{ gameData: response.result, balance }`, so code reading `data.gameData` ports unchanged.
+  returns `{ gameData: response.result, balance, stake, payout }`, so code reading `data.gameData` ports unchanged; a result
+  that no longer carries the old `bet`/`payout`/`cost` fields rebuilds them from `stake` and `payout` (Candy Madness).
   A failure sets `errorMsg` (the server's message) and `useGameRound` toasts it.
 - **Bets.** Bounds come from the registry (`findGame(slug).minBet/maxBet`, 100 to 1,000,000), not the old
   1 to 100B. Build the old 1-2-5 ladder inside those bounds.

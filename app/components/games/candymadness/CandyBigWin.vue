@@ -2,11 +2,8 @@
 // Big-win celebration for Candy Madness. Counts the amount up and upgrades the
 // banner as it passes each tier (BIG → MEGA → EPIC → LEGENDARY). A tap skips to
 // the end; a second tap (or the hold timer) closes it.
-import { Coins } from 'lucide-vue-next'
-import { formatCoins } from '#shared/money'
-import { CANDY_WIN_TIERS } from '~/utils/candymadness/ui'
-
-const formatNumber = (value: number, compact = true) => formatCoins(Math.floor(value), compact)
+import { CoinsIcon } from 'lucide-vue-next'
+import { CANDY_WIN_TIERS } from '~/utils/slots/candymadness-ui'
 
 const props = defineProps<{
     amount: number
@@ -138,11 +135,11 @@ onBeforeUnmount(() => {
         class="cmbw__amount"
         :class="{ 'cmbw__amount--done': finished }"
       >
-        <Coins class="cmbw__coin" />
+        <CoinsIcon class="cmbw__coin" />
         {{ formatNumber(shown) }}
       </p>
       <p class="cmbw__x">
-        {{ (shown / bet).toFixed(1) }}× bet
+        {{ formatNumber(shown / bet, false) }}× bet
       </p>
       <p class="cmbw__hint">
         {{ finished ? 'Tap to continue' : 'Tap to skip' }}

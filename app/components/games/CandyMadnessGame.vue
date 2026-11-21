@@ -1,15 +1,11 @@
 <script lang="ts" setup>
-// Candy Madness: a 7×7 cluster tumble slot with multiplier spots. The server
-// resolves the whole round (shared/games/candymadness.ts); this component
-// replays it on pixi-reels and settles the balance once the reveal is done.
+import '~/assets/css/candy-madness.css'
 import '@fontsource/fredoka/400.css'
 import '@fontsource/fredoka/500.css'
 import '@fontsource/fredoka/600.css'
 import '@fontsource/fredoka/700.css'
 import '@fontsource/lilita-one/400.css'
-import '~/assets/css/candy-madness.css'
-import { Candy, Coins, Loader, Minus, Plus, Repeat, RotateCw, Square, Volume2, VolumeX, X, Zap } from 'lucide-vue-next'
-import { Button } from '@/components/ui/button'
+import { CandyIcon, CoinsIcon, InfoIcon, LoaderCircleIcon, MinusIcon, PlusIcon, RepeatIcon, RotateCwIcon, SquareIcon, Volume2Icon, VolumeXIcon, XIcon, ZapIcon } from 'lucide-vue-next'
 import type {
     CandyFeature,
     CandyMadnessResult,
@@ -25,11 +21,13 @@ import {
     candyMadnessStake,
     CM_COLS,
     CM_FREE_SPINS,
+    CM_MAX_WIN_MULT,
     CM_ROWS,
     SCATTER_WEIGHT
 } from '#shared/games/candymadness'
 import { findGame } from '#shared/games/registry'
-import { formatCoins, parseAmount } from '#shared/money'
+import { parseAmount } from '#shared/money'
+import { initSlotPixiApp, safeDestroy } from '~/utils/slot-pixi'
 import {
     CANDY_INFO,
     candyDataUrl,
@@ -39,52 +37,48 @@ import {
     spotColor,
     type CandyArtKey,
     type ParticleKey
-} from '~/utils/candymadness/art'
-import { CANDY_BET_LADDER, CANDY_BIG_WIN_AT } from '~/utils/candymadness/ui'
+} from '~/utils/slots/candymadness-art'
+import { CANDY_BET_LADDER, CANDY_BIG_WIN_AT, CANDY_BONUS_ODDS } from '~/utils/slots/candymadness-ui'
 import CandyBackdrop from '~/components/games/candymadness/CandyBackdrop.vue'
 import CandyBigWin from '~/components/games/candymadness/CandyBigWin.vue'
 import CandyRules from '~/components/games/candymadness/CandyRules.vue'
 import CandyAutoSpin from '~/components/games/candymadness/CandyAutoSpin.vue'
 
 const info = findGame('candymadness')!
-const round = useGameRound<CandyMadnessResult>('candymadness')
-const { coins: balance } = useCasinoSession()
-const isSpinning = round.busy
-const errorMsg = ref('')
-const history = ref<{ payout: number, bet: number, bonus: boolean }[]>([])
-function pushHistory(entry: { payout: number, bet: number, bonus: boolean }) {
-    history.value = [entry, ...history.value].slice(0, 10)
+useHead({ title: info.name })
+onMounted(() => useHubBridge().postTitle(info.name))
+
+// Volatility rating (1-5) for SlotVolatility. The sticky multiplier tail in
+// free spins makes this a medium-volatility game.
+const CM_VOLATILITY = 3
+const CM_RTP = Math.round(info.rtp * 1000) / 10
+
+/**
+ * The old site's round result. The casino's server sends the round in × bet
+ * (result.win) and the coins in the response, so the old fields are rebuilt
+ * from them once per spin.
+ */
+interface CandyRound extends CandyMadnessResult {
+    bet: number
+    /** Coins staked: the bet or the feature price. */
+    cost: number
+    /** Coins paid, after the max win cap. */
+    payout: number
+    bonusTriggered: boolean
+    /** Coins the free spins paid, before the cap. */
+    bonusPayout: number
 }
+
+const { bet, isSpinning, errorMsg, balance, setBalance, history, pushHistory, spin: requestSpin } = useSlotGame<CandyMadnessResult, { payout: number, bet: number, bonus: boolean }>('candymadness')
 const sound = useCandyMadnessSound()
-const shellSound = useSlotSound(undefined)
-
-/** Compact number for the game's own displays. */
-const formatNumber = (value: number, compact = true) => formatCoins(Math.floor(value), compact)
-
-// Pixi's async init can resolve after unmount; the caller owns `destroyed`.
-async function initPixiApp(Application: typeof import('pixi.js').Application, size: { width: number, height: number }, isDestroyed: () => boolean) {
-    const pixiApp = new Application()
-    await pixiApp.init({ width: size.width, height: size.height, backgroundAlpha: 0, antialias: true, autoDensity: true, resolution: Math.min(window.devicePixelRatio || 1, 2) })
-    if (isDestroyed()) {
-        pixiApp.destroy(true)
-        return null
-    }
-    return pixiApp
-}
-
-// Pixi and reel objects can already be torn down by HMR or an earlier teardown.
-function safeDestroy(fn: () => void) {
-    try {
-        fn()
-    } catch { /* already destroyed */ }
-}
+const { soundEnabled, soundVolume } = sound
 
 // --- bet ---------------------------------------------------------------------
+// The casino's bet bounds (the old site took 1 to 100B).
 const MIN_BET = info.minBet
 const MAX_BET = info.maxBet
-const bet = ref(MIN_BET)
 
-const betText = ref(String(bet.value))
+const betText = useAmountInput(bet, { integer: true, shorthand: true })
 const betEditing = ref(false)
 const betInputEl = ref<HTMLInputElement>()
 
@@ -105,15 +99,9 @@ function commitBet() {
 
 function editBet() {
     if (betLocked.value) return
-    betText.value = String(bet.value)
     betEditing.value = true
     nextTick(() => betInputEl.value?.select())
 }
-
-const betPreview = computed(() => {
-    const value = parseAmount(betText.value)
-    return value !== null && /[kmbt]/i.test(betText.value) ? `= ${formatCoins(clampBet(value), false)}` : ''
-})
 
 function betUp() {
     const next = CANDY_BET_LADDER.find(v => v > bet.value)
@@ -144,6 +132,7 @@ function betMax() {
 
 // --- features ----------------------------------------------------------------
 const huntMode = ref(false)
+// Whole coins: the hunt price rounds up.
 const buyFreeSpinsCost = computed(() => candyMadnessStake(bet.value, 'buyFreeSpins'))
 const bonusHuntCost = computed(() => candyMadnessStake(bet.value, 'bonusHunt'))
 const spinCost = computed(() => huntMode.value ? bonusHuntCost.value : bet.value)
@@ -181,7 +170,9 @@ function onBuyClick() {
 // --- round / HUD state ---------------------------------------------------------
 const ready = ref(false)
 const turbo = ref(false)
+const showRules = ref(false)
 const showAuto = ref(false)
+const showSound = ref(false)
 /** True while a round's animation is still playing after the server replied. */
 const presenting = ref(false)
 
@@ -808,7 +799,7 @@ onMounted(async () => {
         REELS = reels
         GSAP = gsapMod.gsap ?? gsapMod.default
 
-        app = await initPixiApp(PIXI.Application, { width: APP_W, height: APP_H }, () => destroyed)
+        app = await initSlotPixiApp(PIXI.Application, { width: APP_W, height: APP_H }, () => destroyed)
         if (!app) return
         canvasWrap.value?.appendChild(app.canvas)
 
@@ -896,25 +887,34 @@ async function spin(forceFeature?: CandyFeature) {
     const cost = costFor(feature)
     sound.unlock()
 
-    if (balance.value < cost) {
-        stopAutoSpin()
-        return
-    }
-    sound.play('spin')
-    winShown.value = 0
-    winEquation.value = ''
-    tumbleCount.value = 0
-    const stakedBet = bet.value
+    const balanceBefore = balance.value
+    const spinBet = bet.value
+    let debited = false
 
-    // useGameRound shows the error itself.
-    const data = await round.play({ bet: stakedBet, options: feature ? { feature } : {} })
+    const data = await requestSpin(cost, feature ? { feature } : undefined, () => {
+        sound.play('spin')
+        winShown.value = 0
+        winEquation.value = ''
+        tumbleCount.value = 0
+        setBalance(balanceBefore - cost)
+        debited = true
+    })
+
     if (!data) {
+        if (debited) setBalance(balanceBefore)
         stopAutoSpin()
         return
     }
 
-    const result = data.result
-    activeBet = stakedBet
+    const result: CandyRound = {
+        ...data.gameData,
+        bet: spinBet,
+        cost: data.stake,
+        payout: data.payout,
+        bonusTriggered: !!data.gameData.bonus,
+        bonusPayout: (data.gameData.bonus?.bonusPayout ?? 0) * spinBet
+    }
+    activeBet = result.bet
     presenting.value = true
 
     try {
@@ -922,7 +922,7 @@ async function spin(forceFeature?: CandyFeature) {
         const baseWin = await playSequence(result.base, 0, true)
         winShown.value = baseWin
 
-        if (result.bonus) {
+        if (result.bonusTriggered && result.bonus) {
             await celebrateScatters(result.scatterCells)
             if (autoSpinEnabled.value && autoStopOnBonus.value) stopAutoSpin()
             await openBonusIntro()
@@ -932,23 +932,25 @@ async function spin(forceFeature?: CandyFeature) {
         // The final figure lands on the meter only after the big-win or bonus
         // outro has revealed it, so the meter never spoils the celebration.
         winEquation.value = ''
-        const x = data.payout / stakedBet
+        const x = result.payout / result.bet
         if (x >= CANDY_BIG_WIN_AT) {
-            await showBigWin(data.payout, stakedBet, result.bonus ? 'Free spins total' : undefined)
-        } else if (result.bonus) {
-            await showBonusOutro(data.payout)
-        } else if (data.payout > 0) {
-            winShown.value = data.payout
+            await showBigWin(result.payout, result.bet, result.bonusTriggered ? 'Free spins total' : undefined)
+        } else if (result.bonusTriggered && result.bonus) {
+            await showBonusOutro(result.payout)
+        } else if (result.payout > 0) {
+            winShown.value = result.payout
             sound.play(x >= 8 ? 'win-big' : x >= 2 ? 'win-medium' : 'win-small')
             winPulse.value++
         }
-        winShown.value = data.payout
-        pushHistory({ payout: data.payout, bet: data.stake, bonus: !!result.bonus })
+        winShown.value = result.payout
+        setBalance(data.balance)
+        pushHistory({ payout: result.payout, bet: result.cost, bonus: result.bonusTriggered })
     } catch (e) {
         errorMsg.value = e instanceof Error ? e.message : 'Animation error'
+        setBalance(data.balance)
         stopAutoSpin()
     } finally {
-        round.settle()
+        isSpinning.value = false
         presenting.value = false
         inBonus.value = false
     }
@@ -965,9 +967,9 @@ async function spin(forceFeature?: CandyFeature) {
 }
 
 /**
-  * Play one tumble sequence. `offset` is what the win meter already shows
-  * (bonus total so far). Returns the currency this sequence paid.
-  */
+ * Play one tumble sequence. `offset` is what the win meter already shows
+ * (bonus total so far). Returns the currency this sequence paid.
+ */
 async function playSequence(seq: TumbleSequence, offset: number, initial: boolean): Promise<number> {
     reelSet.setSpeed?.(turbo.value ? 'turbo' : 'normal')
     const first = seq.steps[0]?.grid ?? seq.restGrid
@@ -1083,7 +1085,7 @@ function closeGate() {
     bonusGate?.()
 }
 
-async function runBonus(result: CandyMadnessResult) {
+async function runBonus(result: CandyRound) {
     const bonus = result.bonus!
     sound.play('bonus-start')
     inBonus.value = true
@@ -1104,8 +1106,8 @@ async function runBonus(result: CandyMadnessResult) {
         winShown.value = bonusTotal.value
         await wait(t(500, 200))
     }
-    // The round total (after the max win cap) lands with the outro.
-    winShown.value = bonusTotal.value
+    bonusTotal.value = result.bonusPayout
+    winShown.value = result.bonusPayout
 }
 
 function showBonusOutro(amount: number): Promise<void> {
@@ -1169,9 +1171,15 @@ function openAuto() {
     showAuto.value = true
 }
 
+function openRules() {
+    sound.unlock()
+    sound.play('click')
+    showRules.value = true
+}
+
 function toggleSound() {
-    shellSound.toggle()
-    if (!shellSound.muted.value) {
+    soundEnabled.value = !soundEnabled.value
+    if (soundEnabled.value) {
         sound.unlock()
         setTimeout(() => sound.play('toggle', { intensity: 1 }), 60)
     }
@@ -1181,7 +1189,7 @@ function onKeydown(e: KeyboardEvent) {
     if (e.code !== 'Space' || e.repeat) return
     const el = e.target as HTMLElement | null
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return
-    if (showAuto.value) return
+    if (showRules.value || showAuto.value) return
     e.preventDefault()
     if (bonusIntro.value || bonusOutro.value) {
         closeGate()
@@ -1192,365 +1200,443 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 const lollipopUrl = computed(() => ready.value ? candyDataUrl('scatter', 128) : '')
+const heartUrl = computed(() => ready.value ? candyDataUrl('red', 96) : '')
 const spinsLeft = computed(() => Math.max(0, CM_FREE_SPINS - bonusRound.value))
 const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, Math.floor(Math.log2(Math.max(2, multSum.value))))))))
 </script>
 
 <template>
-  <GameFrame slug="candymadness">
-    <template #actions>
-      <Button size="icon" variant="ghost" :title="shellSound.muted.value ? 'Sound on' : 'Sound off'" @click="toggleSound">
-        <VolumeX v-if="shellSound.muted.value" class="size-5" />
-        <Volume2 v-else class="size-5" />
-      </Button>
-    </template>
-    <div
-      class="cm-root candy-theme"
-      :class="{ 'is-bonus': inBonus }"
-    >
-      <CandyBackdrop :bonus="inBonus" />
+  <div
+    class="cm-root candy-theme"
+    :class="{ 'is-bonus': inBonus }"
+  >
+    <CandyBackdrop :bonus="inBonus" />
 
-      <div class="cm-stage">
-        <div class="cm-main">
-          <!-- Feature buys -->
-          <aside class="cm-side cm-side--left">
-            <p class="cm-section-label">Bonus features</p>
-            <button
-              class="cm-feature cm-feature--buy"
-              :class="{ 'is-armed': buyArmed }"
-              :disabled="!ready || betLocked || balance < buyFreeSpinsCost"
-              @click="onBuyClick"
-            >
-              <span class="cm-feature__art">
-                <img
-                  v-if="lollipopUrl"
-                  :src="lollipopUrl"
-                  alt=""
-                >
-              </span>
-              <span class="cm-feature__text">
-                <span class="cm-feature__title">{{ buyArmed ? 'Tap to confirm' : 'Buy free spins' }}</span>
-                <span class="cm-feature__desc">{{ CM_FREE_SPINS }} free spins</span>
-              </span>
-              <span class="cm-feature__price">
-                <Coins class="size-3.5" />
-                {{ formatNumber(buyFreeSpinsCost) }}
-              </span>
-            </button>
-
-            <button
-              class="cm-feature cm-feature--hunt"
-              :class="{ 'is-on': huntMode }"
-              :disabled="!ready || betLocked"
-              :aria-pressed="huntMode"
-              @click="toggleHunt"
-            >
-              <span class="cm-feature__switch"><i /></span>
-              <span class="cm-feature__text">
-                <span class="cm-feature__title">Bonus hunter</span>
-                <span class="cm-feature__desc">+1 lollipop per spin</span>
-              </span>
-              <span class="cm-feature__price">
-                <Coins class="size-3.5" />
-                {{ formatNumber(bonusHuntCost) }}<small>/spin</small>
-              </span>
-            </button>
-          </aside>
-
-          <!-- Cabinet -->
-          <div class="cm-cabinet">
-            <div
-              class="cm-frame"
-              :class="{ 'is-anticipating': anticipating }"
-            >
-              <div class="cm-machine-heading">
-                <span>{{ inBonus ? 'BONUS BATCH' : 'FRESH BATCH' }}</span>
-              </div>
-              <div class="cm-topbar">
-                <div
-                  v-if="inBonus"
-                  class="cm-pill cm-pill--spins"
-                >
-                  <span class="cm-pill__label">Free spins</span>
-                  <span class="cm-pill__value">{{ spinsLeft }}</span>
-                </div>
-                <div
-                  :key="multPulse"
-                  class="cm-pill cm-pill--mult"
-                  :class="{ 'is-live': multSum > 0 }"
-                  :style="{ '--mult-color': multColor }"
-                >
-                  <span class="cm-pill__label">Multiplier</span>
-                  <span class="cm-pill__value">×{{ formatNumber(multSum, true) }}</span>
-                </div>
-                <div
-                  v-if="tumbleCount > 1"
-                  :key="`tumble-${tumbleCount}`"
-                  class="cm-pill cm-pill--tumble"
-                >
-                  <span class="cm-pill__label">Tumble</span>
-                  <span class="cm-pill__value">{{ tumbleCount }}</span>
-                </div>
-              </div>
-
-              <div class="cm-window">
-                <div
-                  ref="canvasWrap"
-                  class="cm-canvas"
-                />
-
-                <div
-                  v-if="!ready && !errorMsg"
-                  class="cm-loading"
-                >
-                  <Loader class="size-10 animate-spin" />
-                </div>
-
-                <Transition name="cm-pop">
-                  <div
-                    v-if="bonusIntro"
-                    class="cm-splash"
-                    @click="closeGate"
-                  >
-                    <div class="cm-splash__rays" />
-                    <img
-                      v-if="lollipopUrl"
-                      :src="lollipopUrl"
-                      alt=""
-                      class="cm-splash__lolly"
-                    >
-                    <p class="cm-splash__kicker">
-                      You won
-                    </p>
-                    <p class="cm-splash__big">
-                      {{ CM_FREE_SPINS }} free spins
-                    </p>
-                    <button class="cm-splash__btn">
-                      Start
-                    </button>
-                  </div>
-                </Transition>
-
-                <Transition name="cm-pop">
-                  <div
-                    v-if="bonusOutro"
-                    class="cm-splash"
-                    @click="closeGate"
-                  >
-                    <div class="cm-splash__rays" />
-                    <p class="cm-splash__kicker">
-                      Free spins complete
-                    </p>
-                    <p class="cm-splash__big">
-                      <Coins class="cm-splash__coin" />
-                      {{ formatNumber(bonusOutroAmount) }}
-                    </p>
-                    <p class="cm-splash__text">
-                      {{ bonusOutroAmount > 0 ? `${formatNumber(bonusOutroAmount / activeBet, false)}× your bet` : 'No win this time' }}
-                    </p>
-                    <button class="cm-splash__btn">
-                      Collect
-                    </button>
-                  </div>
-                </Transition>
-
-                <Transition name="cm-pop">
-                  <CandyBigWin
-                    v-if="bigWin"
-                    :amount="bigWin.amount"
-                    :bet="bigWin.bet"
-                    :subtitle="bigWin.subtitle"
-                    @tier="(i: number) => sound.play('bigwin-tier', { intensity: i })"
-                    @tick="sound.play('tick')"
-                    @done="onBigWinDone"
-                  />
-                </Transition>
-              </div>
-            </div>
-
-            <!-- Control deck -->
-            <div class="cm-deck">
-              <div class="cm-meter cm-meter--balance">
-                <span class="cm-meter__label">Balance</span>
-                <span class="cm-meter__value">
-                  <Coins class="cm-coin" />
-                  {{ formatNumber(balance) }}
-                </span>
-              </div>
-
-              <div
-                class="cm-meter cm-meter--bet"
-                :class="{ 'is-locked': betLocked }"
-              >
-                <span class="cm-meter__label">
-                  Bet
-                  <button
-                    class="cm-max"
-                    :disabled="betLocked || bet === maxAffordableBet"
-                    @click="betMax"
-                  >MAX</button>
-                </span>
-                <div class="cm-bet">
-                  <button
-                    class="cm-round cm-round--sm"
-                    aria-label="Lower bet"
-                    :disabled="betLocked || bet <= MIN_BET"
-                    @click="betDown"
-                  >
-                    <Minus />
-                  </button>
-                  <input
-                    v-if="betEditing"
-                    ref="betInputEl"
-                    v-model="betText"
-                    class="cm-bet__input"
-                    aria-label="Bet amount"
-                    inputmode="decimal"
-                    @blur="commitBet"
-                    @keydown.enter="($event.target as HTMLInputElement).blur()"
-                  >
-                  <button
-                    v-else
-                    class="cm-bet__value"
-                    title="Type a bet"
-                    :disabled="betLocked"
-                    @click="editBet"
-                  >
-                    {{ formatNumber(bet) }}
-                  </button>
-                  <button
-                    class="cm-round cm-round--sm"
-                    aria-label="Raise bet"
-                    :disabled="betLocked || bet >= MAX_BET"
-                    @click="betUp"
-                  >
-                    <Plus />
-                  </button>
-                </div>
-                <span
-                  v-if="betEditing && betPreview"
-                  class="cm-bet__preview"
-                >{{ betPreview }}</span>
-                <span
-                  v-else-if="huntMode"
-                  class="cm-bet__preview"
-                >Spin costs {{ formatNumber(spinCost) }}</span>
-              </div>
-
-              <div class="cm-meter cm-meter--win">
-                <span class="cm-meter__label">{{ inBonus ? 'Bonus win' : 'Win' }}</span>
-                <span
-                  :key="winPulse"
-                  class="cm-meter__win"
-                  :class="{ 'is-hot': winShown > 0 }"
-                >{{ formatNumber(winShown) }}</span>
-                <span
-                  v-if="winEquation"
-                  class="cm-meter__eq"
-                >{{ winEquation }}</span>
-              </div>
-
-              <div class="cm-actions">
-                <button
-                  class="cm-round"
-                  :class="{ 'is-on': turbo }"
-                  title="Turbo"
-                  aria-label="Turbo"
-                  :aria-pressed="turbo"
-                  @click="toggleTurbo"
-                >
-                  <Zap />
-                </button>
-                <button
-                  class="cm-spin"
-                  :class="{ 'is-busy': isSpinning || presenting, 'is-auto': autoSpinEnabled }"
-                  :disabled="!autoSpinEnabled && !canSpin"
-                  :aria-label="autoSpinEnabled ? 'Stop auto spin' : 'Spin'"
-                  @click="onSpinButton"
-                >
-                  <span
-                    v-if="autoSpinEnabled"
-                    class="cm-spin__auto"
-                  >
-                    <b>{{ autoSpinsLeft }}</b>
-                    <small>STOP</small>
-                  </span>
-                  <RotateCw
-                    v-else
-                    class="cm-spin__icon"
-                  />
-                  <span v-if="!autoSpinEnabled" class="cm-spin__label">{{ isSpinning || presenting ? 'Popping!' : 'Spin' }}</span>
-                </button>
-                <button
-                  class="cm-round"
-                  :class="{ 'is-on': autoSpinEnabled }"
-                  title="Auto spin"
-                  aria-label="Auto spin"
-                  :disabled="!autoSpinEnabled && !canSpin"
-                  @click="openAuto"
-                >
-                  <Square v-if="autoSpinEnabled" />
-                  <Repeat v-else />
-                </button>
-              </div>
-            </div>
-
-            <Transition name="cm-fade">
-              <div
-                v-if="errorMsg"
-                class="cm-error"
-              >
-                <span>{{ errorMsg }}</span>
-                <button
-                  aria-label="Dismiss"
-                  @click="errorMsg = ''"
-                >
-                  <X />
-                </button>
-              </div>
-            </Transition>
-          </div>
-
-          <!-- Info column -->
-          <aside class="cm-side cm-side--right">
-            <div
-              v-if="history.length"
-              class="cm-panel"
-            >
-              <div class="cm-history">
-                <span
-                  v-for="(h, i) in history"
-                  :key="i"
-                  :class="{ win: h.payout > h.bet, bonus: h.bonus }"
-                >
-                  <Candy
-                    v-if="h.bonus"
-                    class="size-3"
-                  />
-                  {{ h.payout > 0 ? formatNumber(h.payout) : '–' }}
-                </span>
-              </div>
-            </div>
-          </aside>
-        </div>
+    <div class="cm-stage">
+      <header class="cm-logo">
+        <img
+          v-if="lollipopUrl"
+          :src="lollipopUrl"
+          alt=""
+          class="cm-logo__art cm-logo__art--l"
+        >
+        <h1 class="cm-logo__title">
+          <span class="cm-logo__candy">Candy</span>
+          <span class="cm-logo__madness">Madness</span>
+        </h1>
+        <img
+          v-if="heartUrl"
+          :src="heartUrl"
+          alt=""
+          class="cm-logo__art cm-logo__art--r"
+        >
+      </header>
+      <div class="cm-chips">
+        <span class="cm-chip">{{ CM_RTP }}% RTP</span>
+        <span class="cm-chip cm-chip--vol"><SlotVolatility :level="CM_VOLATILITY" /></span>
+        <span class="cm-chip">{{ formatNumber(CM_MAX_WIN_MULT, false) }}× max win</span>
       </div>
 
-      <CandyAutoSpin
-        v-model:open="showAuto"
-        :spin-cost="spinCost"
-        @start="startAutoSpin"
-      />
+      <div class="cm-main">
+        <!-- Feature buys -->
+        <aside class="cm-side cm-side--left">
+          <p class="cm-section-label">Bonus features</p>
+          <button
+            class="cm-feature cm-feature--buy"
+            :class="{ 'is-armed': buyArmed }"
+            :disabled="!ready || betLocked || balance < buyFreeSpinsCost"
+            @click="onBuyClick"
+          >
+            <span class="cm-feature__art">
+              <img
+                v-if="lollipopUrl"
+                :src="lollipopUrl"
+                alt=""
+              >
+            </span>
+            <span class="cm-feature__text">
+              <span class="cm-feature__title">{{ buyArmed ? 'Tap to confirm' : 'Buy free spins' }}</span>
+              <span class="cm-feature__desc">{{ CM_FREE_SPINS }} free spins, multipliers stay</span>
+            </span>
+            <span class="cm-feature__price">
+              <CoinsIcon class="size-3.5" />
+              {{ formatNumber(buyFreeSpinsCost) }}
+            </span>
+          </button>
+
+          <button
+            class="cm-feature cm-feature--hunt"
+            :class="{ 'is-on': huntMode }"
+            :disabled="!ready || betLocked"
+            :aria-pressed="huntMode"
+            @click="toggleHunt"
+          >
+            <span class="cm-feature__switch"><i /></span>
+            <span class="cm-feature__text">
+              <span class="cm-feature__title">Bonus hunter</span>
+              <span class="cm-feature__desc">A lollipop on every spin</span>
+            </span>
+            <span class="cm-feature__price">
+              <CoinsIcon class="size-3.5" />
+              {{ formatNumber(bonusHuntCost) }}<small>/spin</small>
+            </span>
+          </button>
+        </aside>
+
+        <!-- Cabinet -->
+        <div class="cm-cabinet">
+          <div
+            class="cm-frame"
+            :class="{ 'is-anticipating': anticipating }"
+          >
+            <div class="cm-machine-heading">
+              <span>{{ inBonus ? 'BONUS BATCH' : 'FRESH BATCH' }}</span>
+              <span>4+ connected candies to pop</span>
+            </div>
+            <div class="cm-topbar">
+              <div
+                v-if="inBonus"
+                class="cm-pill cm-pill--spins"
+              >
+                <span class="cm-pill__label">Free spins</span>
+                <span class="cm-pill__value">{{ spinsLeft }}</span>
+              </div>
+              <div
+                :key="multPulse"
+                class="cm-pill cm-pill--mult"
+                :class="{ 'is-live': multSum > 0 }"
+                :style="{ '--mult-color': multColor }"
+              >
+                <span class="cm-pill__label">Multiplier</span>
+                <span class="cm-pill__value">×{{ formatNumber(multSum, true) }}</span>
+              </div>
+              <div
+                v-if="tumbleCount > 1"
+                :key="`tumble-${tumbleCount}`"
+                class="cm-pill cm-pill--tumble"
+              >
+                <span class="cm-pill__label">Tumble</span>
+                <span class="cm-pill__value">{{ tumbleCount }}</span>
+              </div>
+            </div>
+
+            <div class="cm-window">
+              <div
+                ref="canvasWrap"
+                class="cm-canvas"
+              />
+
+              <div
+                v-if="!ready && !errorMsg"
+                class="cm-loading"
+              >
+                <LoaderCircleIcon class="size-10 animate-spin" />
+              </div>
+
+              <Transition name="cm-pop">
+                <div
+                  v-if="bonusIntro"
+                  class="cm-splash"
+                  @click="closeGate"
+                >
+                  <div class="cm-splash__rays" />
+                  <img
+                    v-if="lollipopUrl"
+                    :src="lollipopUrl"
+                    alt=""
+                    class="cm-splash__lolly"
+                  >
+                  <p class="cm-splash__kicker">
+                    You won
+                  </p>
+                  <p class="cm-splash__big">
+                    {{ CM_FREE_SPINS }} free spins
+                  </p>
+                  <p class="cm-splash__text">
+                    Multiplier spots stay on the board for every spin.
+                  </p>
+                  <button class="cm-splash__btn">
+                    Start
+                  </button>
+                </div>
+              </Transition>
+
+              <Transition name="cm-pop">
+                <div
+                  v-if="bonusOutro"
+                  class="cm-splash"
+                  @click="closeGate"
+                >
+                  <div class="cm-splash__rays" />
+                  <p class="cm-splash__kicker">
+                    Free spins complete
+                  </p>
+                  <p class="cm-splash__big">
+                    <CoinsIcon class="cm-splash__coin" />
+                    {{ formatNumber(bonusOutroAmount) }}
+                  </p>
+                  <p class="cm-splash__text">
+                    {{ bonusOutroAmount > 0 ? `${formatNumber(bonusOutroAmount / activeBet, false)}× your bet` : 'No win this time' }}
+                  </p>
+                  <button class="cm-splash__btn">
+                    Collect
+                  </button>
+                </div>
+              </Transition>
+
+              <Transition name="cm-pop">
+                <CandyBigWin
+                  v-if="bigWin"
+                  :amount="bigWin.amount"
+                  :bet="bigWin.bet"
+                  :subtitle="bigWin.subtitle"
+                  @tier="(i: number) => sound.play('bigwin-tier', { intensity: i })"
+                  @tick="sound.play('tick')"
+                  @done="onBigWinDone"
+                />
+              </Transition>
+            </div>
+          </div>
+
+          <!-- Control deck -->
+          <div class="cm-deck">
+            <div class="cm-meter cm-meter--balance">
+              <span class="cm-meter__label">Balance</span>
+              <span class="cm-meter__value">
+                <CoinsIcon class="cm-coin" />
+                {{ formatNumber(balance) }}
+              </span>
+            </div>
+
+            <div
+              class="cm-meter cm-meter--bet"
+              :class="{ 'is-locked': betLocked }"
+            >
+              <span class="cm-meter__label">
+                Bet
+                <button
+                  class="cm-max"
+                  :disabled="betLocked || bet === maxAffordableBet"
+                  @click="betMax"
+                >MAX</button>
+              </span>
+              <div class="cm-bet">
+                <button
+                  class="cm-round cm-round--sm"
+                  aria-label="Lower bet"
+                  :disabled="betLocked || bet <= MIN_BET"
+                  @click="betDown"
+                >
+                  <MinusIcon />
+                </button>
+                <input
+                  v-if="betEditing"
+                  ref="betInputEl"
+                  v-model="betText"
+                  class="cm-bet__input"
+                  aria-label="Bet amount"
+                  inputmode="decimal"
+                  @blur="commitBet"
+                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                >
+                <button
+                  v-else
+                  class="cm-bet__value"
+                  title="Type a bet"
+                  :disabled="betLocked"
+                  @click="editBet"
+                >
+                  {{ formatNumber(bet) }}
+                </button>
+                <button
+                  class="cm-round cm-round--sm"
+                  aria-label="Raise bet"
+                  :disabled="betLocked || bet >= MAX_BET"
+                  @click="betUp"
+                >
+                  <PlusIcon />
+                </button>
+              </div>
+              <span
+                v-if="betEditing && amountPreview(betText, true)"
+                class="cm-bet__preview"
+              >{{ amountPreview(betText, true) }}</span>
+              <span
+                v-else-if="huntMode"
+                class="cm-bet__preview"
+              >Spin costs {{ formatNumber(spinCost) }}</span>
+            </div>
+
+            <div class="cm-meter cm-meter--win">
+              <span class="cm-meter__label">{{ inBonus ? 'Bonus win' : 'Win' }}</span>
+              <span
+                :key="winPulse"
+                class="cm-meter__win"
+                :class="{ 'is-hot': winShown > 0 }"
+              >{{ formatNumber(winShown) }}</span>
+              <span
+                v-if="winEquation"
+                class="cm-meter__eq"
+              >{{ winEquation }}</span>
+            </div>
+
+            <div class="cm-actions">
+              <button
+                class="cm-round"
+                :class="{ 'is-on': turbo }"
+                title="Turbo"
+                aria-label="Turbo"
+                :aria-pressed="turbo"
+                @click="toggleTurbo"
+              >
+                <ZapIcon />
+              </button>
+              <button
+                class="cm-spin"
+                :class="{ 'is-busy': isSpinning || presenting, 'is-auto': autoSpinEnabled }"
+                :disabled="!autoSpinEnabled && !canSpin"
+                :aria-label="autoSpinEnabled ? 'Stop auto spin' : 'Spin'"
+                @click="onSpinButton"
+              >
+                <span
+                  v-if="autoSpinEnabled"
+                  class="cm-spin__auto"
+                >
+                  <b>{{ autoSpinsLeft }}</b>
+                  <small>STOP</small>
+                </span>
+                <RotateCwIcon v-else class="cm-spin__icon" />
+                <span v-if="!autoSpinEnabled" class="cm-spin__label">{{ isSpinning || presenting ? 'Popping!' : 'Spin' }}</span>
+              </button>
+              <button
+                class="cm-round"
+                :class="{ 'is-on': autoSpinEnabled }"
+                title="Auto spin"
+                aria-label="Auto spin"
+                :disabled="!autoSpinEnabled && !canSpin"
+                @click="openAuto"
+              >
+                <SquareIcon v-if="autoSpinEnabled" />
+                <RepeatIcon v-else />
+              </button>
+            </div>
+
+            <div class="cm-utils">
+              <button
+                class="cm-util"
+                title="Rules and paytable"
+                aria-label="Rules and paytable"
+                @click="openRules"
+              >
+                <InfoIcon />
+              </button>
+              <div
+                class="cm-sound"
+                @mouseleave="showSound = false"
+              >
+                <button
+                  class="cm-util"
+                  :title="soundEnabled ? 'Sound' : 'Sound off'"
+                  aria-label="Sound settings"
+                  @click="showSound = !showSound"
+                >
+                  <Volume2Icon v-if="soundEnabled && soundVolume > 0" />
+                  <VolumeXIcon v-else />
+                </button>
+                <div
+                  v-if="showSound"
+                  class="cm-sound__pop"
+                >
+                  <button
+                    class="cm-sound__toggle"
+                    @click="toggleSound"
+                  >
+                    {{ soundEnabled ? 'Mute' : 'Unmute' }}
+                  </button>
+                  <input
+                    v-model.number="soundVolume"
+                    type="range"
+                    min="0"
+                    max="100"
+                    aria-label="Volume"
+                    :disabled="!soundEnabled"
+                  >
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <Transition name="cm-fade">
+            <div
+              v-if="errorMsg"
+              class="cm-error"
+            >
+              <span>{{ errorMsg }}</span>
+              <button
+                aria-label="Dismiss"
+                @click="errorMsg = ''"
+              >
+                <XIcon />
+              </button>
+            </div>
+          </Transition>
+        </div>
+
+        <!-- Info column -->
+        <aside class="cm-side cm-side--right">
+          <div class="cm-panel">
+            <p class="cm-panel__title">
+              How it pays
+            </p>
+            <ul class="cm-panel__list">
+              <li><b>4+</b> matching candies touching side by side</li>
+              <li>Popped squares leave <b>×2</b> spots that double on every repeat pop</li>
+              <li>All spots add up and multiply the spin's win</li>
+              <li><b>3 lollipops</b> = {{ CM_FREE_SPINS }} free spins, about 1 in {{ formatNumber(CANDY_BONUS_ODDS, false) }} spins</li>
+            </ul>
+            <button
+              class="cm-panel__link"
+              @click="openRules"
+            >
+              Full rules and paytable
+            </button>
+          </div>
+          <div
+            v-if="history.length"
+            class="cm-panel"
+          >
+            <p class="cm-panel__title">
+              Last spins
+            </p>
+            <div class="cm-history">
+              <span
+                v-for="(h, i) in history"
+                :key="i"
+                :class="{ win: h.payout > h.bet, bonus: h.bonus }"
+              >
+                <CandyIcon v-if="h.bonus" class="size-3" />
+                {{ h.payout > 0 ? formatNumber(h.payout) : '–' }}
+              </span>
+            </div>
+          </div>
+        </aside>
+      </div>
     </div>
 
-    <template #rules>
-      <CandyRules :bet="bet" />
-    </template>
-  </GameFrame>
+    <CandyRules
+      v-model:open="showRules"
+      :bet="bet"
+    />
+    <CandyAutoSpin
+      v-model:open="showAuto"
+      :spin-cost="spinCost"
+      @start="startAutoSpin"
+    />
+  </div>
 </template>
 
 <style scoped>
 .cm-root {
-  container: cm / inline-size;
   --cm-ink: var(--cmx-text-highlighted);
   --cm-pink: var(--candy-accent);
   --cm-pink-hi: color-mix(in srgb, var(--cm-pink) 32%, var(--cmx-bg-elevated));
@@ -1564,7 +1650,6 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
   position: relative;
   min-height: 100%;
   overflow: hidden;
-  border-radius: calc(var(--radius) * 1.25);
   font-family: 'Fredoka', system-ui, sans-serif;
   color: var(--cm-ink);
   isolation: isolate;
@@ -1580,11 +1665,88 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
 }
 
 /* ── logo ─────────────────────────────────────────────────────────── */
+.cm-logo {
+  filter: drop-shadow(0 8px 18px color-mix(in srgb, var(--cm-pink) 32%, transparent));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 2px;
+}
+
+.cm-logo__title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.2em;
+  font-family: 'Lilita One', system-ui, sans-serif;
+  font-weight: 400;
+  font-size: clamp(42px, 5.5vw, 72px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.cm-logo__candy, .cm-logo__madness {
+  display: inline-block;
+}
+
+.cm-logo__candy {
+  color: var(--cm-pink);
+  -webkit-text-stroke: 1px color-mix(in srgb, var(--cm-pink) 60%, var(--cmx-text-highlighted));
+}
+
+.cm-logo__madness {
+  color: color-mix(in srgb, var(--candy-violet) 35%, var(--cm-ink));
+}
+
+
+.cm-logo__art {
+  width: 54px;
+  filter: drop-shadow(0 5px 7px color-mix(in srgb, var(--cm-pink) 45%, transparent));
+  height: auto;
+}
+
+.cm-logo__art--l {
+  rotate: -12deg;
+}
+.cm-logo__art--r {
+  rotate: 10deg;
+}
+
+@keyframes cm-bob {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -5px; }
+}
+
+.cm-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px;
+  margin: 16px 0 24px;
+}
+
+.cm-chip {
+  padding: 5px 11px;
+  border: 1px solid var(--cm-line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cm-cream) 86%, transparent);
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cm-muted);
+}
+
+.cm-chip--vol :deep(.text-muted) {
+  color: var(--cm-muted);
+}
 
 /* ── layout ───────────────────────────────────────────────────────── */
 .cm-main {
   display: grid;
-  grid-template-columns: 190px minmax(0, 760px) 190px;
+  grid-template-columns: 210px minmax(0, 760px) 210px;
   grid-template-areas: 'features cabinet guide';
   gap: 24px;
   width: 100%;
@@ -1845,7 +2007,7 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
   color: var(--cm-ink);
 }
 
-@container cm (max-width: 480px) {
+@media (max-width: 480px) {
   .cm-pill { padding: 3px 10px; gap: 5px; }
   .cm-pill__label { font-size: 9px; letter-spacing: 0.08em; }
   .cm-pill__value { font-size: 16px; }
@@ -1974,7 +2136,7 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  grid-template-areas: 'bal bet win' 'act act act';
+  grid-template-areas: 'bal bet win' 'util act act';
   align-items: center;
   gap: 14px 10px;
   padding: 10px 14px 16px;
@@ -2007,9 +2169,16 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
   grid-area: act;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 10px;
 }
+.cm-utils {
+  grid-area: util;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+}
+
 .cm-meter {
   position: relative;
   display: flex;
@@ -2232,6 +2401,51 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
 
 
 
+.cm-util {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  font-size: 17px;
+  color: var(--cm-muted);
+  cursor: pointer;
+}
+
+.cm-util:hover {
+  color: var(--cm-ink);
+  background: var(--cm-paper);
+}
+
+.cm-sound { position: relative; }
+
+.cm-sound__pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: var(--cm-cream);
+  border: 1px solid var(--cm-line);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5);
+}
+
+.cm-sound__toggle {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cm-ink);
+  background: var(--cm-gold);
+  cursor: pointer;
+}
+
+.cm-sound__pop input { width: 110px; accent-color: #ff5fa8; }
+
 /* ── side panels ──────────────────────────────────────────────────── */
 .cm-panel {
   padding: 16px;
@@ -2239,6 +2453,39 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
   border-radius: 14px;
   background: linear-gradient(160deg, color-mix(in srgb, var(--candy-violet) 15%, var(--cm-cream)), var(--cm-cream));
   box-shadow: 0 8px 22px color-mix(in srgb, var(--cm-paper) 55%, transparent);
+}
+
+.cm-panel__title {
+  font-family: 'Lilita One', system-ui, sans-serif;
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--cm-ink);
+  margin-bottom: 14px;
+}
+
+.cm-panel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--cm-muted);
+}
+
+.cm-panel__list li { padding-left: 14px; position: relative; }
+.cm-panel__list li::before { content: ''; position: absolute; left: 0; top: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--cm-pink); }
+.cm-panel__list b {
+  color: var(--cm-ink);
+}
+
+.cm-panel__link {
+  margin-top: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--cm-ink);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  cursor: pointer;
 }
 
 .cm-history {
@@ -2291,6 +2538,7 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
 .cm-fade-enter-from, .cm-fade-leave-to { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) {
+  .cm-logo__art, .cm-feature__art img, .cm-frame.is-anticipating, .cm-feature--buy.is-armed, .cm-spin.is-busy .cm-spin__icon { animation: none !important; }
 }
 .cm-eyebrow,
 .cm-section-label {
@@ -2333,14 +2581,19 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
 .cm-root button:focus-visible,
 .cm-root input:focus-visible { outline: 3px solid var(--cm-pink); outline-offset: 4px; }
 
-@container cm (max-width: 1100px) {
+@media (max-width: 1284px) {
   .cm-main { grid-template-columns: minmax(0, 760px); grid-template-areas: 'cabinet' 'features' 'guide'; justify-content: center; }
   .cm-side--left { display: grid; grid-template-columns: 1fr 1fr; padding-top: 0; }
   .cm-section-label { grid-column: 1 / -1; }
   .cm-side--right { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding-top: 0; }
 }
-@container cm (max-width: 540px) {
+@media (max-width: 540px) {
   .cm-stage { padding: 20px 12px 30px; }
+  .cm-logo { gap: 4px; }
+  .cm-logo__art { width: 28px; }
+  .cm-logo__title { font-size: clamp(30px, 8vw, 42px); }
+  .cm-chips { gap: 12px; margin: 14px 0 20px; }
+  .cm-chip { font-size: 9px; }
   .cm-frame { padding: 12px 7px 7px; border-radius: 16px 16px 0 0; }
   .cm-window { border-radius: 12px; }
   .cm-machine-heading { font-size: 8px; gap: 4px; padding: 6px 9px; min-height: 30px; }

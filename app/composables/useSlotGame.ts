@@ -12,7 +12,8 @@ import { findGame } from '#shared/games/registry'
 interface SpinResponse<TResult> {
     gameData: TResult
     balance: number
-    /** What the round paid, in whole coins (games whose result is in × bet read it here). */
+    /** Coins staked and paid this round, in whole coins (the old results carried these in gameData). */
+    stake: number
     payout: number
 }
 
@@ -79,7 +80,7 @@ export function useSlotGame<TResult, THistory extends Record<string, unknown> = 
         }
         if (disposed) round.settle()
         else unsettled = true
-        return { gameData: data.result, balance: data.balance, payout: data.payout }
+        return { gameData: data.result, balance: data.balance, stake: data.stake, payout: data.payout }
     }
 
     return { bet, isSpinning, errorMsg, balance, setBalance, history, pushHistory, spin }

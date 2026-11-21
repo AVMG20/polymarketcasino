@@ -1,6 +1,6 @@
 // Candy Madness sound playback. Every effect is synthesized on the fly
-// (app/utils/candymadness/synth.ts); nothing is fetched. Per-event levels,
-// cooldowns and voice caps; the casino's mute switch turns it all off.
+// (app/utils/slots/candymadness-synth.ts); nothing is fetched. Per-event
+// levels, cooldowns and voice caps, persisted enable/volume.
 //
 // Signal chain: voice (level, pan) -> master gain (player volume) ->
 // compressor -> speakers, so a long tumble chain squashes instead of clipping.
@@ -15,8 +15,11 @@ import {
     CANDY_SYNTH_RECIPES,
     CandySynthVoice,
     type CandySoundEvent
-} from '~/utils/candymadness/synth'
-import { shapezzSynthWarmUp } from '~/utils/candymadness/voice'
+} from '~/utils/slots/candymadness-synth'
+import { synthWarmUp as shapezzSynthWarmUp } from '~/utils/slots/synth-voice'
+
+const ENABLED_KEY = 'candymadness-sound-enabled'
+const VOLUME_KEY = 'candymadness-sound-volume'
 
 const soundEnabled = ref(true)
 const soundVolume = ref(70)
@@ -147,18 +150,39 @@ function stopAll() {
 function initialize() {
     if (!import.meta.client || initialized) return
     initialized = true
-    watch(soundEnabled, (enabled) => {
-        if (!enabled) stopAll()
+    try {
+        const storedEnabled = localStorage.getItem(ENABLED_KEY)
+        const storedVolume = localStorage.getItem(VOLUME_KEY)
+        if (storedEnabled !== null) soundEnabled.value = storedEnabled === 'true'
+        // Number(null) is 0, so check for null before trusting the stored volume.
+        if (storedVolume !== null && Number.isFinite(Number(storedVolume))) {
+            soundVolume.value = Math.max(0, Math.min(100, Number(storedVolume)))
+        }
+    } catch {
+        // Storage blocked: keep defaults.
+    }
+    const persist = (key: string, value: string) => {
+        try {
+            localStorage.setItem(key, value)
+        } catch {
+            // Storage blocked.
+        }
+    }
+    // A detached scope: watchers made in the first caller's setup would stop
+    // when that game unmounts, and the next visit would no longer save.
+    effectScope(true).run(() => {
+        watch(soundEnabled, (enabled) => {
+            persist(ENABLED_KEY, String(enabled))
+            if (!enabled) stopAll()
+        })
+        watch(soundVolume, (volume) => {
+            persist(VOLUME_KEY, String(volume))
+            if (ctx && bus) bus.input.gain.setTargetAtTime(masterLevel(), ctx.currentTime, 0.02)
+        })
     })
 }
 
 export function useCandyMadnessSound() {
     initialize()
-    // Follows the casino's mute switch (shared with every game).
-    const muted = useSlotSound(undefined).muted
-    soundEnabled.value = !muted.value
-    watch(muted, (value) => {
-        soundEnabled.value = !value
-    })
-    return { soundEnabled, play, unlock, stopAll }
+    return { soundEnabled, soundVolume, play, unlock, stopAll }
 }
