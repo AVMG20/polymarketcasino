@@ -7,6 +7,7 @@
       "dependencies": {
         "@fontsource/alfa-slab-one": "^5.3.0",
         "@fontsource/audiowide": "^5.3.0",
+        "@fontsource/bangers": "^5.3.0",
         "@fontsource/bricolage-grotesque": "^5.3.0",
         "@fontsource/chakra-petch": "^5.3.0",
         "@fontsource/cinzel": "^5.3.0",
@@ -192,6 +193,8 @@
     "@fontsource/alfa-slab-one": ["@fontsource/alfa-slab-one@5.3.0", "", {}, "sha512-J/ANFZ7S9CbZClr/QhMjmBtpFmmKipVkEXHj20aurR5uqJPCBChVPJn1/kx6vtrwnfnDY0kQaYSTYasSt4GruA=="],
 
     "@fontsource/audiowide": ["@fontsource/audiowide@5.3.0", "", {}, "sha512-ECBdWgQPaCSuwlFyeXzV0i2DAGq0SKID7jxD1oHhYTObx3wz26YKs3F9Ic/EO369Anzld9IqxflRukJm6nVxpw=="],
+
+    "@fontsource/bangers": ["@fontsource/bangers@5.3.0", "", {}, "sha512-tSRpmWwkqrO9PCqo9wjA/99/5sLOIWm5cf51G3ooEHd8qZus8sVSSJoWp/7EvM5rIgZMjKRG6XtY9yeisKxE7g=="],
 
     "@fontsource/bricolage-grotesque": ["@fontsource/bricolage-grotesque@5.3.0", "", {}, "sha512-MdOVb/5in11IfN/IQJOExMuu6AroCIQbirl0yX7NUvKk+h0HYIKfGaVAXRS/gCPil4aFxWhjZnOw28tUwv7tFw=="],
 

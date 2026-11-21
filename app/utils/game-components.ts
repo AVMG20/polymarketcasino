@@ -1,14 +1,7 @@
 import type { Component } from 'vue'
 import { GAMES } from '#shared/games/registry'
 
-/**
- * The client half of every listed game, loaded on demand. Slots share one
- * component, skinned by app/utils/slot-themes.ts.
- */
-const slot = (slug: string) => defineAsyncComponent(async () => {
-    const SlotGame = (await import('~/components/games/SlotGame.vue')).default
-    return defineComponent({ name: `Slot-${slug}`, render: () => h(SlotGame, { slug }) })
-})
+/** The client half of every listed game, loaded on demand. */
 
 export const GAME_COMPONENTS: Record<string, Component> = {
     'dice': defineAsyncComponent(() => import('~/components/games/DiceGame.vue')),
@@ -23,7 +16,7 @@ export const GAME_COMPONENTS: Record<string, Component> = {
     'casino-holdem': defineAsyncComponent(() => import('~/components/games/CasinoHoldemGame.vue')),
     'three-card-poker': defineAsyncComponent(() => import('~/components/games/ThreeCardPokerGame.vue')),
     'spinata': defineAsyncComponent(() => import('~/components/games/SpinataGame.vue')),
-    'trashpanda': slot('trashpanda'),
+    'trashpanda': defineAsyncComponent(() => import('~/components/games/TrashPandaGame.vue')),
     'aethergates': defineAsyncComponent(() => import('~/components/games/AethergatesGame.vue')),
     'emberportals': defineAsyncComponent(() => import('~/components/games/EmberPortalsGame.vue')),
     'xenoslot': defineAsyncComponent(() => import('~/components/games/XenoSlotGame.vue')),
