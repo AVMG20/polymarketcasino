@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { formatCoins } from '#shared/money'
 // Big-win showcase over the board. The dimming, portal flare and ember
 // fountain are drawn in the Pixi canvas underneath; this layer is the title
 // and the counting amount. `tier` 0..4 = BIG … LEGENDARY.
@@ -35,10 +34,10 @@ const style = computed(() => {
       </span>
     </Transition>
     <span class="ep-bw__amount">
-      {{ formatCoins(amount) }}
+      {{ formatNumber(amount) }}
     </span>
     <span class="ep-bw__mult">
-      {{ (Math.floor(multiple * 10) / 10).toLocaleString('en-US') }}× bet
+      {{ formatNumber(multiple, false) }}× bet
     </span>
     <span class="ep-bw__hint">Tap to skip</span>
   </button>

@@ -2,27 +2,31 @@
 // Ember Portals: a 7×7 cluster-pays tumble slot. Winning clusters open portal
 // wilds that grow, jump and merge; in free spins the portals stay open. The
 // server decides every outcome (shared/slots/emberportals), including every
-// tumble, fall and portal move; this component only replays it, then settles
-// the balance. Artwork is painted on canvases (~/utils/slots/emberportals-art),
-// the effects live in ~/utils/slots/emberportals-fx and every sound is
-// synthesized (useEmberPortalsSound).
-import '@fontsource/cinzel/700.css'
-import '@fontsource/cinzel/900.css'
+// tumble, fall and portal move; this component only replays it. Artwork is
+// painted on canvases (~/utils/slots/emberportals-art), the effects live in
+// ~/utils/slots/emberportals-fx and every sound is synthesized
+// (~/composables/emberportals-sound).
 import '@fontsource/cinzel-decorative/700.css'
 import '@fontsource/cinzel-decorative/900.css'
+import '@fontsource/cinzel/600.css'
+import '@fontsource/cinzel/700.css'
+import '@fontsource/cinzel/900.css'
+import '@fontsource/nunito/400.css'
+import '@fontsource/nunito/600.css'
+import '@fontsource/nunito/700.css'
+import '@fontsource/nunito/800.css'
+import { TriangleAlertIcon, LoaderCircleIcon, XIcon } from 'lucide-vue-next'
 import type { Container, Graphics, Sprite, Text, Texture } from 'pixi.js'
-import { Loader2, Volume2, VolumeX } from 'lucide-vue-next'
-import { toast } from 'vue-sonner'
-import { Button } from '@/components/ui/button'
 import { findGame } from '#shared/games/registry'
-import { formatCoins } from '#shared/money'
-import type { Cell, EmberPortalsResult, EpCluster, EpMode, EpSpin, EpSymbol, EpTumble, EpWild } from '#shared/slots/emberportals'
+import type { Cell, EmberPortalsResult, EpCluster, EpFreeSpin, EpSpin, EpSymbol, EpTumble, EpWild } from '#shared/slots/emberportals'
 import {
+    EP_ANTE_COST,
     EP_COLS,
     EP_PAY_SYMBOLS,
     EP_ROWS,
     FS_AWARD,
     FS_TRIGGER,
+    emberPortalsPayout,
     emberPortalsStake
 } from '#shared/slots/emberportals'
 import { initSlotPixiApp, safeDestroy } from '~/utils/slot-pixi'
@@ -43,6 +47,7 @@ import {
     paintEpPortalCore,
     paintEpPortalRing,
     paintEpScene,
+    paintEpSpinRing,
     paintEpSymbol
 } from '~/utils/slots/emberportals-art'
 import {
@@ -61,13 +66,18 @@ import EpPaytable from '~/components/games/emberportals/EpPaytable.vue'
 import EpFiligree from '~/components/games/emberportals/EpFiligree.vue'
 import EpWarp from '~/components/games/emberportals/EpWarp.vue'
 import EpWinDisplay from '~/components/games/emberportals/EpWinDisplay.vue'
-import SlotControls from '~/components/game/SlotControls.vue'
+import SlotBuyDialog from '~/components/slots/SlotBuyDialog.vue'
+import SlotControlBar from '~/components/slots/SlotControlBar.vue'
+import type { SlotAutoSettings, SlotBuyOption, SlotSpinMode } from '~/utils/slots/slot-controls'
+import { EMBER_BAR_THEME } from '~/utils/slots/slot-themes'
 
 const info = findGame('emberportals')!
-const round = useGameRound<EmberPortalsResult>('emberportals')
-const { coins } = useCasinoSession()
+useHead({ title: info.name })
+onMounted(() => useHubBridge().postTitle(info.name))
+
+const { bet, isSpinning, errorMsg, balance, setBalance, history, pushHistory, spin: requestSpin } = useSlotGame<EmberPortalsResult, { payout: number, bet: number, bonus: boolean }>('emberportals')
 const sound = useEmberPortalsSound()
-const controls = ref<InstanceType<typeof SlotControls> | null>(null)
+const { soundEnabled, soundVolume, musicVolume } = sound
 
 /** Sound effects go quiet once the game unmounts, even if a round is still unwinding. */
 function sfx(...args: Parameters<typeof sound.play>) {
@@ -84,14 +94,52 @@ const UI_STACK = fontStack(EP_UI_FONT, 'system-ui, sans-serif')
 const fontVars = { '--ep-display': DISPLAY_STACK, '--ep-number': NUMBER_STACK, '--ep-ui': UI_STACK }
 
 // --- bet --------------------------------------------------------------------
-const bet = ref(info.minBet)
-/** The bet the round on screen was played at: every amount in a result is × this. */
-let roundBet = info.minBet
-const coinsOf = (multiple: number) => Math.floor(multiple * roundBet + 1e-9)
+// The casino's bet bounds (the old site took 1 to 100B).
+const MIN_BET = info.minBet
+const MAX_BET = info.maxBet
+const BET_LADDER: number[] = []
+for (let e = 0; e <= 11; e++) {
+    for (const m of [1, 2, 5]) {
+        const v = m * 10 ** e
+        if (v >= MIN_BET && v <= MAX_BET) BET_LADDER.push(v)
+    }
+}
+
+function clampBet(v: number): number {
+    if (!Number.isFinite(v) || v < MIN_BET) return MIN_BET
+    return Math.min(MAX_BET, Math.floor(v))
+}
+
 const betLocked = computed(() => phase.value !== 'idle' || autoplay.active)
+
+function setBet(v: number, effect?: 'bet-up' | 'bet-down') {
+    if (betLocked.value) return
+    const next = clampBet(v)
+    if (next === bet.value) return
+    bet.value = next
+    if (effect) sfx(effect)
+}
+
+function betUp() {
+    setBet(BET_LADDER.find(v => v > bet.value) ?? MAX_BET, 'bet-up')
+}
+
+function betDown() {
+    setBet([...BET_LADDER].reverse().find(v => v < bet.value) ?? MIN_BET, 'bet-down')
+}
+
+function maxBet() {
+    const unit = ante.value ? EP_ANTE_COST : 1
+    setBet([...BET_LADDER].reverse().find(v => v * unit <= balance.value) ?? MIN_BET, 'bet-up')
+}
+
+function typeBet(v: number) {
+    setBet(v, v > bet.value ? 'bet-up' : 'bet-down')
+}
 
 // --- extra chance (ante) ------------------------------------------------------
 const ante = ref(false)
+// The stakes the server takes, in whole coins (the ante rounds up).
 const spinCost = computed(() => emberPortalsStake(ante.value ? 'ante' : 'normal', bet.value))
 const buyCost = computed(() => emberPortalsStake('buy', bet.value))
 
@@ -108,15 +156,18 @@ function toggleAnte() {
 const buyArt = ref('')
 const logoArt = ref('')
 const ringArt = ref('')
+const spinRingArt = ref('')
+const showBuy = ref(false)
 /** Right wing legend in the base game: every portal tier and where it starts. */
 const tierLegend = ref<{ min: number, name: string, glow: string, url: string }[]>([])
 
-const buyOptions = computed(() => [
+const buyOptions = computed<SlotBuyOption[]>(() => [
     {
         id: 'buy',
-        title: 'Free Spins',
-        description: `${FS_AWARD[0]}+ spins, portals stay open`,
-        cost: buyCost.value
+        title: 'Buy Free Spins',
+        description: `${FS_AWARD[0]}+ free spins, portals stay open`,
+        cost: buyCost.value,
+        image: buyArt.value
     }
 ])
 
@@ -126,6 +177,7 @@ const phase = ref<Phase>('idle')
 const ready = ref(false)
 const loadError = ref('')
 const turbo = ref(false)
+const showHelp = ref(false)
 /** The server answered and the new screen is dropping in. */
 const resultIn = ref(false)
 const reducedMotion = ref(false)
@@ -134,6 +186,7 @@ const winMeter = ref(0)
 const winPulse = ref(0)
 const winning = ref(false)
 const teasing = ref(false)
+const launching = ref(false)
 /** Screen-reader only: what just happened. The visible status line is the win display. */
 const message = ref('Match 5 or more to open a portal')
 
@@ -178,7 +231,7 @@ function tierFor(multiple: number) {
 
 /** Win display glow by how big the round is so far. */
 const winGlow = computed(() => {
-    const m = winMeter.value / Math.max(1, roundBet)
+    const m = winMeter.value / Math.max(1, bet.value)
     if (m >= 100) return '#c77dff'
     if (m >= 15) return '#ff5a3c'
     if (m >= 3) return '#ff8a1f'
@@ -357,7 +410,8 @@ onMounted(async () => {
         buyArt.value = epArtDataUrl('buy', 200)
         logoArt.value = epArtDataUrl('logo', 360)
         ringArt.value = epArtDataUrl('wild', 256)
-            tierLegend.value = EP_PORTAL_TIERS.map((t, i) => ({ min: t.min, name: t.name, glow: t.glow, url: paintEpPortalRing(96, i).toDataURL() }))
+        spinRingArt.value = paintEpSpinRing(256).toDataURL()
+        tierLegend.value = EP_PORTAL_TIERS.map((t, i) => ({ min: t.min, name: t.name, glow: t.glow, url: paintEpPortalRing(96, i).toDataURL() }))
         buildScene('base')
 
         app = await initSlotPixiApp(PIXI.Application, { width: APP_W, height: APP_H }, () => destroyed)
@@ -604,12 +658,13 @@ function click() {
     sfx('click')
 }
 
-watch(turbo, (on) => {
+function toggleTurbo() {
+    turbo.value = !turbo.value
     sfx('click')
     try {
-        localStorage.setItem('emberportals-turbo', String(on))
+        localStorage.setItem('emberportals-turbo', String(turbo.value))
     } catch { /* storage blocked */ }
-})
+}
 
 // --- timing -----------------------------------------------------------------
 let skipping = false
@@ -797,7 +852,7 @@ function paintPortal(p: PortalView, mult: number, slam: boolean) {
     p.halo.tint = colors.glow
     p.rays.tint = colors.glow
     p.flame.set({ colors: colors.flames, intensity: flameIntensity(mult) })
-    p.label.text = `×${formatCoins(mult, false)}`
+    p.label.text = `×${formatNumber(mult, false)}`
     p.label.style.fontSize = mult >= 1000 ? CELL * 0.28 : mult >= 100 ? CELL * 0.34 : CELL * 0.45
     p.label.style.dropShadow = { color: colors.glow, alpha: 1, blur: 12, distance: 0, angle: 0 }
     if (!slam || skipping) return
@@ -1194,14 +1249,14 @@ async function dropIn(grid: EpSymbol[][]) {
   * every paid symbol (portal targets included) until the cells are empty, move
   * the portals, then let symbols fall and fresh ones drop.
   */
-async function playTumble(t: EpTumble, meterTo: number, index: number) {
+async function playTumble(t: EpTumble, theBet: number, meterTo: number, index: number) {
     const cells = new Set<number>()
     const portalIds = new Set<number>()
     for (const c of t.clusters) {
         for (const cell of c.cells) cells.add(cellKey(cell.col, cell.row))
         for (const id of c.wilds) portalIds.add(id)
     }
-    const multiple = t.win
+    const multiple = t.win / theBet
 
     // 1. Highlight and pay.
     winning.value = true
@@ -1216,8 +1271,8 @@ async function playTumble(t: EpTumble, meterTo: number, index: number) {
         const p = centroid(c.cells)
         const color = EP_SYMBOLS[c.symbol].color
         if (!skipping) fx?.bloom(p.x, p.y, hex(color), CELL * (2 + Math.min(3, c.size / 5)), 0.6)
-        flyToWin(p.x, p.y, `+${formatCoins(coinsOf(c.amount))}`, color, c.amount >= 5)
-        if (c.wilds.length) floatText(p.x, p.y + 34, `×${formatCoins(c.mult, false)}`, hex(tierCss(c.mult).glow), 30)
+        flyToWin(p.x, p.y, `+${formatNumber(c.amount)}`, color, c.amount / theBet >= 5)
+        if (c.wilds.length) floatText(p.x, p.y + 34, `×${formatNumber(c.mult, false)}`, hex(tierCss(c.mult).glow), 30)
     }
     for (const id of portalIds) {
         const p = portals.get(id)
@@ -1225,7 +1280,7 @@ async function playTumble(t: EpTumble, meterTo: number, index: number) {
         void anim(p.box.scale, { x: 1.2, y: 1.2, duration: 0.18, yoyo: true, repeat: 1, ease: 'sine.inOut' })
         fx?.bloom(p.box.x, p.box.y, tierColors(p.tier).glow, CELL * 3, 0.5)
     }
-    say(t.clusters.length > 1 ? `${t.clusters.length} clusters pay ${formatCoins(coinsOf(t.win))}` : `${t.clusters[0]!.size} ${EP_SYMBOLS[t.clusters[0]!.symbol].name} pay ${formatCoins(coinsOf(t.win))}`)
+    say(t.clusters.length > 1 ? `${t.clusters.length} clusters pay ${formatNumber(t.win)}` : `${t.clusters[0]!.size} ${EP_SYMBOLS[t.clusters[0]!.symbol].name} pay ${formatNumber(t.win)}`)
     await countWin(meterTo, multiple >= 5 ? 1 : 0.6)
     await delay(inFreeSpins.value ? 380 : 480)
 
@@ -1347,19 +1402,19 @@ async function playPortalChanges(t: EpTumble) {
                 if (stageRoot) fx?.shake(stageRoot, 7, 0.4)
             }
             paintPortal(keeper, ch.mult, true)
-            if (!skipping) floatText(x, y - CELL * 0.62, `×${formatCoins(ch.mult, false)}`, hex(tierCss(ch.mult).glow), 32)
+            if (!skipping) floatText(x, y - CELL * 0.62, `×${formatNumber(ch.mult, false)}`, hex(tierCss(ch.mult).glow), 32)
         })())
     }
     await Promise.all(jobs)
 }
 
-/** Replay one spin's tumbles; the meter (coins) counts up from `meterBase`. */
-async function playTumbles(spin: EpSpin, meterBase: number) {
+/** Replay one spin's tumbles; the meter counts up from `meterBase`. */
+async function playTumbles(spin: EpSpin, theBet: number, meterBase: number) {
     let acc = 0
     for (const [i, t] of spin.tumbles.entries()) {
         if (destroyed) return
         acc += t.win
-        await playTumble(t, meterBase + coinsOf(acc), i)
+        await playTumble(t, theBet, meterBase + acc, i)
         syncBoard(spin.tumbles[i + 1]?.grid ?? spin.finalGrid, t.wilds)
     }
     syncBoard(spin.finalGrid, spin.wildsEnd)
@@ -1475,10 +1530,19 @@ async function showCard(kind: typeof card.kind, title: string, sub: string, amou
     skipping = false
 }
 
+function launchSpinButton() {
+    launching.value = false
+    requestAnimationFrame(() => {
+        launching.value = true
+        setTimeout(() => { launching.value = false }, 320)
+    })
+}
+
 // --- spin flow -----------------------------------------------------------------
 function resetRound() {
     winMeter.value = 0
     winning.value = false
+    errorMsg.value = ''
     meterTween?.kill()
     clearLayer(frameLayer)
     clearLayer(floatLayer)
@@ -1488,43 +1552,88 @@ function resetRound() {
     undim()
 }
 
+type Mode = 'normal' | 'ante' | 'buy'
+
+/** A round in coins, the shape the old site's server sent. */
+interface EpRound extends EmberPortalsResult {
+    bet: number
+    cost: number
+    basePayout: number
+    freeSpinsPayout: number
+    payout: number
+}
+
+/**
+ * The casino's server sends every amount as a multiple of the bet
+ * (shared/slots/emberportals); the replay below reads coins, as on the old
+ * site. Shown amounts are whole coins rounded down, and the total is what
+ * the server paid.
+ */
+function inCoins(r: EmberPortalsResult, theBet: number, cost: number): EpRound {
+    const coins = (v: number) => Math.floor(v * theBet + 1e-9)
+    const tumble = (t: EpTumble): EpTumble => ({
+        ...t,
+        win: coins(t.win),
+        clusters: t.clusters.map(c => ({ ...c, base: coins(c.base), amount: coins(c.amount) }))
+    })
+    const spinIn = <T extends EpSpin>(s: T): T => ({ ...s, win: coins(s.win), tumbles: s.tumbles.map(tumble) })
+    const freeSpins = r.freeSpins
+        ? { ...r.freeSpins, total: coins(r.freeSpins.total), spins: r.freeSpins.spins.map((s: EpFreeSpin) => ({ ...spinIn(s), runningTotal: coins(s.runningTotal) })) }
+        : null
+    const payout = emberPortalsPayout(r, theBet)
+    const base = spinIn(r.base)
+    return { ...r, base, freeSpins, bet: theBet, cost, basePayout: Math.min(payout, base.win), freeSpinsPayout: freeSpins?.total ?? 0, payout }
+}
+
 async function spin(buy = false) {
     if (!ready.value || phase.value !== 'idle' || !symbolLayer) return
     sound.unlock()
     sound.startMusic()
-    const mode: EpMode = buy ? 'buy' : ante.value ? 'ante' : 'normal'
+    const mode: Mode = buy ? 'buy' : ante.value ? 'ante' : 'normal'
     const cost = mode === 'buy' ? buyCost.value : spinCost.value
-    if (coins.value < cost) {
-        toast.error('Not enough coins for this bet')
+    if (balance.value < cost) {
+        errorMsg.value = 'Not enough coins for this bet'
         sfx('error')
         stopAutoplay()
         return
     }
+    const balanceBefore = balance.value
     const gridBefore = shownGrid.map(c => c.slice())
     const wildsBefore = restingWilds.map(w => ({ ...w }))
+    let debited = false
+    let clearing: Promise<unknown> = Promise.resolve()
     skipping = false
     resultIn.value = false
-    roundBet = bet.value
-    phase.value = 'spinning'
-    resetRound()
-    sfx(mode === 'buy' ? 'buy' : 'spin')
-    say(mode === 'buy' ? 'The portals stir' : 'Spinning')
-    // The last round's portals implode as its symbols fall away.
-    const clearing = Promise.all([dropOut(), closePortals()])
 
-    const response = await round.play({ bet: roundBet, options: mode === 'buy' ? { buy: true } : mode === 'ante' ? { ante: true } : {} })
-    if (!response) {
-        await clearing
-        syncBoard(gridBefore, wildsBefore)
-        restingWilds = wildsBefore
-        say('Spin failed')
-        sfx('error')
-        phase.value = 'idle'
-        stopAutoplay()
+    const roundBet = bet.value
+    const options = mode === 'buy' ? { buy: true } : mode === 'ante' ? { ante: true } : undefined
+    const data = await requestSpin(cost, options, () => {
+        phase.value = 'spinning'
+        debited = true
+        setBalance(balanceBefore - cost)
+        resetRound()
+        launchSpinButton()
+        sfx(mode === 'buy' ? 'buy' : 'spin')
+        say(mode === 'buy' ? 'The portals stir' : 'Spinning')
+        // The last round's portals implode as its symbols fall away.
+        clearing = Promise.all([dropOut(), closePortals()])
+    })
+
+    if (!data) {
+        if (debited) {
+            await clearing
+            setBalance(balanceBefore)
+            syncBoard(gridBefore, wildsBefore)
+            restingWilds = wildsBefore
+            say(errorMsg.value || 'Spin failed')
+            sfx('error')
+            phase.value = 'idle'
+            stopAutoplay()
+        }
         return
     }
 
-    const result = response.result
+    const result = inCoins(data.gameData, roundBet, cost)
     try {
         await clearing
         resultIn.value = true
@@ -1534,32 +1643,38 @@ async function spin(buy = false) {
         phase.value = 'presenting'
 
         if (result.base.tumbles.length) {
-            await playTumbles(result.base, 0)
+            await playTumbles(result.base, result.bet, 0)
         } else if (!result.freeSpins) {
             say('No cluster this time')
         }
 
         if (result.freeSpins && !destroyed) {
             phase.value = 'bonus'
+            autoplay.bonusHit()
             await bonusCinematic(result)
             await playFreeSpins(result)
-            if (tierFor(result.win) >= 0 && !destroyed) await showBigWin(response.payout, result.win)
-        } else if (result.base.win > 0 && !destroyed) {
-            if (tierFor(result.base.win) >= 0) {
-                await showBigWin(coinsOf(result.base.win), result.base.win)
+            const multiple = result.payout / result.bet
+            if (tierFor(multiple) >= 0 && !destroyed) await showBigWin(result.payout, multiple)
+        } else if (result.basePayout > 0 && !destroyed) {
+            const multiple = result.basePayout / result.bet
+            if (tierFor(multiple) >= 0) {
+                await showBigWin(result.basePayout, multiple)
             } else {
-                sfx(result.base.win >= 1 ? 'win' : 'win-small', Math.min(1, result.base.win / 5))
+                sfx(multiple >= 1 ? 'win' : 'win-small', Math.min(1, multiple / 5))
                 await delay(300)
             }
         }
 
-        winMeter.value = response.payout
-        if (response.payout > 0) say(`You won ${formatCoins(response.payout)}`)
-    } catch {
+        winMeter.value = result.payout
+        setBalance(data.balance)
+        pushHistory({ payout: result.payout, bet: result.cost, bonus: result.bonusTriggered })
+        if (result.payout > 0) say(`You won ${formatNumber(result.payout)}`)
+    } catch (e) {
+        errorMsg.value = e instanceof Error ? e.message : 'Animation error'
+        setBalance(data.balance)
         stopAutoplay()
     } finally {
-        // The balance lands only now, after the reveal.
-        round.settle()
+        isSpinning.value = false
         phase.value = 'idle'
         resultIn.value = false
         winning.value = false
@@ -1578,11 +1693,11 @@ async function spin(buy = false) {
     }
 
     if (destroyed) return
-    continueAutoplay(result, response.payout, roundBet)
+    continueAutoplay(result)
 }
 
 /** Scatters beam into the centre, the screen flares and a giant portal swallows the view. */
-async function bonusCinematic(result: EmberPortalsResult) {
+async function bonusCinematic(result: EpRound) {
     const fs = result.freeSpins!
     skipping = false
     const scatters = result.base.scatters
@@ -1613,7 +1728,7 @@ async function bonusCinematic(result: EmberPortalsResult) {
     warp.show = false
 }
 
-async function playFreeSpins(result: EmberPortalsResult) {
+async function playFreeSpins(result: EpRound) {
     const fs = result.freeSpins!
     inFreeSpins.value = true
     bonusScene.value = true
@@ -1641,8 +1756,8 @@ async function playFreeSpins(result: EmberPortalsResult) {
         if (destroyed) return
 
         const prev = fsTotal.value
-        if (spin.tumbles.length) await playTumbles(spin, before + prev)
-        fsTotal.value = coinsOf(spin.runningTotal)
+        if (spin.tumbles.length) await playTumbles(spin, result.bet, before + prev)
+        fsTotal.value = spin.runningTotal
         winMeter.value = before + fsTotal.value
         portalHud.value = spin.wildsEnd.map(w => ({ ...w }))
 
@@ -1675,12 +1790,12 @@ async function playFreeSpins(result: EmberPortalsResult) {
         fx?.flash(0xffb060, 0.5, 0.4)
     }
     const sub = fs.total > 0
-        ? `${fsTotalSpins.value} spins${peak > 1 ? ` · ×${formatCoins(peak, false)}` : ''}`
+        ? `${fsTotalSpins.value} spins${peak > 1 ? `, biggest portal ×${formatNumber(peak, false)}` : ''}`
         : 'The portals stayed quiet this time'
-    await showCard('fs-end', fs.capped ? 'Max Win!' : 'Feature Complete', sub, coinsOf(fs.total), 3000)
+    await showCard('fs-end', fs.capped ? 'Max Win!' : 'Feature Complete', sub, fs.total, 3000)
     fx?.fountain(0)
     inFreeSpins.value = false
-    say(fs.total > 0 ? `Free spins paid ${formatCoins(coinsOf(fs.total))}` : 'The portals stayed quiet')
+    say(fs.total > 0 ? `Free spins paid ${formatNumber(fs.total)}` : 'The portals stayed quiet')
 }
 
 /** Space / spin button while busy: hurry the presentation along. */
@@ -1704,9 +1819,8 @@ function onSpinButton() {
 }
 
 // --- autoplay ----------------------------------------------------------------------
-function startAutoplay() {
-    sound.unlock()
-    autoplay.start({ count: 10, stopOnBonus: true, stopOnWinX: 0, stopOnLossPct: 0 }, coins.value)
+function startAutoplay(settings: SlotAutoSettings) {
+    autoplay.start(settings, balance.value)
     sfx('click')
     if (phase.value === 'idle') void spin()
 }
@@ -1715,9 +1829,12 @@ function stopAutoplay() {
     autoplay.stop()
 }
 
-function continueAutoplay(result: EmberPortalsResult, payout: number, roundBet: number) {
+function continueAutoplay(result: EpRound) {
     if (!autoplay.active) return
-    if (!autoplay.finish({ payout, bet: roundBet, bonus: result.bonusTriggered }, coins.value, spinCost.value)) return
+    if (!autoplay.finish({ payout: result.payout, bet: result.cost, bonus: result.bonusTriggered }, balance.value, spinCost.value)) {
+        if (balance.value < spinCost.value) errorMsg.value = 'Autoplay stopped: balance too low'
+        return
+    }
     setTimeout(() => {
         if (!destroyed && autoplay.active) void spin()
     }, turbo.value ? 150 : 350)
@@ -1731,12 +1848,12 @@ function buyBonus(id: string) {
 function openBuy() {
     if (!ready.value || phase.value !== 'idle' || autoplay.active) return
     click()
-    controls.value?.openBuy()
+    showBuy.value = true
 }
 
 // --- template helpers ---------------------------------------------------------------
-const canSpin = computed(() => ready.value && coins.value >= spinCost.value)
-const spinMode = computed(() => {
+const canSpin = computed(() => ready.value && balance.value >= spinCost.value)
+const spinMode = computed<SlotSpinMode>(() => {
     if (phase.value === 'spinning' && !resultIn.value) return 'wait'
     if (phase.value !== 'idle') return 'skip'
     return 'spin'
@@ -1746,198 +1863,234 @@ const portalChipColor = (m: number) => tierCss(m).glow
 </script>
 
 <template>
-  <GameFrame slug="emberportals">
-    <template #actions>
-      <Button size="icon" variant="ghost" :title="sound.muted.value ? 'Sound on' : 'Sound off'" @click="sound.toggleMute()">
-        <VolumeX v-if="sound.muted.value" class="size-5" />
-        <Volume2 v-else class="size-5" />
-      </Button>
-    </template>
+  <div
+    ref="pageEl"
+    class="ep-page"
+    :class="{ 'is-bonus': inFreeSpins, 'is-bonus-scene': bonusScene, 'is-ante': ante, 'is-tease': teasing, 'is-winning': winning }"
+    :style="{ ...fontVars, '--frame': frameGlow, '--ep-ring': spinRingArt ? `url(${spinRingArt})` : 'none' }"
+  >
+    <div ref="sceneEl" class="ep-scene" aria-hidden="true">
+      <div class="ep-scene__set" data-scene="base" />
+      <div class="ep-scene__set ep-scene__set--bonus" data-scene="bonus" />
+    </div>
+    <canvas ref="driftEl" class="ep-drift" aria-hidden="true" />
+    <div class="ep-scene__veil" aria-hidden="true" />
 
-    <div class="ep-host">
-      <div
-        ref="pageEl"
-        class="ep-page"
-        :class="{ 'is-bonus': inFreeSpins, 'is-bonus-scene': bonusScene, 'is-ante': ante, 'is-tease': teasing, 'is-winning': winning }"
-        :style="{ ...fontVars, '--frame': frameGlow }"
-      >
-        <div ref="sceneEl" class="ep-scene" aria-hidden="true">
-          <div class="ep-scene__set" data-scene="base" />
-          <div class="ep-scene__set ep-scene__set--bonus" data-scene="bonus" />
-        </div>
-        <canvas ref="driftEl" class="ep-drift" aria-hidden="true" />
-        <div class="ep-scene__veil" aria-hidden="true" />
-
-        <!-- The board floats on the scene; signs hang beside it, no slab behind. -->
-        <div class="ep-stage">
-          <div class="ep-layout">
-            <!-- Left: two hanging signs -->
-            <aside class="ep-left">
-              <div class="ep-hang ep-hang--buy" :class="{ 'is-locked': buyLocked }">
-                <button :ref="plaqueRef" type="button" class="ep-sign ep-sign--buy" data-plaque="fire" :disabled="buyLocked" @click="openBuy">
-                  <img v-if="buyArt" :src="buyArt" alt="" class="ep-sign__art">
-                  <span class="ep-title">Buy <br>Free Spins</span>
-                  <EpFiligree class="ep-sign__rule" gem="#ff8a1f" />
-                  <span class="ep-num ep-num--gold">{{ formatCoins(buyCost) }}</span>
-                </button>
-              </div>
-
-              <div class="ep-hang" :class="{ 'is-on': ante }">
-                <div :ref="plaqueRef" class="ep-sign ep-sign--ante" data-plaque="gold" :class="{ 'is-on': ante }">
-                  <span class="ep-title ep-title--sm">Extra <br>Chance</span>
-                  <span class="ep-num" :class="ante ? 'ep-num--gold' : 'ep-num--teal'">{{ formatCoins(emberPortalsStake('ante', bet)) }}</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    class="ep-switch"
-                    :aria-checked="ante"
-                    :disabled="betLocked"
-                    aria-label="Extra chance: more scatters"
-                    @click="toggleAnte"
-                  >
-                    <span class="ep-switch__knob" />
-                    <span class="ep-switch__state">{{ ante ? 'On' : 'Off' }}</span>
-                  </button>
-                </div>
-              </div>
-            </aside>
-
-            <!-- Centre: the board is the hero, the win is lettered under it -->
-            <div class="ep-center">
-              <div class="ep-board" :data-winning="winning">
-                <div class="ep-board__heat" aria-hidden="true" />
-                <div class="ep-board__inner">
-                  <div ref="canvasWrap" class="ep-canvas" />
-
-                  <div v-if="!ready && !loadError" class="ep-overlay">
-                    <Loader2 class="size-8 animate-spin text-[#ff8a1f]" role="status" aria-label="Loading" />
-                  </div>
-                  <div v-if="loadError" class="ep-overlay">
-                    <p class="text-sm text-destructive">
-                      {{ loadError }}
-                    </p>
-                  </div>
-
-                  <Transition name="ep-pop">
-                    <EpCard
-                      v-if="card.show"
-                      :kind="card.kind"
-                      :title="card.title"
-                      :sub="card.sub"
-                      :amount="card.amount"
-                      :count-ms="card.countMs"
-                      :art="card.kind === 'fs' ? ringArt : undefined"
-                      @skip="requestSkip"
-                    />
-                  </Transition>
-
-                  <Transition name="ep-pop">
-                    <EpBigWin
-                      v-if="bigWin.show"
-                      :label="bigWin.label"
-                      :tier="bigWin.tier"
-                      :amount="bigWin.amount"
-                      :multiple="bigWin.multiple"
-                      @skip="requestSkip"
-                    />
-                  </Transition>
-                </div>
-              </div>
-
-              <EpWinDisplay
-                ref="winDisplay"
-                :amount="winMeter"
-                :label="inFreeSpins ? 'Feature win' : 'Win'"
-                :pulse="winPulse"
-                :glow="winGlow"
-                :hot="winMeter > 0"
-              />
-            </div>
-
-            <!-- Right: logo, then the portal legend or the free-spins sign -->
-            <aside class="ep-right">
-              <div class="ep-logo">
-                <img v-if="logoArt" :src="logoArt" alt="Ember Portals" class="ep-logo__img">
-              </div>
-
-              <Transition name="ep-fade" mode="out-in">
-                <div v-if="inFreeSpins" key="fs" class="ep-hang">
-                  <div :ref="plaqueRef" class="ep-sign ep-sign--fs" data-plaque="stone">
-                    <span class="ep-label">Spins left</span>
-                    <span class="ep-num ep-num--big">{{ fsLeft }}<small> / {{ fsTotalSpins }}</small></span>
-                    <EpFiligree class="ep-sign__rule" />
-                    <span class="ep-label">Feature win</span>
-                    <span class="ep-num ep-num--gold">{{ formatCoins(fsTotal) }}</span>
-                    <EpFiligree class="ep-sign__rule" />
-                    <span class="ep-label">Portals<template v-if="portalChips.length"> · Σ ×{{ formatCoins(portalSum, false) }}</template></span>
-                    <span class="ep-portals">
-                      <span v-if="!portalChips.length" class="ep-label">–</span>
-                      <span
-                        v-for="w in portalChips.slice(0, 8)"
-                        :key="w.id"
-                        class="ep-portals__mult"
-                        :style="{ '--c': portalChipColor(w.mult) }"
-                      >×{{ formatCoins(w.mult, false) }}</span>
-                      <span v-if="portalChips.length > 8" class="ep-label">+{{ portalChips.length - 8 }}</span>
-                    </span>
-                  </div>
-                </div>
-                <div v-else key="legend" class="ep-legend">
-                  <p class="ep-legend__head">
-                    <span class="ep-rune" aria-hidden="true">ᛟ</span>
-                    Portal fire
-                    <span class="ep-rune" aria-hidden="true">ᛟ</span>
-                  </p>
-                  <EpFiligree />
-                  <ul class="ep-legend__list">
-                    <li v-for="t in tierLegend" :key="t.min" :style="{ '--c': t.glow }">
-                      <img :src="t.url" alt="" class="ep-legend__ring">
-                      <span class="ep-legend__mult">×{{ t.min }}</span>
-                      <span class="ep-legend__name">{{ t.name }}</span>
-                    </li>
-                  </ul>
-                  <EpFiligree />
-                </div>
-              </Transition>
-            </aside>
+    <!-- The board floats on the scene; signs hang beside it, no slab behind. -->
+    <div class="ep-stage">
+      <div class="ep-layout">
+        <!-- Left: two hanging signs -->
+        <aside class="ep-left">
+          <div class="ep-hang ep-hang--buy" :class="{ 'is-locked': buyLocked }">
+            <button :ref="plaqueRef" type="button" class="ep-sign ep-sign--buy" data-plaque="fire" :disabled="buyLocked" @click="openBuy">
+              <img v-if="buyArt" :src="buyArt" alt="" class="ep-sign__art">
+              <span class="ep-title">Buy<br>Free Spins</span>
+              <EpFiligree class="ep-sign__rule" gem="#ff8a1f" />
+              <span class="ep-num ep-num--gold">{{ formatNumber(buyCost) }}</span>
+            </button>
           </div>
+
+          <div class="ep-hang" :class="{ 'is-on': ante }">
+            <div :ref="plaqueRef" class="ep-sign ep-sign--ante" data-plaque="gold" :class="{ 'is-on': ante }">
+              <span class="ep-title ep-title--sm">Extra<br>Chance</span>
+              <span class="ep-label">Bet</span>
+              <span class="ep-num" :class="ante ? 'ep-num--gold' : 'ep-num--teal'">{{ formatNumber(emberPortalsStake('ante', bet)) }}</span>
+              <span class="ep-label">More scatters</span>
+              <button
+                type="button"
+                role="switch"
+                class="ep-switch"
+                :aria-checked="ante"
+                :disabled="betLocked"
+                aria-label="Extra chance of scatters"
+                @click="toggleAnte"
+              >
+                <span class="ep-switch__knob" />
+                <span class="ep-switch__state">{{ ante ? 'On' : 'Off' }}</span>
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Centre: the board is the hero, the win is lettered under it -->
+        <div class="ep-center">
+          <div class="ep-board" :data-winning="winning">
+            <div class="ep-board__heat" aria-hidden="true" />
+            <div class="ep-board__inner">
+              <div ref="canvasWrap" class="ep-canvas" />
+
+              <div v-if="!ready && !loadError" class="ep-overlay">
+                <div class="flex flex-col items-center gap-3" role="status">
+                  <LoaderCircleIcon class="size-8 animate-spin text-primary" />
+                  <span class="text-sm text-muted-foreground">Kindling the portals…</span>
+                </div>
+              </div>
+              <div v-if="loadError" class="ep-overlay">
+                <p class="text-sm text-destructive">
+                  {{ loadError }}
+                </p>
+              </div>
+
+              <Transition name="ep-pop">
+                <EpCard
+                  v-if="card.show"
+                  :kind="card.kind"
+                  :title="card.title"
+                  :sub="card.sub"
+                  :amount="card.amount"
+                  :count-ms="card.countMs"
+                  :art="card.kind === 'fs' ? ringArt : undefined"
+                  @skip="requestSkip"
+                />
+              </Transition>
+
+              <Transition name="ep-pop">
+                <EpBigWin
+                  v-if="bigWin.show"
+                  :label="bigWin.label"
+                  :tier="bigWin.tier"
+                  :amount="bigWin.amount"
+                  :multiple="bigWin.multiple"
+                  @skip="requestSkip"
+                />
+              </Transition>
+            </div>
+          </div>
+
+          <EpWinDisplay
+            ref="winDisplay"
+            :amount="winMeter"
+            :label="inFreeSpins ? 'Feature win' : 'Win'"
+            :pulse="winPulse"
+            :glow="winGlow"
+            :hot="winMeter > 0"
+          />
         </div>
 
-        <p class="sr-only" role="status">
-          {{ message }}
-        </p>
+        <!-- Right: logo, then the portal legend or the free-spins sign -->
+        <aside class="ep-right">
+          <div class="ep-logo">
+            <img v-if="logoArt" :src="logoArt" alt="Ember Portals" class="ep-logo__img">
+            <h1 v-else class="ep-title">
+              Ember Portals
+            </h1>
+          </div>
 
-        <div ref="flyersEl" class="ep-flyers" aria-hidden="true" />
-
-        <Transition name="ep-fade">
-          <EpWarp v-if="warp.show" :ring="ringArt" :color="warp.color" />
-        </Transition>
+          <Transition name="ep-fade" mode="out-in">
+            <div v-if="inFreeSpins" key="fs" class="ep-hang">
+              <div :ref="plaqueRef" class="ep-sign ep-sign--fs" data-plaque="stone">
+                <span class="ep-label">Spins left</span>
+                <span class="ep-num ep-num--big">{{ fsLeft }}<small> / {{ fsTotalSpins }}</small></span>
+                <EpFiligree class="ep-sign__rule" />
+                <span class="ep-label">Feature win</span>
+                <span class="ep-num ep-num--gold">{{ formatNumber(fsTotal) }}</span>
+                <EpFiligree class="ep-sign__rule" />
+                <span class="ep-label">Open portals<template v-if="portalChips.length"> · Σ ×{{ formatNumber(portalSum, false) }}</template></span>
+                <span class="ep-portals">
+                  <span v-if="!portalChips.length" class="ep-label">none yet</span>
+                  <span
+                    v-for="w in portalChips.slice(0, 8)"
+                    :key="w.id"
+                    class="ep-portals__mult"
+                    :style="{ '--c': portalChipColor(w.mult) }"
+                  >×{{ formatNumber(w.mult, false) }}</span>
+                  <span v-if="portalChips.length > 8" class="ep-label">+{{ portalChips.length - 8 }}</span>
+                </span>
+              </div>
+            </div>
+            <div v-else key="legend" class="ep-legend">
+              <p class="ep-legend__head">
+                <span class="ep-rune" aria-hidden="true">ᛟ</span>
+                Portal fire
+                <span class="ep-rune" aria-hidden="true">ᛟ</span>
+              </p>
+              <EpFiligree />
+              <ul class="ep-legend__list">
+                <li v-for="t in tierLegend" :key="t.min" :style="{ '--c': t.glow }">
+                  <img :src="t.url" alt="" class="ep-legend__ring">
+                  <span class="ep-legend__mult">×{{ t.min }}</span>
+                  <span class="ep-legend__name">{{ t.name }}</span>
+                </li>
+              </ul>
+              <EpFiligree />
+            </div>
+          </Transition>
+        </aside>
       </div>
+
+      <!-- Control deck: one slim glass strip -->
+      <div class="ep-deck" :class="{ 'is-launch': launching }">
+        <SlotControlBar
+          v-model:sound-on="soundEnabled"
+          v-model:volume="soundVolume"
+          v-model:music-volume="musicVolume"
+          :theme="EMBER_BAR_THEME"
+          :balance="balance"
+          :bet="bet"
+          :bet-min="MIN_BET"
+          :bet-max="MAX_BET"
+          :bet-locked="betLocked"
+          :bet-hint="ante ? `Extra chance · ${formatNumber(spinCost)}` : ''"
+          :win="winMeter"
+          :show-win="false"
+          :spin-mode="spinMode"
+          :spin-disabled="!canSpin"
+          :auto-left="autoplay.left"
+          :auto-disabled="!canSpin || phase !== 'idle'"
+          :spin-cost="spinCost"
+          :turbo="turbo"
+          :buys="[]"
+          :space-blocked="showHelp || showBuy"
+          @spin="onSpinButton"
+          @bet-down="betDown"
+          @bet-up="betUp"
+          @bet-max="maxBet"
+          @bet-set="typeBet"
+          @auto-start="startAutoplay"
+          @auto-stop="click(); stopAutoplay()"
+          @toggle-turbo="toggleTurbo"
+          @info="click(); showHelp = true"
+          @ui-click="click"
+        />
+      </div>
+
+      <div v-if="history.length" class="ep-history">
+        <span class="ep-label">Last rounds</span>
+        <span
+          v-for="(h, i) in history"
+          :key="i"
+          class="ep-history__chip"
+          :class="{ 'is-win': h.payout > h.bet, 'is-bonus': h.bonus }"
+        >
+          <span v-if="h.bonus" class="ep-rune" aria-hidden="true">ᛟ</span>
+          {{ h.payout > 0 ? formatNumber(h.payout) : '–' }}
+        </span>
+      </div>
+
+      <Transition name="ep-fade">
+        <div v-if="errorMsg" class="ep-error">
+          <TriangleAlertIcon class="size-4 shrink-0" />
+          <span class="flex-1">{{ errorMsg }}</span>
+          <button aria-label="Dismiss" @click="errorMsg = ''">
+            <XIcon class="size-4" />
+          </button>
+        </div>
+      </Transition>
     </div>
 
-    <SlotControls
-      ref="controls"
-      v-model:bet="bet"
-      v-model:turbo="turbo"
-      :min="info.minBet"
-      :max="info.maxBet"
-      :locked="betLocked"
-      :spin-mode="spinMode"
-      :spin-disabled="!canSpin"
-      :auto-left="autoplay.left"
-      :auto-disabled="!canSpin || phase !== 'idle'"
-      :buys="buyOptions"
-      :buy-disabled="buyLocked"
-      @spin="onSpinButton"
-      @auto-start="startAutoplay"
-      @auto-stop="click(); stopAutoplay()"
-      @buy="buyBonus"
-    />
+    <p class="sr-only" role="status">
+      {{ message }}
+    </p>
 
-    <template #rules>
-      <EpPaytable :bet="bet" />
-    </template>
-  </GameFrame>
+    <div ref="flyersEl" class="ep-flyers" aria-hidden="true" />
+
+    <Transition name="ep-fade">
+      <EpWarp v-if="warp.show" :ring="ringArt" :color="warp.color" />
+    </Transition>
+
+    <SlotBuyDialog v-model:open="showBuy" :theme="EMBER_BAR_THEME" :options="buyOptions" :balance="balance" @buy="buyBonus" />
+    <EpPaytable v-model:open="showHelp" :bet="bet" :font-vars="fontVars" />
+  </div>
 </template>
 
 <style scoped>
@@ -1946,12 +2099,7 @@ const portalChipColor = (m: number) => tierCss(m).glow
    the signs and the deck have a surface, nothing inside them does (controls
    aside). Detail comes from painted art, filigree rules and lettering.
    The scene is a fixed illustration in both colour modes, so the palette is
-   fixed rather than following the site theme. Sizes follow the game column
-   (container units), not the viewport: the casino frame sits around it. */
-.ep-host {
-  container: ep / inline-size;
-}
-
+   fixed rather than following the site theme. */
 .ep-page {
   --ep-ink: #05040f;
   --ep-gold: #e8b54a;
@@ -1965,15 +2113,15 @@ const portalChipColor = (m: number) => tierCss(m).glow
   /* Size scale for the HUD around the board (0.88 on desktop). */
   --ep-s: 1;
   /* The board is the hero: as big as the viewport allows beside the signs. */
-  /* Room is kept for the casino frame, the win row and the controls below. */
-  --board: clamp(340px, min(calc(100dvh - 380px), calc(100cqw - 560px)), 830px);
+  /* Room is kept for the top padding, and the win row and deck below. */
+  --board: clamp(340px, min(calc(88vh - 186px), calc(100vw - 560px)), 830px);
   position: relative;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 24px 16px 12px;
+  padding: 34px 16px 24px;
   overflow: hidden;
-  border-radius: 1rem;
   isolation: isolate;
   color: var(--ep-text);
   font-family: var(--ep-ui);
@@ -2201,13 +2349,6 @@ const portalChipColor = (m: number) => tierCss(m).glow
 }
 
 .ep-switch:disabled { cursor: not-allowed; opacity: 0.55; }
-
-/* A thumb-sized hit area around the small switch. */
-.ep-switch::after {
-  content: '';
-  position: absolute;
-  inset: -10px -8px;
-}
 .ep-switch:focus-visible { outline: 2px solid var(--ep-fire); outline-offset: 2px; }
 
 .ep-switch__knob {
@@ -2387,7 +2528,124 @@ const portalChipColor = (m: number) => tierCss(m).glow
 
 /* The win gets its own row: clear of the board rim above and of the spin
    ring that rises out of the deck below. */
-.ep-center > .ep-wd { margin: calc(14px * var(--ep-s)) 0 calc(6px * var(--ep-s)); }
+.ep-center > .ep-wd { margin: calc(16px * var(--ep-s)) 0 calc(46px * var(--ep-s)); }
+
+/* ── Control deck: one slim dark-glass strip ─────────────────────── */
+.ep-deck {
+  position: relative;
+  /* As wide as the stage (sign to legend), and always inside the pillars. */
+  width: min(100%, calc(var(--board) + 2 * (240px + 28px) * var(--ep-s)), calc(var(--ep-pillars, 100%) - 48px));
+  margin-top: 6px;
+  padding: 4px 18px;
+  background: linear-gradient(180deg, rgba(8, 6, 20, 0.5), rgba(8, 6, 20, 0.78));
+  backdrop-filter: blur(10px);
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, transparent, #8a520f 12%, #fff3c4 50%, #8a520f 88%, transparent) 1;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+}
+
+.ep-deck :deep(.sc-grid) { padding: 6px 4px; }
+.ep-deck :deep(.sc-label) { font-family: var(--ep-ui); color: var(--ep-muted); letter-spacing: 0.2em; }
+.ep-deck :deep(.sc-value),
+.ep-deck :deep(.sc-bet__value) {
+  font-family: var(--ep-number);
+  font-size: calc(24px * var(--ep-s));
+  font-weight: 900;
+  color: #ffd873;
+  text-shadow: 0 2px 0 var(--ep-ink), 0 0 10px rgba(232, 181, 74, 0.45);
+}
+
+/* No pill inside the strip: controls are dark glass circles with gold rims. */
+.ep-deck :deep(.sc-bet__row) { background: transparent; gap: 6px; }
+.ep-deck :deep(.sc-step),
+.ep-deck :deep(.sc-icon) {
+  background: rgba(3, 2, 10, 0.7);
+  box-shadow: inset 0 0 0 1.5px rgba(232, 181, 74, 0.65), inset 0 -3px 6px rgba(0, 0, 0, 0.6);
+  color: #f5cf6a;
+}
+
+.ep-deck :deep(.sc-tile) {
+  width: 50px;
+  border-radius: 50%;
+  background: rgba(3, 2, 10, 0.7);
+  box-shadow: inset 0 0 0 1.5px rgba(232, 181, 74, 0.65), inset 0 -3px 6px rgba(0, 0, 0, 0.6);
+  color: #f5cf6a;
+  transition: background 0.2s, box-shadow 0.2s, color 0.2s;
+}
+
+/* Turbo / auto on: the circle lights up like a small portal. */
+.ep-deck :deep(.sc-tile.is-on),
+.ep-deck :deep(.sc-tile.is-on:hover:not(:disabled)) {
+  background: radial-gradient(circle at 50% 30%, #ffe0a0 0%, #ff8a1f 50%, #9a2a06 100%);
+  box-shadow: inset 0 0 0 1.5px #ffe7a8, inset 0 2px 0 rgba(255, 255, 255, 0.4), 0 0 16px rgba(255, 138, 31, 0.75);
+  color: #2a0a02;
+}
+
+/* The spin button is a portal: the tier-0 ring turns slowly behind it and
+   lifts it over the strip's top edge. */
+.ep-deck :deep(.sc-spin) {
+  isolation: isolate;
+  width: calc(92px * var(--ep-s));
+  height: calc(92px * var(--ep-s));
+  margin: calc(-26px * var(--ep-s)) 0 calc(-8px * var(--ep-s));
+  padding: calc(12px * var(--ep-s));
+  background: transparent;
+  box-shadow: none;
+}
+
+.ep-deck :deep(.sc-spin)::before {
+  content: '';
+  position: absolute;
+  inset: calc(-16px * var(--ep-s));
+  z-index: -1;
+  background: var(--ep-ring) center / contain no-repeat;
+  filter: drop-shadow(0 0 14px rgba(255, 138, 31, 0.7));
+  animation: ep-spin 14s linear infinite;
+}
+
+.ep-deck :deep(.sc-spin__face) {
+  background: radial-gradient(circle at 50% 30%, #ffe0a0 0%, #ff8a1f 45%, #9a2a06 100%);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.45), inset 0 -5px 12px rgba(0, 0, 0, 0.4), 0 0 20px rgba(255, 138, 31, 0.6);
+}
+
+.ep-deck.is-launch :deep(.sc-spin) { animation: ep-launch 0.3s cubic-bezier(0.3, 1.6, 0.5, 1); }
+
+/* History: lettering under the deck, no chips. */
+.ep-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 14px;
+  margin-top: 10px;
+}
+
+.ep-history__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--ep-number);
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(244, 236, 216, 0.45);
+}
+
+.ep-history__chip.is-win { color: #ffd873; }
+.ep-history__chip.is-bonus { color: var(--ep-fire); }
+
+.ep-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 640px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #fecaca;
+  clip-path: var(--ep-cut);
+  background: rgba(90, 16, 16, 0.75);
+}
 
 /* ── Win chips flying to the win line ─────────────────────────────── */
 .ep-flyers {
@@ -2461,16 +2719,22 @@ const portalChipColor = (m: number) => tierCss(m).glow
   to { transform: scaleY(1.2) skewX(3deg); opacity: 1; }
 }
 
+@keyframes ep-launch {
+  0% { transform: scale(1); }
+  30% { transform: scale(0.84, 0.9); }
+  70% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
 
 /* Desktop: everything around the board runs at 88% (real sizes, not zoom,
    so pixi, the flyers and the renderer resolution all see true pixels). */
-@container ep (min-width: 1101px) {
+@media (min-width: 1101px) {
   .ep-page { --ep-s: 0.88; }
 }
 
 /* ── Narrow screens: signs fold into rows around the board ───────── */
-@container ep (max-width: 1100px) {
-  .ep-page { --board: min(calc(100cqw - 32px), 680px); }
+@media (max-width: 1100px) {
+  .ep-page { --board: min(calc(100vw - 32px), 680px); }
   .ep-layout {
     grid-template-columns: var(--board);
     grid-template-areas: 'right' 'center' 'left';
@@ -2493,10 +2757,11 @@ const portalChipColor = (m: number) => tierCss(m).glow
   .ep-legend__mult { font-size: 15px; }
   .ep-legend__name { display: none; }
   .ep-right > .ep-hang { flex: 1 1 auto; max-width: 420px; }
+  .ep-deck { width: 100%; }
 }
 
-@container ep (max-width: 560px) {
-  .ep-page { --board: calc(100cqw - 12px); padding: 10px 6px 8px; }
+@media (max-width: 560px) {
+  .ep-page { --board: calc(100vw - 12px); padding: 10px 6px 20px; }
   .ep-right { flex-direction: column; gap: 6px; }
   .ep-logo { width: 150px; }
   .ep-title { font-size: 15px; }
@@ -2509,12 +2774,16 @@ const portalChipColor = (m: number) => tierCss(m).glow
   .ep-switch { width: 66px; height: 26px; }
   .is-on .ep-switch__knob { transform: translateX(38px); }
   .ep-switch__knob { width: 18px; height: 18px; top: 2.5px; }
-  .ep-center > .ep-wd { margin: 10px 0 4px; }
+  .ep-deck { padding: 2px 4px; }
+  .ep-center > .ep-wd { margin: 12px 0 34px; }
+  .ep-deck :deep(.sc-value), .ep-deck :deep(.sc-bet__value) { font-size: 17px; }
+  .ep-deck :deep(.sc-spin) { width: 76px; height: 76px; margin: -18px 0 -4px; padding: 10px; }
   .ep-flyers :deep(.ep-flyer) { font-size: 22px; }
   .ep-flyers :deep(.ep-flyer.is-big) { font-size: 28px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .ep-portals__mult, .ep-hang--buy, .ep-sign__art, .ep-board::after, .ep-board__heat { animation: none !important; }
+  .ep-deck :deep(.sc-spin)::before { animation: none; }
 }
 </style>

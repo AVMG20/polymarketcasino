@@ -1,5 +1,5 @@
 // Ember Portals: canvas-painted artwork for the Pixi stage and the Vue UI.
-// Nothing is fetched: the Cinzel faces are self-hosted (@fontsource, imported
+// Nothing is fetched: the three faces are self-hosted (@fontsource, imported
 // by the game component). Symbols and the portal
 // live in ./emberportals-vectors, the stage and board in ./emberportals-scene,
 // shared brushes in ./emberportals-paint.
@@ -22,7 +22,7 @@ export { paintEpBoard, paintEpScene, paintEpSceneLayers, type EpSceneLayers } fr
 
 export const EP_DISPLAY_FONT = 'Cinzel Decorative'
 export const EP_NUMBER_FONT = 'Cinzel'
-export const EP_UI_FONT = 'Inter'
+export const EP_UI_FONT = 'Nunito'
 
 /** Player-facing names and accent colours. */
 export const EP_SYMBOLS: Record<EpSymbol, { name: string, color: string }> = {

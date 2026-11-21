@@ -59,7 +59,8 @@ const PAYTABLE: Record<EpPaySymbol, number[]> = {
 /**
  * Every pay is scaled by this, in base game and free spins alike; tuned with
  * scripts/emberportals-rtp.ts (retune by ratio). Measured over 52M spins:
- * paid spins ~96.0%, ante ~95.9% (20M), buy ~96.9% (3M buys).
+ * paid spins ~96.0%, ante ~95.9% (20M), buy ~96.9% (3M buys). The old site
+ * paid the table unscaled (1 → 0.982, from ~97.5%).
  */
 export const EP_PAY_SCALE = 0.982
 
@@ -93,7 +94,7 @@ export const FS_MAX_SPINS = 60
 
 /** Ante bet cost, × bet (the stake rounds up to whole coins). */
 export const EP_ANTE_COST = 1.25
-/** Free-spins buy cost, × bet. */
+/** Free-spins buy cost, × bet. The old site charged 103 (103 → 102 with EP_PAY_SCALE). */
 export const EP_BUY_COST = 102
 
 export function fsAward(scatters: number): number {

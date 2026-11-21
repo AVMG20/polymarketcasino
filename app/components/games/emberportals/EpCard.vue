@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { formatCoins } from '#shared/money'
 // Free-spins intro, retrigger and outro card. It slams in with a particle
 // fire burning along its top edge; the outro counts the feature total up over
 // `countMs`. Math.random only drives the cosmetic flames.
@@ -148,7 +147,7 @@ onBeforeUnmount(() => {
         {{ title }}
       </p>
       <p v-if="kind === 'fs-end'" class="ep-card__amount" :class="{ 'is-zero': amount <= 0 }">
-        {{ formatCoins(shown) }}
+        {{ formatNumber(shown) }}
       </p>
       <p class="ep-card__sub">
         {{ sub }}

@@ -1,10 +1,11 @@
 // Ember Portals sound playback. Every effect is synthesized on the fly
-// (app/utils/slots/emberportals-synth.ts); nothing is fetched. Per-event
-// levels, cooldowns and voice caps; the casino's mute switch (shared with
-// every game, see useSlotSound) turns it all off.
+// (app/utils/slots/emberportals-synth.ts); nothing is fetched. Same shape as
+// trashpanda-sound.ts: per-event levels, cooldowns and voice caps, persisted
+// enable/volume.
 //
-// Signal chain: voice (level) -> master gain -> compressor -> speakers. The
-// music has its own gain into the compressor.
+// Signal chain: voice (level) -> master gain (player volume) -> compressor ->
+// speakers. The music has its own gain into the compressor, so effects and
+// music have separate volumes.
 
 import {
     EP_SOUND_COOLDOWNS,
@@ -23,8 +24,13 @@ import {
 
 export type { EpSoundEvent }
 
+const STORAGE_ENABLED = 'emberportals-sound-enabled'
+const STORAGE_VOLUME = 'emberportals-sound-volume'
+const STORAGE_MUSIC = 'emberportals-music-volume'
+
 const soundEnabled = ref(true)
-const SOUND_LEVEL = 0.7
+const soundVolume = ref(70)
+const musicVolume = ref(60)
 
 const MUSIC_LEVEL = 0.45
 
@@ -46,6 +52,7 @@ const lastPlayedAt = new Map<EpSoundEvent, number>()
 let music: EpMusic | null = null
 let musicWanted = false
 let bonusMode = false
+let initialized = false
 
 function ensureContext(): AudioContext | null {
     if (!import.meta.client) return null
@@ -58,11 +65,11 @@ function ensureContext(): AudioContext | null {
 }
 
 function masterLevel(): number {
-    return SOUND_LEVEL
+    return Math.max(0, Math.min(1, soundVolume.value / 100))
 }
 
 function musicLevel(): number {
-    return SOUND_LEVEL
+    return Math.max(0, Math.min(1, musicVolume.value / 100))
 }
 
 function ensureBus(context: AudioContext): MasterBus {
@@ -86,7 +93,7 @@ function ensureBus(context: AudioContext): MasterBus {
 
 /** A running context, resumed if a gesture allows it. Null while it can't play yet. */
 function runningContext(): AudioContext | null {
-    if (!import.meta.client || !soundEnabled.value) return null
+    if (!import.meta.client || !soundEnabled.value || soundVolume.value <= 0) return null
     const context = ensureContext()
     if (!context) return null
     if (context.state !== 'running') {
@@ -145,7 +152,7 @@ function play(event: EpSoundEvent, intensity = 0, delay = 0) {
 
 function startMusic() {
     musicWanted = true
-    if (!import.meta.client || !soundEnabled.value || music) return
+    if (!import.meta.client || !soundEnabled.value || musicVolume.value <= 0 || music) return
     const context = ensureContext()
     if (!context) return
     if (context.state !== 'running') {
@@ -208,19 +215,63 @@ function stopAll() {
     }, 80)
 }
 
-export function useEmberPortalsSound() {
-    const shell = useSlotSound({})
-    // The casino's one mute switch drives this game's synth too.
-    soundEnabled.value = !shell.muted.value
-    watch(shell.muted, (muted) => {
-        soundEnabled.value = !muted
-        if (muted) stopAll()
-        else unlock()
+function readStorage(key: string): string | null {
+    try {
+        return localStorage.getItem(key)
+    } catch {
+        return null
+    }
+}
+
+function writeStorage(key: string, value: string) {
+    try {
+        localStorage.setItem(key, value)
+    } catch {
+        // Private mode or blocked storage: the setting just won't persist.
+    }
+}
+
+function initialize() {
+    if (!import.meta.client || initialized) return
+    initialized = true
+    const storedEnabled = readStorage(STORAGE_ENABLED)
+    const storedVolume = readStorage(STORAGE_VOLUME)
+    const storedMusic = readStorage(STORAGE_MUSIC)
+    if (storedEnabled !== null) soundEnabled.value = storedEnabled === 'true'
+    if (storedMusic !== null && Number.isFinite(Number(storedMusic))) {
+        musicVolume.value = Math.max(0, Math.min(100, Number(storedMusic)))
+    }
+    if (storedVolume !== null && Number.isFinite(Number(storedVolume))) {
+        soundVolume.value = Math.max(0, Math.min(100, Number(storedVolume)))
+    }
+    // A detached scope: watchers made in the first caller's setup would stop
+    // when that game unmounts, and the next visit would no longer save.
+    effectScope(true).run(() => {
+        watch(soundEnabled, (enabled) => {
+            writeStorage(STORAGE_ENABLED, String(enabled))
+            if (!enabled) stopAll()
+            else unlock()
+        })
+        watch(musicVolume, (volume) => {
+            writeStorage(STORAGE_MUSIC, String(volume))
+            if (ctx && bus) bus.music.gain.setTargetAtTime(musicLevel(), ctx.currentTime, 0.02)
+            if (volume <= 0) silenceMusic()
+            else if (musicWanted && !music) startMusic()
+        })
+        watch(soundVolume, (volume) => {
+            writeStorage(STORAGE_VOLUME, String(volume))
+            if (ctx && bus) bus.input.gain.setTargetAtTime(masterLevel(), ctx.currentTime, 0.02)
+        })
     })
+}
+
+export function useEmberPortalsSound() {
+    initialize()
 
     return {
-        muted: shell.muted,
-        toggleMute: shell.toggle,
+        soundEnabled,
+        soundVolume,
+        musicVolume,
         play,
         startMusic,
         stopMusic,

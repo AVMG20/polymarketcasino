@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { formatCoins } from '#shared/money'
 // The big win counter under the board. The parent counts `amount` up; every
 // bump of `pulse` pops it, and flying chips (parent-driven) land on `target`.
 const props = defineProps<{
@@ -33,7 +32,7 @@ defineExpose({ target })
   <div class="ep-wd" :class="{ 'is-hot': hot && amount > 0, 'is-pop': popping }" :style="{ '--wd-glow': glow }">
     <span class="ep-wd__label">{{ label }}</span>
     <span ref="target" class="ep-wd__amount" aria-live="off">
-      {{ amount > 0 ? formatCoins(amount) : '' }}
+      {{ amount > 0 ? formatNumber(amount) : '' }}
     </span>
   </div>
 </template>
