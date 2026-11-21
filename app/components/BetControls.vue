@@ -3,9 +3,11 @@
 // rebuilt as plain elements with the same sizes and colours.
 import { CoinsIcon } from 'lucide-vue-next'
 
-defineProps<{
+const props = withDefaults(defineProps<{
     disabled?: boolean
-}>()
+    /** Smallest bet ½ goes down to: the game's minimum (the old site's was 1). */
+    min?: number
+}>(), { min: 1 })
 
 const bet = defineModel<number>({ required: true })
 const betText = useAmountInput(bet)
@@ -35,7 +37,7 @@ const betText = useAmountInput(bet)
           type="button"
           class="rounded-md bg-muted px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-75"
           :disabled="disabled"
-          @click="bet = Math.max(1, Math.floor(bet / 2))"
+          @click="bet = Math.max(props.min, Math.floor(bet / 2))"
         >
           ½
         </button>

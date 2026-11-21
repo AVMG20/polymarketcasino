@@ -38,26 +38,39 @@ export const WHEEL_TABLES: Readonly<Record<WheelRisk, readonly (WheelSegment & {
 }
 
 /**
- * The segments in wheel order (clockwise from the top), losses spread evenly
- * between the paying segments. The server draws an index into this list and
- * the client spins to the same index.
+ * The segments in wheel order (clockwise from the top): the old site's layout,
+ * paying segments grouped by kind with the losses spread evenly between them.
+ * The server draws an index into this list and the client spins to the same
+ * index, so every segment is equally likely.
  */
 export function wheelLayout(risk: WheelRisk): WheelSegment[] {
     const table = WHEEL_TABLES[risk]
-    const losses = table.find(seg => seg.multiplier === 0)?.count ?? 0
-    // Paying segments round-robin over their kinds, so equal ones don't bunch up.
-    const kinds = table.filter(seg => seg.multiplier > 0).map(seg => ({ ...seg }))
-    const paying: WheelSegment[] = []
-    while (kinds.some(seg => seg.count > 0)) {
-        for (const seg of kinds) {
-            if (seg.count-- > 0) paying.push({ multiplier: seg.multiplier, color: seg.color })
+    const lossCount = table.find(seg => seg.multiplier === 0)?.count ?? 0
+    const nonLossFlat: WheelSegment[] = []
+    for (const seg of table.filter(s => s.multiplier > 0)) {
+        for (let i = 0; i < seg.count; i++) nonLossFlat.push({ multiplier: seg.multiplier, color: seg.color })
+    }
+    if (lossCount === 0) return nonLossFlat
+
+    const loss: WheelSegment = { multiplier: 0, color: 'red' }
+    const out: WheelSegment[] = []
+    const spacing = nonLossFlat.length / lossCount
+    let nextLoss = Math.floor(spacing / 2)
+    let lossPlaced = 0
+    let nlIdx = 0
+    while (nlIdx < nonLossFlat.length || lossPlaced < lossCount) {
+        if (lossPlaced < lossCount && out.length >= Math.round(nextLoss + lossPlaced)) {
+            out.push({ ...loss })
+            lossPlaced++
+            nextLoss += spacing
+        } else if (nlIdx < nonLossFlat.length) {
+            out.push(nonLossFlat[nlIdx]!)
+            nlIdx++
+        } else {
+            out.push({ ...loss })
+            lossPlaced++
         }
     }
-    const n = paying.length + losses
-    const lossAt = new Set(Array.from({ length: losses }, (_, i) => Math.round(i * n / losses)))
-    const out: WheelSegment[] = []
-    let next = 0
-    for (let i = 0; i < n; i++) out.push(lossAt.has(i) ? { multiplier: 0, color: 'red' } : paying[next++]!)
     return out
 }
 
