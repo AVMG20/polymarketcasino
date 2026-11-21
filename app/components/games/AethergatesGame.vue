@@ -941,7 +941,7 @@ async function spin(forced?: AetherFeature) {
         round.settle()
     }
     if (destroyed) return
-    if (autoplay.finish({ bonus: result.bonusTriggered }, coins.value, spinCost.value)) {
+    if (autoplay.finish({ payout, bet: roundBet, bonus: result.bonusTriggered }, coins.value, spinCost.value)) {
         await wait(turbo.value ? 150 : 350)
         if (autoplay.active && !destroyed) void spin()
     }
@@ -968,7 +968,7 @@ function onSpinButton() {
 function startAuto() {
     sound.unlock()
     sound.play('click')
-    autoplay.start()
+    autoplay.start({ count: 10, stopOnBonus: true, stopOnWinX: 0, stopOnLossPct: 0 }, coins.value)
     void spin()
 }
 

@@ -44,7 +44,8 @@ the Bun and Nuxt versions; don't move the dev server to Node (bun:sqlite would n
 - `app/`: `composables/` (`useCasinoSession`, `useWallet`, `useHubBridge`, `useGameRound`,
   `useSlotSound`, `useLiveTable`, `useTableSound`), `components/casino/` (shell and lobby),
   `components/game/` (shared game UI), `components/table/` (felt, seats, cards, chips for live tables),
-  `components/games/` (one component per game; `SlotGame.vue` plays every slot), `utils/slot-themes.ts`,
+  `components/games/` (one component per game; ported slots sit on the old site's slot shell in
+  `components/slots/` + `useSlotGame`, see `docs/slot-porting.md`; `SlotGame.vue` plays the generic engine slots), `utils/slot-themes.ts`,
   `utils/game-components.ts`.
 - `scripts/`: `migrate.ts` and `<game>-rtp.ts` balance simulations (`bun scripts/<name>.ts`). Feature buys
   are high variance: judge a buy price on 100k+ buys (the slot scripts take `[buys]` as a 4th argument).

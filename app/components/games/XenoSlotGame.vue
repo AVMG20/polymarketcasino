@@ -34,7 +34,7 @@ import {
 import { XenoFx } from '~/utils/slots/xenoslot-fx'
 import { XENO_LINE_COLORS, XENO_PAYLINES } from '~/utils/slots/xenoslot-lines'
 import { makeXenoSymbols, type XenoSymbolClasses, type XenoSymbolTextures } from '~/utils/slots/xenoslot-symbols'
-import { suspenseStopDelays, teaseReelSpeed } from '~/utils/slots/xenoslot-suspense'
+import { suspenseStopDelays, teaseReelSpeed } from '~/utils/slots/reel-suspense'
 import XenoPaytable from '~/components/games/xenoslot/XenoPaytable.vue'
 import XenoBigWin from '~/components/games/xenoslot/XenoBigWin.vue'
 import type { SlotBuyOption, SlotSpinMode } from '~/components/game/SlotControls.vue'
@@ -1280,7 +1280,7 @@ function flyCoin(fromCell: Cell, toCell: Cell, amount: number, mult: number, onA
 
 // --- autoplay ----------------------------------------------------------------------
 function startAutoplay() {
-    autoplay.start()
+    autoplay.start({ count: 10, stopOnBonus: true, stopOnWinX: 0, stopOnLossPct: 0 }, balance.value)
     click()
     if (phase.value === 'idle') void spin()
 }
@@ -1291,7 +1291,7 @@ function stopAutoplay() {
 
 function continueAutoplay(result: RoundView) {
     if (!autoplay.active) return
-    if (!autoplay.finish({ bonus: result.bonusTriggered }, balance.value, bet.value)) return
+    if (!autoplay.finish({ payout: result.payout, bet: result.bet, bonus: result.bonusTriggered }, balance.value, bet.value)) return
     setTimeout(() => {
         if (!destroyed && autoplay.active) void spin()
     }, turbo.value ? 150 : 350)

@@ -1578,7 +1578,7 @@ async function spin(buy = false) {
     }
 
     if (destroyed) return
-    continueAutoplay(result)
+    continueAutoplay(result, response.payout, roundBet)
 }
 
 /** Scatters beam into the centre, the screen flares and a giant portal swallows the view. */
@@ -1706,7 +1706,7 @@ function onSpinButton() {
 // --- autoplay ----------------------------------------------------------------------
 function startAutoplay() {
     sound.unlock()
-    autoplay.start()
+    autoplay.start({ count: 10, stopOnBonus: true, stopOnWinX: 0, stopOnLossPct: 0 }, coins.value)
     sfx('click')
     if (phase.value === 'idle') void spin()
 }
@@ -1715,9 +1715,9 @@ function stopAutoplay() {
     autoplay.stop()
 }
 
-function continueAutoplay(result: EmberPortalsResult) {
+function continueAutoplay(result: EmberPortalsResult, payout: number, roundBet: number) {
     if (!autoplay.active) return
-    if (!autoplay.finish({ bonus: result.bonusTriggered }, coins.value, spinCost.value)) return
+    if (!autoplay.finish({ payout, bet: roundBet, bonus: result.bonusTriggered }, coins.value, spinCost.value)) return
     setTimeout(() => {
         if (!destroyed && autoplay.active) void spin()
     }, turbo.value ? 150 : 350)

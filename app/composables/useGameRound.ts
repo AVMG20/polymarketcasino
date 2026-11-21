@@ -21,18 +21,22 @@ export function useGameRound<TResult>(slug: string) {
     const session = useCasinoSession()
     const wallet = useWallet()
     const busy = ref(false)
+    /** Why the last play() failed, or ''. */
+    const error = ref('')
     let pending: RoundResponse<TResult> | null = null
 
     async function play(body: { bet?: number, options?: Record<string, unknown> }): Promise<RoundResponse<TResult> | null> {
         if (busy.value) return null
         busy.value = true
+        error.value = ''
         try {
             const response = await $fetch<RoundResponse<TResult>>(`/api/games/${slug}/play`, { method: 'POST', body })
             pending = response
             return response
-        } catch (error) {
+        } catch (failure) {
             busy.value = false
-            if (!session.handleUnauthorized(error)) toast.error(apiErrorMessage(error, 'The round did not go through'))
+            error.value = apiErrorMessage(failure, 'The round did not go through')
+            if (!session.handleUnauthorized(failure)) toast.error(error.value)
             return null
         }
     }
@@ -48,5 +52,5 @@ export function useGameRound<TResult>(slug: string) {
 
     onBeforeUnmount(settle)
 
-    return { busy, play, settle }
+    return { busy, error, play, settle }
 }
