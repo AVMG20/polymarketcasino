@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { findGame } from '#shared/games/registry'
 
-/** The page around every game: title, RTP, a rules dialog, and the game itself. */
-const props = defineProps<{ slug: string }>()
+/** The page around every game: title, RTP, a rules dialog, and the game itself. `wide` lets a table use a big screen. */
+const props = defineProps<{ slug: string, wide?: boolean }>()
 const game = computed(() => findGame(props.slug)!)
 const rulesOpen = ref(false)
 const { postTitle } = useHubBridge()
@@ -15,7 +15,7 @@ onMounted(() => postTitle(game.value.name))
 </script>
 
 <template>
-  <div class="mx-auto w-full max-w-6xl space-y-3 px-3 py-4 sm:px-4">
+  <div class="mx-auto w-full space-y-3 px-3 py-4 sm:px-4" :class="wide ? 'max-w-[100rem]' : 'max-w-6xl'">
     <div class="flex items-center justify-between gap-2">
       <div class="min-w-0">
         <h1 class="truncate font-display text-xl font-extrabold sm:text-2xl">{{ game.name }}</h1>
