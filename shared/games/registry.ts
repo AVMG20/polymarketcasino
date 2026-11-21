@@ -1,7 +1,10 @@
+import { TABLE_MAX_BET, TABLE_MIN_BET } from '../tables/chips'
+
 /**
  * Every game the lobby lists. A game appears here only when it is complete:
- * rules in shared/, a server implementation in server/utils/games.ts and a
- * client in app/games/. The lobby, the routes and the server all read this.
+ * rules in shared/, a server implementation in server/utils/games.ts (or, for
+ * a live table, server/utils/tables/) and a client in app/components/games/.
+ * The lobby, the routes and the server all read this.
  */
 
 export type GameKind = 'slot' | 'table' | 'original'
@@ -18,6 +21,12 @@ export interface GameInfo {
     volatility: 'low' | 'medium' | 'high'
     minBet: number
     maxBet: number
+    /**
+     * A multiplayer live table: played over /api/tables/<slug>/ws (seats,
+     * shared rounds, escrow) instead of POST /api/games/<slug>/play. `minBet`
+     * and `maxBet` are per betting spot.
+     */
+    live?: true
 }
 
 /**
@@ -73,6 +82,54 @@ export const GAMES: readonly GameInfo[] = [
         volatility: 'low',
         minBet: 10,
         maxBet: MAX_BET
+    },
+    {
+        slug: 'blackjack',
+        name: 'Blackjack',
+        kind: 'table',
+        tagline: 'Live table for five: 3:2 blackjack, insurance, splits and two side bets',
+        cover: '/images/games/blackjack.svg',
+        rtp: 0.996,
+        volatility: 'low',
+        minBet: TABLE_MIN_BET,
+        maxBet: TABLE_MAX_BET,
+        live: true
+    },
+    {
+        slug: 'baccarat',
+        name: 'Baccarat',
+        kind: 'table',
+        tagline: 'Live punto banco: back the Player, the Banker or a Tie, with the roads on the wall',
+        cover: '/images/games/baccarat.svg',
+        rtp: 0.989,
+        volatility: 'low',
+        minBet: TABLE_MIN_BET,
+        maxBet: TABLE_MAX_BET,
+        live: true
+    },
+    {
+        slug: 'casino-holdem',
+        name: "Casino Hold'em",
+        kind: 'table',
+        tagline: 'Live table: two cards and the flop, then call or fold against the dealer',
+        cover: '/images/games/casino-holdem.svg',
+        rtp: 0.978,
+        volatility: 'medium',
+        minBet: TABLE_MIN_BET,
+        maxBet: TABLE_MAX_BET,
+        live: true
+    },
+    {
+        slug: 'three-card-poker',
+        name: 'Three Card Poker',
+        kind: 'table',
+        tagline: 'Live table: three cards each, play or fold, Pair Plus pays up to 40 to 1',
+        cover: '/images/games/three-card-poker.svg',
+        rtp: 0.966,
+        volatility: 'medium',
+        minBet: TABLE_MIN_BET,
+        maxBet: TABLE_MAX_BET,
+        live: true
     },
     {
         slug: 'dice',

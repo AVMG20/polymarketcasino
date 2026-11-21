@@ -109,3 +109,29 @@ export const gameRounds = sqliteTable(
     },
     table => [index('game_rounds_player_idx').on(table.playerId, table.createdAt)]
 )
+
+/**
+ * Escrow for the live tables. Every stake (a bet, a double, a call) is debited
+ * in the same transaction that writes its row here, and settling or refunding
+ * flips the row out of `open` in the same transaction as the payout. The flip
+ * is the guard: a row pays out once. Table state lives in memory, so after a
+ * restart every row still `open` belonged to a hand that can no longer finish,
+ * and the boot sweep refunds it.
+ */
+export const tableWagers = sqliteTable(
+    'table_wagers',
+    {
+        id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        // The table's slug, which is also the ledger category.
+        game: text('game').notNull(),
+        roundId: integer('round_id').notNull(),
+        amount: integer('amount').notNull(),
+        // What the stake was for: 'bet', 'double', 'split', 'ante', 'call', …
+        kind: text('kind').notNull(),
+        status: text('status', { enum: ['open', 'settled', 'refunded'] }).notNull().default('open'),
+        createdAt: createdAt(),
+        closedAt: integer('closed_at', { mode: 'timestamp_ms' })
+    },
+    table => [index('table_wagers_status_idx').on(table.status, table.createdAt)]
+)

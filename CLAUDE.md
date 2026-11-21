@@ -1,7 +1,7 @@
 # Polynux Casino
 
 The casino app of the Polynux platform. Players hold casino-local **coins** (whole integers) and play
-slots, roulette and originals. The hub (`polymarketcore`, `CORE_URL`) owns accounts, gems and stars;
+slots, roulette, originals and multiplayer live tables (blackjack, baccarat, casino hold'em, three card poker). The hub (`polymarketcore`, `CORE_URL`) owns accounts, gems and stars;
 `docs/platform-contract.md` is the binding contract and `docs/casino-economy.md` the binding economy.
 
 ## Stack
@@ -30,16 +30,20 @@ the Bun and Nuxt versions; don't move the dev server to Node (bun:sqlite would n
 ## Layout
 
 - `shared/`: rules and math used by both sides. `rng.ts` (CSPRNG + seeded), `money.ts`, `economy.ts`,
-  `stars.ts`, `games/` (registry, dice, limbo, roulette), `slots/` (the slot engine and slot configs).
+  `stars.ts`, `games/` (registry, dice, limbo, roulette), `slots/` (the slot engine and slot configs),
+  `tables/` (cards and shoe, chips and limits, the socket protocol, one rules file per live table).
 - `server/utils/`: `ledger.ts` (the only way coins move), `stars.ts`, `wallet.ts` (convert, allowance),
   `rounds.ts` (play and settle a round), `games.ts` (server half of every game), `hub.ts` (hub client),
-  `launch.ts`, `session.ts`, `env.ts`.
+  `launch.ts`, `session.ts`, `env.ts`, `tables/` (the live tables: `table.ts` base, `escrow.ts`,
+  `socket.ts`, one file per game, `index.ts` registry).
 - `server/api/`: `auth/launch`, `auth/logout`, `dev/login`, `config`, `me`, `wallet/*`,
-  `games/[slug]/play`, `games`. `server/routes/healthz`. `server/plugins/hub-sync.ts` (manifest,
-  heartbeat, retry sweeps). `server/middleware/`: `frame-ancestors` (CSP on pages), `same-origin`
+  `games/[slug]/play`, `games`, `tables/[slug]/ws` (WebSocket). `server/routes/healthz`.
+  `server/plugins/hub-sync.ts` (manifest, heartbeat, retry sweeps), `server/plugins/tables.ts` (escrow
+  refunds at boot, shutdown and every five minutes). `server/middleware/`: `frame-ancestors` (CSP on pages), `same-origin`
   (refuses cross-site API writes, see below).
 - `app/`: `composables/` (`useCasinoSession`, `useWallet`, `useHubBridge`, `useGameRound`,
-  `useSlotSound`), `components/casino/` (shell and lobby), `components/game/` (shared game UI),
+  `useSlotSound`, `useLiveTable`, `useTableSound`), `components/casino/` (shell and lobby),
+  `components/game/` (shared game UI), `components/table/` (felt, seats, cards, chips for live tables),
   `components/games/` (one component per game; `SlotGame.vue` plays every slot), `utils/slot-themes.ts`,
   `utils/game-components.ts`.
 - `scripts/`: `migrate.ts` and `<game>-rtp.ts` balance simulations (`bun scripts/<name>.ts`). Feature buys
@@ -55,16 +59,45 @@ the Bun and Nuxt versions; don't move the dev server to Node (bun:sqlite would n
 4. A `scripts/<game>-rtp.ts` simulation; tune until it reads right.
 5. Only then add it to `GAMES` in `shared/games/registry.ts`: the lobby lists only complete games.
 
+A live table instead subclasses `LiveTable` in `server/utils/tables/`, registers in `tables/index.ts`, and
+is listed with `live: true` (no `games.ts` entry, no play endpoint).
+
+## Live tables
+
+Multiplayer tables over WebSockets (`nitro.experimental.websocket`), one in-memory instance per game
+(the app runs as one process). See `server/utils/tables/table.ts`.
+
+- **Socket auth** happens in the upgrade hook (`authorizeTableUpgrade`): `Origin` must equal
+  `PUBLIC_URL` exactly (else 403), the URL must name a table (else 404), and the `pnx_casino` cookie must
+  unseal to an existing player (`playerIdFromCookieHeader`, else 401). Names and avatars come from the
+  `players` row (the launch token's `name`/`image`).
+- **Money**: chips on the layout are table state only; they are escrowed when betting closes, and
+  doubles, splits, insurance, play and call bets when taken. A stake is a debit plus an `open`
+  `table_wagers` row in one transaction; settling flips the round's rows `open → settled` and credits
+  the payout in one transaction (a partial claim refunds instead); refunds flip `open → refunded` and
+  credit with `{ refund: true }`. The flip is the guard. Tables never call the ledger directly: they go
+  through `stake()` / `settle()` / `refund()` on the base, which use `escrow.ts`.
+- Tables use `commitCoins` (same transaction as `coinTransaction`, star report in the background), so
+  the whole table is synchronous: a socket message or a timer runs start to finish without awaiting,
+  and messages can't interleave. Balances and star changes are pushed to the player's sockets.
+- A player who disconnects keeps their seat while money is on the round; the clocks act for them
+  (stand, fold) and the hand settles. Restart: the boot sweep refunds every `open` row; shutdown
+  refunds open hands; a five-minute sweep refunds open rows older than 30 minutes no table holds.
+- Snapshots are per viewer (`seatGame`): hole cards of other seats and the dealer stay redacted until
+  the showdown. Shuffles use `Shoe` from `shared/tables/cards.ts` with `cryptoRng`.
+
 ## Coins and the ledger
 
 - Coins are whole integers. Payouts are `floor(bet × multiple)`.
 - **Every coin change goes through `coinTransaction` in `server/utils/ledger.ts`**: one `BEGIN
   IMMEDIATE` transaction whose body is synchronous, then a star-level report for every player whose
-  level moved. Never write `players.coins` anywhere else, and never `await` inside the work function.
+  level moved (`commitCoins` is the same unit with the star report returned as a promise; the live
+  tables use it). Never write `players.coins` anywhere else, and never `await` inside the work function.
   Other writes that belong to the same unit go through `coins.tx`.
 - Coins never become gems. Only the hub creates gems; the casino only spends them (convert) at
   1 gem = 1,000 coins.
-- Ledger category = the game's plain lowercase name (`'dice'`, `'spinata'`, `'convert'`, `'allowance'`).
+- Ledger category = the game's plain lowercase name (`'dice'`, `'spinata'`, `'convert'`, `'allowance'`);
+  the live tables use their slug (`'blackjack'`, `'baccarat'`, `'casino-holdem'`, `'three-card-poker'`).
   Returned money passes `{ refund: true }`.
 
 ## Concurrency (SQLite, one writer)

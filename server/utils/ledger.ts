@@ -110,6 +110,23 @@ export interface CoinTransactionResult<T> {
  * synchronous; a thrown error rolls back every change in it.
  */
 export async function coinTransaction<T>(work: (coins: CoinWork) => T): Promise<CoinTransactionResult<T>> {
+    const { value, stars } = commitCoins(work)
+    return { value, stars: await stars }
+}
+
+export interface CommittedCoins<T> {
+    value: T
+    /** Resolves once the hub has heard about every level that moved (never rejects). */
+    stars: Promise<StarChange[]>
+}
+
+/**
+ * The same unit as `coinTransaction`, committed synchronously: it returns (or
+ * throws) once the transaction is done, and hands back the star report as a
+ * promise instead of waiting for it. The live tables use this so a slow hub
+ * never holds up a table's queue; the report itself is identical.
+ */
+export function commitCoins<T>(work: (coins: CoinWork) => T): CommittedCoins<T> {
     const before = new Map<string, number>()
     const after = new Map<string, LedgerBalance>()
     const value = writeTx((tx) => {
@@ -124,13 +141,16 @@ export async function coinTransaction<T>(work: (coins: CoinWork) => T): Promise<
             debit: change => track(change.playerId, applyDebit(tx, change), -change.amount)
         })
     })
+    return { value, stars: reportStars(before, after) }
+}
 
+async function reportStars(before: Map<string, number>, after: Map<string, LedgerBalance>): Promise<StarChange[]> {
     const stars: StarChange[] = []
     for (const [playerId, balance] of after) {
         const level = starLevel(balance.coins)
         if (level !== starLevel(before.get(playerId)!)) {
             // The level moved: report it now, so the response can celebrate it.
-            const change = await syncStars(playerId)
+            const change = await syncStars(playerId).catch(() => null)
             if (change) stars.push(change)
         } else if (level !== balance.starsReported && !retrying.has(playerId)) {
             // Still due from a report that failed earlier: retry without
@@ -139,7 +159,7 @@ export async function coinTransaction<T>(work: (coins: CoinWork) => T): Promise<
             void syncStars(playerId).catch(() => null).finally(() => retrying.delete(playerId))
         }
     }
-    return { value, stars }
+    return stars
 }
 
 const retrying = new Set<string>()

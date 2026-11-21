@@ -3,11 +3,20 @@ import { GAMES } from '../shared/games/registry'
 import { SLOT_CONFIGS } from '../shared/slots'
 import { serverGame } from '../server/utils/games'
 import { playRound } from '../server/utils/rounds'
+import { TABLES } from '../server/utils/tables'
 import { coinsOf, ledgerSum, seedPlayer } from './setup/players'
 
 describe('playRound', () => {
-    it('has a server implementation for every listed game', () => {
-        for (const game of GAMES) expect(serverGame(game.slug)?.info.slug).toBe(game.slug)
+    it('has a server implementation for every listed game, and a live table for every live one', () => {
+        for (const game of GAMES) {
+            if (game.live) {
+                expect(TABLES[game.slug]?.config.slug).toBe(game.slug)
+                expect(serverGame(game.slug)).toBeUndefined()
+            } else {
+                expect(serverGame(game.slug)?.info.slug).toBe(game.slug)
+            }
+        }
+        for (const slug of Object.keys(TABLES)) expect(GAMES.find(game => game.slug === slug)?.live).toBe(true)
     })
 
     it('debits the stake, credits the payout and returns the new balance', async () => {

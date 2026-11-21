@@ -14,6 +14,8 @@ below.
 | `useHubBridge()` | `embedded` (inside the hub iframe), `postWallet(gems)`, `postStars(level)`, `postTitle(title)`, `relaunch()`, `onHello(cb)` |
 | `useGameRound(slug)` | `busy`, `play({ bet, options })`, `settle()`. Games call `settle()` after their reveal. |
 | `useSlotSound(sounds)` | `enabled`, `muted`, `play(name)`, `toggle()` (mute is remembered per browser) |
+| `useLiveTable(slug, onGameEvent?)` | A live table's socket: `state` (snapshot), `me`, `mySeat`, `phase`, `connected`, `feed`, `secondsLeft`, `phaseProgress`, `nextRoundIn`, `sit`, `leave`, `voteStart`, `chat`, `act(action)`. Applies pushed balances and stars itself. |
+| `useTableSound()` | Synthesized chip, card, flip, win, lose and turn effects; shares the mute switch. |
 
 Coins and gems are whole numbers. Show them with `formatCoins(value, compact = true)` from
 `#shared/money` (12.3K, 4.56M; never rounds up). Amount inputs go through `GameBetInput` (accepts `10k`,
@@ -74,6 +76,10 @@ Coins and gems are whole numbers. Show them with `formatCoins(value, compact = t
 | `StarCelebration` | One modal card per rise; drops are silent. | |
 | `CoinChip`, `GemChip`, `CoinIcon`, `GemIcon` | Chips per `docs/design.md`. | |
 | `SignIn` | Shown only when the dev login is on and there's no session. | |
+
+Live tables (`app/components/table/`): `TableShell` (felt, status line, clock, controls, chat and
+scoreboard), `TableSeat`, `TablePlayingCard` (deals in, turns over in place), `TableChipStack`,
+`TableChipRack`, `TableBetSpot`, `TableBetBar`, `TableTimer`, `TableFeed`, `TableAvatar`.
 
 Shared game UI (`app/components/game/`): `GameFrame` (title, RTP, rules dialog), `GameBetInput`,
 `GameRoundHistory`, `GameSlotSymbol`, `GameRouletteWheel`. Restyling these touches every game, so do it

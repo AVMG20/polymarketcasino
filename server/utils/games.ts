@@ -97,9 +97,11 @@ const implementations: Record<string, ServerGame> = {
     }
 }
 
-// Every registry entry has an implementation and vice versa.
+// Every registry entry has an implementation and vice versa. Live tables
+// live in server/utils/tables/ instead (and must not have a play endpoint).
 for (const game of GAMES) {
-    if (!implementations[game.slug]) throw new Error(`No server implementation for ${game.slug}`)
+    if (!game.live && !implementations[game.slug]) throw new Error(`No server implementation for ${game.slug}`)
+    if (game.live && implementations[game.slug]) throw new Error(`${game.slug} is a live table and has no round endpoint`)
 }
 for (const slug of Object.keys(implementations)) {
     if (!GAMES.some(game => game.slug === slug)) throw new Error(`${slug} is implemented but not in the registry`)

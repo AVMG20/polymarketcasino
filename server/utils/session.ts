@@ -1,5 +1,5 @@
 import type { H3Event, Session, SessionConfig } from 'h3'
-import { getCookie, getRequestProtocol, updateSession, useSession } from 'h3'
+import { getCookie, getRequestProtocol, unsealSession, updateSession, useSession } from 'h3'
 import { casinoEnv } from './env'
 import { getCoins } from './ledger'
 
@@ -78,4 +78,28 @@ export async function requirePlayerId(event: H3Event): Promise<string> {
     const created = event.context.sessions?.[SESSION_COOKIE]?.createdAt as number | undefined
     if (created && Date.now() - created > SESSION_REFRESH_MS) await setSessionPlayer(event, playerId)
     return playerId
+}
+
+/**
+ * The player behind a raw `Cookie` header, or null. For the table sockets,
+ * whose upgrade request has no H3 event: same cookie, same seal, same 30-day
+ * expiry and the same check that the player still exists as requirePlayerId.
+ */
+export async function playerIdFromCookieHeader(header: string | null | undefined): Promise<string | null> {
+    if (!header) return null
+    const pair = header.split(';').map(part => part.trim()).find(part => part.startsWith(`${SESSION_COOKIE}=`))
+    if (!pair) return null
+    let sealed: string
+    try {
+        sealed = decodeURIComponent(pair.slice(SESSION_COOKIE.length + 1))
+    } catch {
+        return null
+    }
+    try {
+        const session = await unsealSession(undefined as unknown as H3Event, sessionConfig(), sealed)
+        const playerId = (session.data as CasinoSessionData | undefined)?.playerId
+        return playerId && getCoins(playerId) ? playerId : null
+    } catch {
+        return null
+    }
 }

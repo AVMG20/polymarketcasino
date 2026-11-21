@@ -1,6 +1,7 @@
 # Polynux Casino
 
-The casino app of the Polynux platform: slots, roulette and originals on a play-money coin balance.
+The casino app of the Polynux platform: slots, roulette, originals and multiplayer live tables
+(blackjack, baccarat, casino hold'em, three card poker) on a play-money coin balance.
 It plugs into the hub (`polymarketcore`) through `docs/platform-contract.md`: players arrive with a
 launch token, gems are spent at the hub to buy coins, and the star level is reported back.
 
@@ -60,6 +61,11 @@ With `NODE_ENV=production` (set by the image) the dev login is off whatever `PNX
 session cookie is always `Secure`, and the `.env.example` session password is refused. Set
 `CORE_URL=https://core.avmg.nl`, `PNX_APP_ID`, `PNX_APP_KEY` (the key of the casino entry in the hub's `BOOTSTRAP_APPS`), `NUXT_SESSION_PASSWORD`,
 `PNX_COOKIE_SAMESITE=lax`, `PNX_DEV_LOGIN=false` and `PUBLIC_URL`. See `.env.example`.
+
+The live tables use WebSockets at `/api/tables/<slug>/ws` on the same port. The reverse proxy must pass
+`Upgrade`/`Connection` headers through (and not time out idle sockets too eagerly; clients reconnect).
+`PUBLIC_URL` must be the exact origin players load the casino from (`https://casino.avmg.nl`): a socket
+whose `Origin` header differs is refused.
 
 ## Docs
 

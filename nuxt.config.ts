@@ -39,6 +39,8 @@ export default defineNuxtConfig({
     nitro: {
         preset: 'bun',
         logLevel: 2,
+        // The live tables talk over WebSockets (server/api/tables/[slug]/ws.ts).
+        experimental: { websocket: true },
         // bun:sqlite is a Bun builtin; never try to bundle it.
         externals: { external: ['bun:sqlite'] },
         // Tests and scripts exercise server and shared code, so they typecheck

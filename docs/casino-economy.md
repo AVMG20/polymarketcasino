@@ -10,9 +10,17 @@ slug `casino`, name "Polynux Casino", playPath `/`, visibility `public`. All slo
   `floor(bet × multiple)`, so rounding never creates coins. Games with fractional multipliers start at a
   100-coin minimum bet, where that rounding costs well under 1% RTP (roulette pays whole multiples and
   starts at 10). Max bet 1,000,000.
-- Every change goes through `coinTransaction` in `server/utils/ledger.ts` and writes a `coin_transactions`
-  row (category = the game's plain lowercase name: `'spinata'`, `'dice'`, `'roulette'`, `'convert'`,
-  `'allowance'`). Nothing else writes `players.coins`.
+- Every change goes through `coinTransaction` in `server/utils/ledger.ts` (or `commitCoins`, the same
+  transaction with the star report left in the background, used by the live tables) and writes a
+  `coin_transactions` row (category = the game's plain lowercase name: `'spinata'`, `'dice'`,
+  `'roulette'`, `'blackjack'`, `'convert'`, `'allowance'`). Nothing else writes `players.coins`.
+- **Live tables** (blackjack, baccarat, casino hold'em, three card poker): chips from 100 coins, at most
+  1,000,000 per betting spot. Stakes are held in escrow (`table_wagers`) from the moment betting closes
+  (or a double, split, call or play is taken) until the hand settles, which pays once. Open escrow is
+  refunded (`refund: true`) when the casino restarts. RTP: blackjack 99.6% with basic strategy (Perfect
+  Pairs 93.9%, 21+3 95.4%, insurance 92.6%), baccarat banker 98.9% / player 98.8% / tie 85.6% / pairs 89.6%,
+  casino hold'em 97.8% of the ante with optimal play (AA bonus 93.7%), three card poker 96.6% of the ante
+  with Q-6-4 play (pair plus 97.7%). `scripts/<table>-rtp.ts` simulates each.
 - **Convert**: 1 gem = 1,000 coins (`COINS_PER_GEM`). One-way. 1 to 100 gems per conversion (the hub caps a
   player's pile at 100). Flow: insert a `gem_conversions` row (`status = 'pending'`, `idempotency_key = uuid`)
   → call hub `POST /api/v1/gems/spend` (no transaction is open during the call) → on success credit coins
