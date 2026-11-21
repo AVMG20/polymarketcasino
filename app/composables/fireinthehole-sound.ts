@@ -1,6 +1,6 @@
 // Fire in the Hole sound playback. Every effect is synthesized on the fly
-// (./synth.ts); nothing is fetched. Per-event levels, cooldowns and voice
-// caps; on/off follows the casino's shared mute switch.
+// (app/utils/fireinthehole-synth.ts); nothing is fetched. Per-event levels,
+// cooldowns and voice caps, persisted enable/volume.
 //
 // Signal chain: voice (level, pan) -> master gain (player volume) ->
 // compressor -> speakers, so a chain of bombs going off together squashes
@@ -15,7 +15,7 @@ import {
     FITH_SOUND_VOICE_CAPS,
     type FithSoundEvent,
     type FithSoundOptions
-} from './sounds'
+} from '~/utils/fireinthehole-sounds'
 import {
     FITH_SYNTH_DEFAULT_JITTER,
     FITH_SYNTH_JITTER,
@@ -26,16 +26,13 @@ import {
     fithMineLoop,
     fithSynthWarmUp,
     type FithLoopHandle
-} from './synth'
+} from '~/utils/fireinthehole-synth'
 
-import type { Ref } from 'vue'
+const STORAGE_ENABLED = 'fireinthehole-sound-enabled'
+const STORAGE_VOLUME = 'fireinthehole-sound-volume'
 
-/** Effects play at this share of full volume. */
-const VOLUME = 0.7
-
-// Bound to the shell's mute switch by the first useFireInTheHoleSound().
-let muted: Ref<boolean> | null = null
-const enabled = () => !(muted?.value ?? false)
+const soundEnabled = ref(true)
+const soundVolume = ref(70)
 
 const AMBIENCE_LEVEL = 0.2
 const DRIP_LEVEL = 0.06
@@ -72,7 +69,7 @@ function ensureContext(): AudioContext | null {
 }
 
 function masterLevel(): number {
-    return VOLUME
+    return Math.max(0, Math.min(1, soundVolume.value / 100))
 }
 
 function ensureBus(context: AudioContext): MasterBus {
@@ -93,7 +90,7 @@ function ensureBus(context: AudioContext): MasterBus {
 
 /** A running context, resumed if a gesture allows it. Null while it can't play yet. */
 function runningContext(): AudioContext | null {
-    if (!import.meta.client || !enabled()) return null
+    if (!import.meta.client || !soundEnabled.value || soundVolume.value <= 0) return null
     const context = ensureContext()
     if (!context) return null
     if (context.state !== 'running') {
@@ -187,7 +184,7 @@ function startAmbience() {
     const context = runningContext()
     if (!context) {
         // The first gesture may still be resuming the context; try again shortly.
-        if (import.meta.client && enabled()) {
+        if (import.meta.client && soundEnabled.value) {
             setTimeout(() => {
                 if (ambienceWanted && !mine && ctx?.state === 'running') startAmbience()
             }, 150)
@@ -238,7 +235,7 @@ function stopAll() {
 
 /** Resume the context from a user gesture (first click / key on the page). */
 function unlock() {
-    if (!enabled()) return
+    if (!soundEnabled.value) return
     const context = ensureContext()
     if (context && context.state !== 'running') void context.resume().catch(() => {})
     if (ambienceWanted && !mine) startAmbience()
@@ -247,10 +244,34 @@ function unlock() {
 function initialize() {
     if (!import.meta.client || initialized) return
     initialized = true
-    muted = useSlotSound(undefined).muted
-    watch(muted, (off) => {
-        if (off) stopAll()
-        else if (ambienceWanted) startAmbience()
+    try {
+        const storedEnabled = localStorage.getItem(STORAGE_ENABLED)
+        const storedVolume = localStorage.getItem(STORAGE_VOLUME)
+        if (storedEnabled !== null) soundEnabled.value = storedEnabled === 'true'
+        // Number(null) is 0, so check for null first or every first visit is muted.
+        if (storedVolume !== null && Number.isFinite(Number(storedVolume))) {
+            soundVolume.value = Math.max(0, Math.min(100, Number(storedVolume)))
+        }
+    } catch {
+        // Storage blocked: keep the defaults.
+    }
+    // A detached scope: watchers made in the first caller's setup would stop
+    // when that game unmounts, and the next visit would no longer save.
+    effectScope(true).run(() => {
+        watch(soundEnabled, (enabled) => {
+            try {
+                localStorage.setItem(STORAGE_ENABLED, String(enabled))
+            } catch { /* storage blocked */ }
+            if (!enabled) stopAll()
+            else if (ambienceWanted) startAmbience()
+        })
+        watch(soundVolume, (volume) => {
+            try {
+                localStorage.setItem(STORAGE_VOLUME, String(volume))
+            } catch { /* storage blocked */ }
+            if (ctx && bus) bus.input.gain.setTargetAtTime(masterLevel(), ctx.currentTime, 0.02)
+            if (volume > 0 && ambienceWanted && !mine) startAmbience()
+        })
     })
 }
 
@@ -258,6 +279,8 @@ export function useFireInTheHoleSound() {
     initialize()
 
     return {
+        soundEnabled,
+        soundVolume,
         play,
         unlock,
         stopEffects,

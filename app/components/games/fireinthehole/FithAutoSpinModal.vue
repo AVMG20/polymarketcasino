@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { formatCoins } from '#shared/money'
-
 const open = defineModel<boolean>('open', { default: false })
 const stopOnBonus = defineModel<boolean>('stopOnBonus', { default: false })
 const props = defineProps<{ bet: number, balance: number }>()
@@ -58,7 +56,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             Stop when free spins start
           </label>
           <p class="hint">
-            {{ formatCoins(count * bet) }} for {{ count }} spins at {{ formatCoins(bet) }} each.
+            {{ formatNumber(count * bet) }} for {{ count }} spins at {{ formatNumber(bet) }} each.
             <template v-if="affordable < count">
               Your balance covers {{ affordable }}.
             </template>

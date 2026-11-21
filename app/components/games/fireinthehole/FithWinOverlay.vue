@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { formatCoins } from '#shared/money'
-import { FITH_WIN_TIERS, fithWinTier, type FithWinTier } from '~/utils/fireinthehole/paytable'
-import { useFireInTheHoleSound } from '~/utils/fireinthehole/sound'
+import { FITH_WIN_TIERS, fithWinTier, type FithWinTier } from '~/utils/fireinthehole-paytable'
 
 // Tiered big-win celebration over the reel window. show() counts the amount
 // up from zero and climbs Big > Mega > Epic > Motherlode as the count passes
@@ -141,7 +139,7 @@ defineExpose({ show, skip, visible })
         >
           {{ tier?.label ?? 'Big Win' }}
         </p>
-        <strong class="amount">{{ formatCoins(shown) }}</strong>
+        <strong class="amount">{{ formatNumber(shown) }}</strong>
         <p
           v-if="subtitle"
           class="subtitle"

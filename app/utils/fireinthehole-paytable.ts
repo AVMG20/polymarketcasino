@@ -1,6 +1,10 @@
-// Player-facing labels, win tiers and the bet ladder for Fire in the Hole.
-// The pays themselves come from the rules module.
+// Player-facing numbers for Fire in the Hole's paytable, win tiers and rules
+// panel. The game math lives in shared/slots/fireinthehole; the pays, the
+// cascade step and the coin and pickaxe values come straight from it.
+import { findGame } from '#shared/games/registry'
 import { FITH_BOOST_VALUES, FITH_COIN_VALUES, type FirePaySymbol } from '#shared/slots/fireinthehole'
+
+export { FITH_CHAIN_STEP, FITH_SYMBOL_PAY, fithChainMultiplier } from '#shared/slots/fireinthehole'
 
 /** Player-facing names; the art for `emerald` is gold and `ore` is silver. */
 export const FITH_SYMBOL_LABEL: Record<FirePaySymbol, string> = {
@@ -19,7 +23,13 @@ export const FITH_COIN_RANGE = { min: FITH_COIN_VALUES[0]![0], max: FITH_COIN_VA
 /** Range of the value a pickaxe adds to every coin, each free spin (× bet). */
 export const FITH_BOOST_RANGE = { min: FITH_BOOST_VALUES[0]![0], max: FITH_BOOST_VALUES.at(-1)![0] } as const
 
-/** Measured with scripts/fireinthehole-rtp.ts. */
+const GAME = findGame('fireinthehole')!
+
+/**
+ * The registry's RTP, measured with scripts/fireinthehole-rtp.ts; free spins
+ * come about once every 180 spins.
+ */
+export const FITH_RTP_LABEL = `${Math.round(GAME.rtp * 1000) / 10}%`
 export const FITH_BONUS_FREQUENCY_LABEL = '1 in 180'
 
 export interface FithWinTier {
@@ -44,21 +54,11 @@ export function fithWinTier(multiple: number): FithWinTier | null {
     return tier
 }
 
-/** Bet ladder for the − / + buttons, clipped to the game's limits. */
-export function fithBetSteps(min: number, max: number): number[] {
-    const steps: number[] = []
-    for (let e = 2; e <= 6; e++) {
-        for (const m of [1, 2, 5]) {
-            const value = m * 10 ** e
-            if (value >= min && value <= max) steps.push(value)
-        }
-    }
-    if (steps[0] !== min) steps.unshift(min)
-    if (steps.at(-1) !== max) steps.push(max)
-    return steps
-}
-
-/** A multiple of the bet as shown on coins and banners: 0.64x, 12x, 1,250x. */
-export function fithMult(value: number): string {
-    return `${value.toLocaleString('en-US', { maximumFractionDigits: value < 10 ? 2 : 0 })}x`
-}
+/** Bet ladder for the − / + buttons, inside the casino's bet bounds (the old site took 1 to 100B). */
+export const FITH_BET_STEPS = [
+    1, 2, 5, 10, 20, 50, 100, 200, 500,
+    1_000, 2_000, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000,
+    1_000_000, 2_500_000, 5_000_000, 10_000_000, 25_000_000, 50_000_000, 100_000_000,
+    250_000_000, 500_000_000, 1_000_000_000, 2_500_000_000, 5_000_000_000,
+    10_000_000_000, 25_000_000_000, 50_000_000_000, 100_000_000_000
+].filter(step => step >= GAME.minBet && step <= GAME.maxBet)

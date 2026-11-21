@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { FireSymbol } from '#shared/slots/fireinthehole'
-import { FITH_BONUS_SHEET_H, FITH_BONUS_SHEET_W, FITH_BONUS_SPRITE_SRC, FITH_BONUS_SYMBOL_META, FITH_SHEET_H, FITH_SHEET_W, FITH_SPRITE_SRC, FITH_SYMBOL_META } from '~/utils/fireinthehole/sprite'
+import { FITH_BONUS_SHEET_H, FITH_BONUS_SHEET_W, FITH_BONUS_SPRITE_SRC, FITH_BONUS_SYMBOL_META, FITH_SHEET_H, FITH_SHEET_W, FITH_SPRITE_SRC, FITH_SYMBOL_META } from '~/utils/fireinthehole-sprite'
 
 // One symbol cropped out of the sprite sheets as a CSS background, sized to
 // fit a `size` px square.

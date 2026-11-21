@@ -1,19 +1,17 @@
 <script setup lang="ts">
 import type { Container, Graphics, Text, Texture } from 'pixi.js'
 import type { ReelSet } from 'pixi-reels'
-import { BookOpen, Flame, Loader, Lock, Minus, Pickaxe, Plus, Repeat, RotateCw, Volume2, VolumeX, Zap } from 'lucide-vue-next'
 import '@fontsource/rye/latin-400.css'
 import '@fontsource/alfa-slab-one/latin-400.css'
-import { Button } from '@/components/ui/button'
+import { BookOpenIcon, FlameIcon, LoaderCircleIcon, LockIcon, MinusIcon, PickaxeIcon, PlusIcon, RepeatIcon, RotateCwIcon, Volume2Icon, VolumeXIcon, ZapIcon } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
-import { formatCoins, parseAmount } from '#shared/money'
-import type { FireBonusDrop, FireBonusResult, FireBonusValueEvent, FireCell, FireCascadeStep, FireInTheHoleOutcome, FireSymbol } from '#shared/slots/fireinthehole'
-import { FITH_BUY_COST, FITH_COLS, FITH_FREE_SPINS, FITH_MAX_CASCADES, FITH_MAX_LINES, FITH_MAX_WIN, FITH_MIN_CONNECTION, FITH_ROWS, FITH_SCATTERS_FOR_BONUS, FITH_STARTING_LINES, fithChainMultiplier, playFireInTheHole } from '#shared/slots/fireinthehole'
+import { cryptoRng } from '#shared/rng'
+import type { FireBonusDrop, FireBonusResult, FireBonusValueEvent, FireCell, FireCascadeStep, FireGrid, FireInTheHoleOutcome, FireSymbol } from '#shared/slots/fireinthehole'
+import { FITH_BUY_COST as FITH_BUY_BONUS_COST, FITH_COLS, FITH_FREE_SPINS, FITH_MAX_CASCADES, FITH_MAX_LINES, FITH_ROWS, FITH_SCATTERS_FOR_BONUS, FITH_STARTING_LINES, playFireInTheHole } from '#shared/slots/fireinthehole'
 import { initSlotPixiApp, safeDestroy } from '~/utils/slot-pixi'
-import { FithFx } from '~/utils/fireinthehole/fx'
-import { fithBetSteps, fithMult, fithWinTier } from '~/utils/fireinthehole/paytable'
-import { useFireInTheHoleSound } from '~/utils/fireinthehole/sound'
-import { FITH_BONUS_SPRITE_SRC, FITH_BONUS_SYMBOL_META, FITH_SPRITE_SRC, FITH_SYMBOL_META } from '~/utils/fireinthehole/sprite'
+import { FithFx } from '~/utils/fireinthehole-fx'
+import { FITH_BET_STEPS, fithChainMultiplier, fithWinTier } from '~/utils/fireinthehole-paytable'
+import { FITH_BONUS_SPRITE_SRC, FITH_BONUS_SYMBOL_META, FITH_SPRITE_SRC, FITH_SYMBOL_META } from '~/utils/fireinthehole-sprite'
 import FithAutoSpinModal from '~/components/games/fireinthehole/FithAutoSpinModal.vue'
 import FithBonusBanner from '~/components/games/fireinthehole/FithBonusBanner.vue'
 import FithInfoPanel from '~/components/games/fireinthehole/FithInfoPanel.vue'
@@ -25,28 +23,44 @@ const cabinet = ref<HTMLDivElement | null>(null)
 const winOverlay = ref<InstanceType<typeof FithWinOverlay> | null>(null)
 const bonusBanner = ref<InstanceType<typeof FithBonusBanner> | null>(null)
 
-/**
- * Fire in the Hole: the server resolves the whole round (cascades, row
- * unlocks and the free spins); this replays it on pixi reels, then settles
- * the balance once the win reveal is done.
- */
 const info = findGame('fireinthehole')!
-const round = useGameRound<FireInTheHoleOutcome>('fireinthehole')
-const { coins: balance } = useCasinoSession()
-const shell = useSlotSound(undefined)
-const sound = useFireInTheHoleSound()
+useHead({ title: info.name })
+onMounted(() => useHubBridge().postTitle(info.name))
 
-const bet = ref(info.minBet)
-const isPlaying = ref(false)
-const errorMsg = ref('')
-const history = ref<{ payout: number, bonus: boolean }[]>([])
-function pushHistory(entry: { payout: number, bonus: boolean }) {
-    history.value.unshift(entry)
-    if (history.value.length > 10) history.value.pop()
+const { bet, isSpinning: isPlaying, errorMsg, balance, setBalance, history, pushHistory, spin: requestSpin } = useSlotGame<FireInTheHoleOutcome, { payout: number, bet: number, bonus: boolean }>('fireinthehole')
+
+// The casino's rules module counts in multiples of the bet; the old client
+// read coins. toResult() puts a round back in the old shape so the replay
+// below reads as it did. `payout` is what the server paid (whole coins).
+interface FireInTheHoleResult {
+    bet: number
+    cost: number
+    payout: number
+    basePayout: number
+    grid: FireGrid
+    steps: FireCascadeStep[]
+    restGrid: FireGrid
+    scatterCells: FireCell[]
+    activeLines: number
+    bonus: FireBonusResult | null
 }
-/** The bet of the round on screen: step pays are × bet. */
-let roundBet = info.minBet
-const coinsOf = (multiple: number) => Math.floor(roundBet * multiple + 1e-9)
+
+function toResult(outcome: FireInTheHoleOutcome, betAmount: number, payout: number): FireInTheHoleResult {
+    return {
+        bet: betAmount,
+        cost: outcome.bought ? betAmount * FITH_BUY_BONUS_COST : betAmount,
+        payout,
+        basePayout: outcome.basePayout * betAmount,
+        grid: outcome.grid,
+        steps: outcome.steps.map(step => ({ ...step, stepPay: step.stepPay * betAmount, totalPay: step.totalPay * betAmount })),
+        restGrid: outcome.restGrid,
+        scatterCells: outcome.scatterCells,
+        activeLines: outcome.activeLines,
+        bonus: outcome.bonus
+    }
+}
+const sound = useFireInTheHoleSound()
+const { soundEnabled, soundVolume } = sound
 
 const isReady = ref(false)
 const activeLines = ref(FITH_STARTING_LINES)
@@ -61,29 +75,26 @@ const bonusTotal = ref(0)
 const message = ref('')
 const showInfo = ref(false)
 const showAuto = ref(false)
+const showSound = ref(false)
 const turbo = ref(false)
 const cabinetShake = ref(false)
 
-const MIN_BET = info.minBet
-const MAX_BET = info.maxBet
-const BET_STEPS = fithBetSteps(MIN_BET, MAX_BET)
+const MIN_BET = FITH_BET_STEPS[0]!
+const MAX_BET = FITH_BET_STEPS.at(-1)!
 
 const autoSpinsLeft = ref(0)
 const autoStopOnBonus = ref(false)
 const isAuto = computed(() => autoSpinsLeft.value > 0)
 
-const betText = ref(String(bet.value))
-const betPreview = computed(() => {
-    const parsed = parseAmount(betText.value)
-    return parsed !== null && /[kmbt]/i.test(betText.value) ? `= ${formatCoins(parsed, false)}` : ''
-})
-const buyCost = computed(() => bet.value * FITH_BUY_COST)
+const betDraft = ref(bet.value)
+const betText = useAmountInput(betDraft, { integer: true, shorthand: true })
+const buyCost = computed(() => bet.value * FITH_BUY_BONUS_COST)
 const canSpin = computed(() => isReady.value && !isPlaying.value && balance.value >= bet.value)
 const canBuy = computed(() => isReady.value && !isPlaying.value && !isAuto.value && balance.value >= buyCost.value)
 const chainLadder = Array.from({ length: FITH_MAX_CASCADES }, (_, i) => fithChainMultiplier(i))
 
 const IDLE_MESSAGES = [
-    `Connect ${FITH_MIN_CONNECTION} or more matching symbols`,
+    'Connect 5 or more matching symbols',
     'Dynamite is wild and blasts its neighbours',
     'Blast the bottom 2 rows to dig deeper',
     `${FITH_SCATTERS_FOR_BONUS} lanterns start ${FITH_FREE_SPINS} free spins`,
@@ -132,7 +143,7 @@ let boundaryTween: { kill: () => void } | null = null
 let anticipationTween: { kill: () => void } | null = null
 let pendingBonusDrops: FireBonusDrop[] = []
 let currentStep: FireCascadeStep | undefined
-let latestResult: FireInTheHoleOutcome | null = null
+let latestResult: FireInTheHoleResult | null = null
 let scattersSeen = 0
 let countScattersOnLand = false
 /** Column after which the drop teases, one column at a time, or -1. */
@@ -156,7 +167,7 @@ const CRUMBLE_TINT: Partial<Record<FireSymbol, number[]>> = {
 // Bet ------------------------------------------------------------------------
 
 watch(bet, (value) => {
-    if (parseAmount(betText.value) !== value) betText.value = String(value)
+    betDraft.value = value
 })
 
 function clampBet(value: number) {
@@ -169,20 +180,19 @@ const betLocked = computed(() => isPlaying.value || isAuto.value)
 function setBet(value: number) {
     if (betLocked.value) return
     bet.value = clampBet(value)
-    betText.value = String(bet.value)
+    betDraft.value = bet.value
 }
 
 function commitBet() {
-    setBet(parseAmount(betText.value) ?? bet.value)
-    betText.value = String(bet.value)
+    setBet(betDraft.value || MIN_BET)
 }
 
 function betStep(dir: 1 | -1) {
     if (betLocked.value) return
     const current = bet.value
     const next = dir > 0
-        ? BET_STEPS.find(step => step > current) ?? MAX_BET
-        : [...BET_STEPS].reverse().find(step => step < current) ?? MIN_BET
+        ? FITH_BET_STEPS.find(step => step > current) ?? MAX_BET
+        : [...FITH_BET_STEPS].reverse().find(step => step < current) ?? MIN_BET
     if (next === current) return
     setBet(next)
     sound.play(dir > 0 ? 'bet-up' : 'bet-down')
@@ -190,7 +200,7 @@ function betStep(dir: 1 | -1) {
 
 function maxBet() {
     if (betLocked.value) return
-    const affordable = Math.max(MIN_BET, Math.min(MAX_BET, balance.value))
+    const affordable = [...FITH_BET_STEPS].reverse().find(step => step <= balance.value) ?? MIN_BET
     setBet(affordable)
     sound.play('bet-max')
 }
@@ -271,7 +281,9 @@ function shakeCabinet() {
     })
 }
 
-const formatMult = fithMult
+function formatMult(value: number) {
+    return `${formatNumber(value, false, value < 10 ? 2 : 0)}x`
+}
 
 // Pixi setup -----------------------------------------------------------------
 
@@ -443,8 +455,7 @@ async function initPixi() {
     pixiApp.canvas.classList.add('fith-canvas')
     canvasHost.value.appendChild(pixiApp.canvas)
 
-    // The idle board is cosmetic: Math.random is fine here.
-    latestResult = playFireInTheHole({ next: Math.random })
+    latestResult = toResult(playFireInTheHole(cryptoRng), 1, 0)
     const initialGrid = latestResult.steps[0]?.grid ?? latestResult.grid
 
     reelSet = new reels.ReelSetBuilder()
@@ -753,7 +764,7 @@ async function moneyPopup(amount: number, cells: FireCell[], chain: number) {
     }, { x: 0, y: 0 })
     const s = reelSet?.scale.x ?? 1
     const label = new PIXI.Text({
-        text: `+${formatCoins(amount)}`,
+        text: `+${formatNumber(amount)}`,
         style: {
             fill: 0xfff1b8,
             fontFamily: '"Alfa Slab One", Georgia, serif',
@@ -857,7 +868,7 @@ async function dropGrid(grid: FireSymbol[][], opts: { anticipate: boolean }) {
     reelSet.setDropOrder('ltr', turbo.value ? 12 : 30)
 }
 
-async function animateBase(result: FireInTheHoleOutcome) {
+async function animateBase(result: FireInTheHoleResult) {
     if (!reelSet) return
     latestResult = result
     activeLines.value = result.steps[0]?.activeLinesBefore ?? FITH_STARTING_LINES
@@ -890,8 +901,8 @@ async function animateBase(result: FireInTheHoleOutcome) {
         onCascade: async () => {
             const step = currentStep
             if (!step) return
-            moneyPopup(coinsOf(step.stepPay), step.winCells, stepIndex)
-            tickWinTo(coinsOf(step.totalPay))
+            moneyPopup(step.stepPay, step.winCells, stepIndex)
+            tickWinTo(step.totalPay)
             if (step.unlockedRows.length > 0) await unlockRows(step.unlockedRows, step.activeLinesAfter)
         },
         pauseAfterDestroyMs: turbo.value ? 80 : 200,
@@ -903,7 +914,7 @@ async function animateBase(result: FireInTheHoleOutcome) {
     countScattersOnLand = false
     activeLines.value = result.activeLines
     if (Math.abs(boundaryLines - result.activeLines) > 0.01) animateBoundary(result.activeLines)
-    winMeter.value = coinsOf(result.basePayout)
+    winMeter.value = result.basePayout
 }
 
 async function celebrateScatters(cells: FireCell[]) {
@@ -1043,10 +1054,11 @@ async function playBonus(bonus: FireBonusResult, bought: boolean) {
 
     clearBonusValues()
     const locked = new Map<string, FireBonusDrop>()
+    const bet = latestResult?.bet ?? 1
     const base = latestResult?.basePayout ?? 0
     const syncTotals = (mult: number) => {
         bonusTotal.value = mult
-        tickWinTo(coinsOf(Math.min(FITH_MAX_WIN, base + mult)), 260)
+        tickWinTo(Number((base + mult * bet).toFixed(2)), 260)
     }
 
     for (const step of bonus.steps) {
@@ -1110,29 +1122,36 @@ async function playBonus(bonus: FireBonusResult, bought: boolean) {
 // Round orchestration --------------------------------------------------------
 
 async function play(buy = false) {
-    if (!reelSet || destroyed || isPlaying.value) return
-    isPlaying.value = true
-    errorMsg.value = ''
-    sound.play(buy ? 'buy-bonus' : 'spin')
-    chainIndex.value = -1
-    winRun++
-    winMeter.value = 0
-    isBonus.value = false
-    bonusSpin.value = 0
-    bonusTotal.value = 0
-    clearBonusValues()
-    fx?.clear()
+    if (!reelSet || destroyed) return
+    const cost = buy ? buyCost.value : bet.value
+    const balanceBefore = balance.value
+    const betAmount = bet.value
+    let debited = false
 
-    const response = await round.play({ bet: bet.value, options: buy ? { buy: true } : {} })
-    if (!response) {
-        // useGameRound already showed why.
-        isPlaying.value = false
+    const data = await requestSpin(cost, buy ? { buy: true } : undefined, () => {
+        sound.play(buy ? 'buy-bonus' : 'spin')
+        chainIndex.value = -1
+        winRun++
+        winMeter.value = 0
+        isBonus.value = false
+        bonusSpin.value = 0
+        bonusTotal.value = 0
+        clearBonusValues()
+        fx?.clear()
+        setBalance(balanceBefore - cost)
+        debited = true
+    })
+
+    if (!data) {
+        if (debited) {
+            setMessage('Spin failed')
+            setBalance(balanceBefore)
+        }
         autoSpinsLeft.value = 0
         return
     }
 
-    const result = response.result
-    roundBet = bet.value
+    const result = toResult(data.gameData, betAmount, data.payout)
     try {
         await animateBase(result)
         if (result.bonus) {
@@ -1141,14 +1160,14 @@ async function play(buy = false) {
             await playBonus(result.bonus, buy)
         }
         // Reveal first: the win overlay counts up, then the meter settles.
-        await celebrate(result, response.payout, response.stake)
-        winMeter.value = response.payout
-        pushHistory({ payout: response.payout, bonus: Boolean(result.bonus) })
+        await celebrate(result, buy)
+        winMeter.value = result.payout
+        pushHistory({ payout: result.payout, bet: result.cost, bonus: Boolean(result.bonus) })
     } catch (error) {
         errorMsg.value = error instanceof Error ? error.message : 'Animation error'
         autoSpinsLeft.value = 0
     } finally {
-        round.settle()
+        setBalance(data.balance)
         isBonus.value = false
         isPlaying.value = false
         chainIndex.value = -1
@@ -1165,17 +1184,19 @@ async function play(buy = false) {
     }
 }
 
-async function celebrate(result: FireInTheHoleOutcome, payout: number, stake: number) {
-    const tier = fithWinTier(result.win)
+async function celebrate(result: FireInTheHoleResult, bought: boolean) {
+    const multiple = result.payout / result.bet
+    const tier = fithWinTier(multiple)
     if (result.bonus && !tier) {
         sound.play('bonus-end')
-        await bonusBanner.value?.outro(result.bonus.totalMultiplier, payout, isAuto.value ? 1800 : 3200)
+        await bonusBanner.value?.outro(result.bonus.totalMultiplier, result.payout, isAuto.value ? 1800 : 3200)
     } else if (tier) {
-        await winOverlay.value?.show(payout, roundBet, result.bonus ? `Free spins · ${formatMult(result.bonus.totalMultiplier)}` : '')
-    } else if (payout > 0) {
-        sound.play('win-small', { intensity: Math.min(4, Math.floor(result.win)) })
+        await winOverlay.value?.show(result.payout, result.bet, result.bonus ? `Free spins · ${formatMult(result.bonus.totalMultiplier)}` : '')
+    } else if (result.payout > 0) {
+        sound.play('win-small', { intensity: Math.min(4, Math.floor(multiple)) })
     }
-    if (payout > 0) setMessage(`You won ${formatCoins(payout)}${payout > stake ? '!' : ''}`)
+    const spent = bought ? result.cost : result.bet
+    if (result.payout > 0) setMessage(`You won ${formatNumber(result.payout)}${result.payout > spent ? '!' : ''}`)
     else setMessage(result.scatterCells.length === FITH_SCATTERS_FOR_BONUS - 1 ? 'So close. Two lanterns.' : 'No luck this time')
 }
 
@@ -1242,8 +1263,8 @@ function toggleTurbo() {
 }
 
 function toggleSound() {
-    shell.toggle()
-    if (!shell.muted.value) {
+    soundEnabled.value = !soundEnabled.value
+    if (soundEnabled.value) {
         sound.unlock()
         sound.startAmbience()
         sound.play('click')
@@ -1327,20 +1348,6 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <GameFrame slug="fireinthehole">
-    <template #actions>
-      <Button size="icon" variant="ghost" :title="shell.muted.value ? 'Sound on' : 'Sound off'" @click="toggleSound">
-        <VolumeX v-if="shell.muted.value" class="size-5" />
-        <Volume2 v-else class="size-5" />
-      </Button>
-    </template>
-
-    <template #rules>
-      <p>Clusters of {{ FITH_MIN_CONNECTION }}+ touching symbols pay per symbol; winners crumble and every cascade raises the multiplier. Dynamite is wild and blasts its neighbours; blasts in the bottom two rows open a row (up to {{ FITH_MAX_LINES }}).</p>
-      <p>{{ FITH_SCATTERS_FOR_BONUS }}+ lanterns start {{ FITH_FREE_SPINS }} free spins on the open rows: coins hold values, pickaxes add to every coin, x2 doubles them and the collector sweeps them up. Buy for {{ FITH_BUY_COST }}× bet on {{ FITH_STARTING_LINES }} rows.</p>
-      <p>Max win {{ formatCoins(FITH_MAX_WIN, false) }}× bet.</p>
-    </template>
-
   <div class="fith-root">
     <div class="fith-bg" />
     <div class="fith-vignette" />
@@ -1388,8 +1395,8 @@ onBeforeUnmount(() => {
               />
             </span>
             <span class="fith-buy-title">Buy free spins</span>
-            <span class="fith-buy-cost">{{ formatCoins(buyCost) }}</span>
-            <span class="fith-buy-note">{{ buyArmed ? 'Tap again to buy' : `${FITH_BUY_COST}x bet · ${FITH_FREE_SPINS} spins` }}</span>
+            <span class="fith-buy-cost">{{ formatNumber(buyCost) }}</span>
+            <span class="fith-buy-note">{{ buyArmed ? 'Tap again to buy' : `${FITH_BUY_BONUS_COST}x bet · ${FITH_FREE_SPINS} spins` }}</span>
           </button>
 
           <div class="fith-plate">
@@ -1404,7 +1411,10 @@ onBeforeUnmount(() => {
               >
                 <span class="lamp" />
                 <span class="row-label">Row {{ r }}</span>
-                <Lock v-if="r > activeLines" class="size-3.5 lock" />
+                <LockIcon
+                  v-if="r > activeLines"
+                  class="size-3.5 lock"
+                />
               </li>
             </ol>
           </div>
@@ -1443,7 +1453,7 @@ onBeforeUnmount(() => {
               v-if="!isReady"
               class="fith-loading"
             >
-              <Loader class="size-10 animate-spin" />
+              <LoaderCircleIcon class="size-10 animate-spin" />
             </div>
             <FithBonusBanner ref="bonusBanner" />
             <FithWinOverlay
@@ -1483,9 +1493,11 @@ onBeforeUnmount(() => {
                 :key="i"
                 :class="{ win: h.payout > 0, bonus: h.bonus }"
               >
-                <Flame v-if="h.bonus" class="size-3.5" />
-                <Pickaxe v-else class="size-3.5" />
-                <span>{{ h.payout > 0 ? formatCoins(h.payout) : 'No win' }}</span>
+                <component
+                  :is="h.bonus ? FlameIcon : PickaxeIcon"
+                  class="size-3.5"
+                />
+                <span>{{ h.payout > 0 ? formatNumber(h.payout) : 'No win' }}</span>
               </li>
             </ul>
             <p
@@ -1511,7 +1523,7 @@ onBeforeUnmount(() => {
       <div class="fith-deck">
         <div class="fith-meter fith-meter-balance">
           <span class="fith-meter-label">Balance</span>
-          <span class="fith-meter-value">{{ formatCoins(balance) }}</span>
+          <span class="fith-meter-value">{{ formatNumber(balance) }}</span>
         </div>
 
         <div class="fith-bet">
@@ -1523,7 +1535,7 @@ onBeforeUnmount(() => {
               :disabled="betLocked || bet <= MIN_BET"
               @click="betStep(-1)"
             >
-              <Minus class="size-5" />
+              <MinusIcon class="size-5" />
             </button>
             <label class="fith-bet-value">
               <input
@@ -1534,7 +1546,7 @@ onBeforeUnmount(() => {
                 @blur="commitBet"
                 @keydown.enter="($event.target as HTMLInputElement).blur()"
               >
-              <output v-if="betPreview">{{ betPreview }}</output>
+              <output v-if="amountPreview(betText, true)">{{ amountPreview(betText, true) }}</output>
             </label>
             <button
               class="fith-round-btn"
@@ -1542,7 +1554,7 @@ onBeforeUnmount(() => {
               :disabled="betLocked || bet >= MAX_BET"
               @click="betStep(1)"
             >
-              <Plus class="size-5" />
+              <PlusIcon class="size-5" />
             </button>
           </div>
           <button
@@ -1563,7 +1575,7 @@ onBeforeUnmount(() => {
           <span
             :key="winFlash"
             class="fith-meter-value"
-          >{{ formatCoins(winMeter) }}</span>
+          >{{ formatNumber(winMeter) }}</span>
         </div>
 
         <div class="fith-spin-wrap">
@@ -1583,7 +1595,7 @@ onBeforeUnmount(() => {
               <b>{{ autoSpinsLeft }}</b>
               <small>Stop</small>
             </span>
-            <RotateCw v-else class="fith-spin-icon" />
+            <RotateCwIcon v-else class="fith-spin-icon" />
           </button>
         </div>
 
@@ -1595,7 +1607,7 @@ onBeforeUnmount(() => {
             :disabled="!isAuto && (isPlaying || !canSpin)"
             @click="isAuto ? (autoSpinsLeft = 0) : (showAuto = true, sound.play('click'))"
           >
-            <Repeat class="size-4" />
+            <RepeatIcon class="size-4" />
             <span>Auto</span>
           </button>
           <button
@@ -1605,7 +1617,7 @@ onBeforeUnmount(() => {
             :aria-pressed="turbo"
             @click="toggleTurbo"
           >
-            <Zap class="size-4" />
+            <ZapIcon class="size-4" />
             <span>Turbo</span>
           </button>
           <button
@@ -1613,9 +1625,44 @@ onBeforeUnmount(() => {
             data-fith="info"
             @click="showInfo = true; sound.play('click')"
           >
-            <BookOpen class="size-4" />
+            <BookOpenIcon class="size-4" />
             <span>Rules</span>
           </button>
+          <div class="fith-sound">
+            <button
+              class="fith-tool"
+              :class="{ on: soundEnabled }"
+              :aria-label="soundEnabled ? 'Sound settings' : 'Sound off'"
+              @click="showSound = !showSound"
+            >
+              <component
+                :is="!soundEnabled || soundVolume === 0 ? VolumeXIcon : Volume2Icon"
+                class="size-4"
+              />
+              <span>Sound</span>
+            </button>
+            <Transition name="fith-tick">
+              <div
+                v-if="showSound"
+                class="fith-sound-pop"
+              >
+                <button
+                  class="fith-sound-toggle"
+                  @click="toggleSound"
+                >
+                  {{ soundEnabled ? 'Mute' : 'Unmute' }}
+                </button>
+                <input
+                  v-model.number="soundVolume"
+                  type="range"
+                  min="0"
+                  max="100"
+                  aria-label="Volume"
+                  :disabled="!soundEnabled"
+                >
+              </div>
+            </Transition>
+          </div>
         </div>
       </div>
     </div>
@@ -1632,7 +1679,6 @@ onBeforeUnmount(() => {
       @pick="startAuto"
     />
   </div>
-  </GameFrame>
 </template>
 
 <style scoped>
@@ -1646,12 +1692,11 @@ onBeforeUnmount(() => {
   --ember: #ff8a2a;
   --ink: #140b05;
   position: relative;
+  min-height: 100%;
   overflow: hidden;
-  border-radius: 1rem;
   background: #0b0604;
   color: #f1e3cb;
   isolation: isolate;
-  container: fith / inline-size;
 }
 
 .fith-bg {
@@ -1787,7 +1832,7 @@ onBeforeUnmount(() => {
 
 .fith-sign h1 .fire,
 .fith-sign h1 .hole {
-  font-size: clamp(30px, 4.4cqw, 50px);
+  font-size: clamp(30px, 4.4vw, 50px);
   background: linear-gradient(180deg, #fff6c9 8%, #ffc238 48%, #e2530f 88%);
   background-clip: text;
   -webkit-background-clip: text;
@@ -1797,7 +1842,7 @@ onBeforeUnmount(() => {
 }
 
 .fith-sign h1 .small {
-  font-size: clamp(14px, 1.8cqw, 20px);
+  font-size: clamp(14px, 1.8vw, 20px);
   color: #f5d7a1;
   text-shadow: 0 2px 0 #2a0f02;
 }
@@ -2019,7 +2064,7 @@ onBeforeUnmount(() => {
 .fith-window {
   position: relative;
   overflow: hidden;
-  width: min(calc(100cqw - 32px - 52px), calc(100cqw - 520px), max(300px, calc(100dvh - 380px)), 700px);
+  width: min(calc(100vw - 32px - 52px), max(300px, calc(100dvh - 350px)), 700px);
   aspect-ratio: 1;
   border-radius: 8px;
   background:
@@ -2609,15 +2654,46 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 14px rgba(255, 170, 50, 0.35);
 }
 
+.fith-sound {
+  position: relative;
+}
+
+.fith-sound-pop {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 170px;
+  padding: 12px;
+  border: 2px solid #5a3417;
+  border-radius: 10px;
+  background: #1c1008;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7);
+}
+
+.fith-sound-toggle {
+  padding: 6px;
+  border-radius: 6px;
+  background: rgba(255, 150, 40, 0.14);
+  color: #ffd66b;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fith-sound-pop input[type='range'] {
+  accent-color: #ffb238;
+}
+
 /* Responsive */
 
-@container fith (max-width: 1000px) {
+@media (max-width: 1180px) {
   .fith-cabinet {
     display: contents;
-  }
-
-  .fith-window {
-    width: min(calc(100cqw - 32px - 52px), max(300px, calc(100dvh - 380px)), 700px);
   }
 
   .fith-marquee {
@@ -2678,7 +2754,7 @@ onBeforeUnmount(() => {
   }
 }
 
-@container fith (max-width: 760px) {
+@media (max-width: 760px) {
   .fith-stage {
     padding: 10px 10px 18px;
   }
@@ -2697,7 +2773,7 @@ onBeforeUnmount(() => {
   }
 
   .fith-window {
-    width: min(calc(100cqw - 20px - 28px), 700px);
+    width: min(calc(100vw - 20px - 28px), 700px);
   }
 
   .fith-deck {

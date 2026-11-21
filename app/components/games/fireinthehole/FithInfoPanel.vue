@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { X } from 'lucide-vue-next'
-import { formatCoins } from '#shared/money'
 import type { FireBonusSymbol } from '#shared/slots/fireinthehole'
-import { FITH_BUY_COST, FITH_FREE_SPINS, FITH_MAX_CASCADES, FITH_MAX_LINES, FITH_MAX_WIN, FITH_MIN_CONNECTION, FITH_SCATTERS_FOR_BONUS, FITH_STARTING_LINES, FITH_SYMBOL_PAY, fithChainMultiplier } from '#shared/slots/fireinthehole'
-import { FITH_BONUS_FREQUENCY_LABEL, FITH_BOOST_RANGE, FITH_COIN_RANGE, FITH_PAY_ORDER, FITH_SYMBOL_LABEL, FITH_WIN_TIERS } from '~/utils/fireinthehole/paytable'
+import { XIcon } from 'lucide-vue-next'
+import { FITH_BUY_COST as FITH_BUY_BONUS_COST, FITH_FREE_SPINS, FITH_MAX_CASCADES, FITH_MAX_LINES, FITH_MAX_WIN as FITH_MAX_WIN_MULT, FITH_MIN_CONNECTION, FITH_SCATTERS_FOR_BONUS, FITH_STARTING_LINES } from '#shared/slots/fireinthehole'
+import { FITH_BONUS_FREQUENCY_LABEL, FITH_BOOST_RANGE, FITH_COIN_RANGE, FITH_PAY_ORDER, FITH_RTP_LABEL, FITH_SYMBOL_LABEL, FITH_SYMBOL_PAY, FITH_WIN_TIERS, fithChainMultiplier } from '~/utils/fireinthehole-paytable'
 import FithSymbolIcon from './FithSymbolIcon.vue'
 
 const open = defineModel<boolean>('open', { default: false })
@@ -68,7 +67,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               aria-label="Close"
               @click="close"
             >
-              <X class="size-5" />
+              <XIcon class="size-5" />
             </button>
           </header>
 
@@ -114,11 +113,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                     v-for="g in row.groups"
                     :key="g.size"
                     class="pay-amount"
-                  >{{ formatCoins(g.amount) }}</span>
+                  >{{ formatNumber(g.amount) }}</span>
                 </div>
               </div>
               <p class="note">
-                Amounts are for your current bet of {{ formatCoins(bet) }}.
+                Amounts are for your current bet of {{ formatNumber(bet) }}.
               </p>
 
               <h3>Cascades</h3>
@@ -195,17 +194,21 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               </p>
               <h3>Buy free spins</h3>
               <p>
-                Pay {{ FITH_BUY_COST }}x your bet ({{ formatCoins(bet * FITH_BUY_COST) }}) to start the bonus right away with {{ FITH_STARTING_LINES }} rows open.
+                Pay {{ FITH_BUY_BONUS_COST }}x your bet ({{ formatNumber(bet * FITH_BUY_BONUS_COST) }}) to start the bonus right away with {{ FITH_STARTING_LINES }} rows open.
               </p>
             </template>
 
             <template v-else>
               <dl class="facts">
-                <div><dt>Max win</dt><dd>{{ formatCoins(FITH_MAX_WIN, false) }}x bet</dd></div>
+                <div><dt>Max win</dt><dd>{{ formatNumber(FITH_MAX_WIN_MULT, false) }}x bet</dd></div>
+                <div><dt>Return to player</dt><dd>{{ FITH_RTP_LABEL }}</dd></div>
                 <div><dt>Free spins</dt><dd>about {{ FITH_BONUS_FREQUENCY_LABEL }} spins</dd></div>
                 <div><dt>Volatility</dt><dd>Very high</dd></div>
                 <div><dt>Grid</dt><dd>6 columns, {{ FITH_STARTING_LINES }} to {{ FITH_MAX_LINES }} rows</dd></div>
               </dl>
+              <p class="note">
+                Return to player was measured over 10,000,000 simulated spins. Most of it comes from the free spins, so expect long quiet runs between big hits.
+              </p>
               <h3>Win celebrations</h3>
               <div class="chain">
                 <span
@@ -215,7 +218,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               </div>
               <h3>Controls</h3>
               <ul>
-                <li><kbd>Space</kbd> spins, and lands the drop at once while it falls.</li>
+                <li><kbd>Space</kbd> spins. Press it again during a drop to land the rocks at once.</li>
+                <li>Turbo shortens every animation.</li>
+                <li>Auto spin plays a set number of spins and stops if your balance runs short.</li>
               </ul>
             </template>
           </div>

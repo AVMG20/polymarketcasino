@@ -27,9 +27,9 @@ export const FITH_MIN_CONNECTION = 5
 export const FITH_MAX_CASCADES = 8
 export const FITH_SCATTERS_FOR_BONUS = 3
 export const FITH_FREE_SPINS = 10
-/** Hard cap on a round's total win, × bet. */
-export const FITH_MAX_WIN = 10_000
-/** Feature buy price, × bet. Tuned with scripts/fireinthehole-rtp.ts. */
+/** Hard cap on a round's total win, × bet (the old site's cap). */
+export const FITH_MAX_WIN = 20_000
+/** Feature buy price, × bet. RTP retune: 46 on the old site (~97.7% → ~95.6%). Tuned with scripts/fireinthehole-rtp.ts. */
 export const FITH_BUY_COST = 47
 
 export type FireSymbol = 'coal' | 'ore' | 'ruby' | 'sapphire' | 'emerald' | 'bomb' | 'scatter' | 'coin' | 'boost' | 'double' | 'collector' | 'empty' | 'rock'
@@ -110,6 +110,7 @@ export interface FireInTheHoleOutcome {
 export const FITH_PAY_SYMBOLS: readonly FirePaySymbol[] = ['coal', 'ore', 'ruby', 'sapphire', 'emerald']
 const PAY_WEIGHTS = [34, 28, 18, 13, 9]
 const BOMB_WEIGHT = 7
+/** RTP retune: 1.104 on the old site (~97.7% → ~96.9%). */
 const SCATTER_WEIGHT = 1.1
 
 /** Pay per symbol in a winning connection, × bet. */

@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { FITH_FREE_SPINS, FITH_MAX_LINES } from '#shared/slots/fireinthehole'
-import { formatCoins } from '#shared/money'
-import { fithMult } from '~/utils/fireinthehole/paytable'
 import FithSymbolIcon from './FithSymbolIcon.vue'
 
 // Free spins intro and outro cards over the reel window. Both return a
@@ -109,16 +107,13 @@ defineExpose({ intro, outro })
           Bonus complete
         </p>
         <h2 class="total">
-          {{ fithMult(multiplier) }}
+          {{ formatNumber(multiplier, false, 2) }}x
         </h2>
         <p class="win">
-          {{ formatCoins(amount) }}
+          {{ formatNumber(amount) }}
         </p>
-        <p
-          v-if="amount <= 0"
-          class="sub"
-        >
-          The seam ran dry
+        <p class="sub">
+          {{ amount > 0 ? 'Added to your balance' : 'The seam ran dry this time' }}
         </p>
       </div>
     </div>

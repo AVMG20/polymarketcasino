@@ -1,5 +1,5 @@
 // Procedural Fire in the Hole sound effects. Every effect is a recipe
-// scheduled on a FithSynthVoice (oscillators,
+// scheduled on the synth voice SHAPEZZ and Pirate Raid use (oscillators,
 // filtered noise, envelopes, drive), which cleans its nodes up once every
 // source ended. Nothing is fetched.
 //
@@ -11,17 +11,17 @@
 // Besides the one-shot recipes this file builds the mine ambience loop the
 // composable owns: a deep rumble with a slow draught of air through the shaft.
 
-import type { FithSoundEvent } from './sounds'
-import { SynthVoice as FithSynthVoice, synthNote as fithNote, synthWarmUp as kitWarmUp } from '../slots/synth-voice'
+import type { FithSoundEvent } from '~/utils/fireinthehole-sounds'
+import { SynthVoice as ShapezzSynthVoice, synthNote as shapezzNote, synthWarmUp as shapezzSynthWarmUp } from '~/utils/slots/synth-voice'
 
-export { FithSynthVoice }
+export { ShapezzSynthVoice as FithSynthVoice }
 
 export function fithSynthWarmUp(ctx: BaseAudioContext) {
-    kitWarmUp(ctx)
+    shapezzSynthWarmUp(ctx)
 }
 
 /** Frequency of a note `semis` semitones from A4 (440 Hz). */
-const note = fithNote
+const note = shapezzNote
 
 /** E minor pentatonic, as semitones from A4. */
 const SCALE = [-5, -2, 0, 2, 5]
@@ -31,16 +31,16 @@ function scaleNote(step: number): number {
 }
 
 /** Recipes receive the event's intensity hint (chain, scatter count...), 0 when absent. */
-type Recipe = (v: FithSynthVoice, intensity: number) => void
+type Recipe = (v: ShapezzSynthVoice, intensity: number) => void
 
 // Shared layers ------------------------------------------------------------
 
-function thump(v: FithSynthVoice, from: number, to: number, dur: number, gain = 1, at = 0) {
+function thump(v: ShapezzSynthVoice, from: number, to: number, dur: number, gain = 1, at = 0) {
     v.tone({ freq: from, to, glide: dur * 0.7, dur, gain, at })
 }
 
 /** Dynamite: a sharp crack, a pink-noise blast, a sub drop and a crackling tail. */
-function blast(v: FithSynthVoice, size: number, at = 0, gain = 1) {
+function blast(v: ShapezzSynthVoice, size: number, at = 0, gain = 1) {
     v.noise({ filter: 'highpass', freq: 1800, dur: 0.04, gain: 0.7 * gain, drive: 4, at })
     v.noise({ color: 'pink', freq: 3200 * v.vary(0.1), to: 120, glide: 0.5 * size, dur: 0.6 * size, gain: 1.1 * gain, drive: 1.6, at })
     thump(v, 120 * v.vary(0.06), 28, 0.5 * size, 1.3 * gain, at)
@@ -48,7 +48,7 @@ function blast(v: FithSynthVoice, size: number, at = 0, gain = 1) {
 }
 
 /** Gravel and rock chips raining down after a blast or crumble. */
-function gravel(v: FithSynthVoice, count: number, spread: number, at = 0, gain = 0.35) {
+function gravel(v: ShapezzSynthVoice, count: number, spread: number, at = 0, gain = 0.35) {
     for (let i = 0; i < count; i++) {
         const when = at + Math.random() * spread
         v.noise({ filter: 'bandpass', freq: 1400 + Math.random() * 3200, q: 4, dur: 0.02 + Math.random() * 0.04, gain: gain * v.vary(0.4), drive: 2, at: when })
@@ -56,20 +56,20 @@ function gravel(v: FithSynthVoice, count: number, spread: number, at = 0, gain =
 }
 
 /** Heavy stone crunch. */
-function crunch(v: FithSynthVoice, size: number, at = 0, gain = 1) {
+function crunch(v: ShapezzSynthVoice, size: number, at = 0, gain = 1) {
     v.noise({ filter: 'bandpass', freq: 700 * v.vary(0.2), q: 1.4, dur: 0.12 * size, gain: 0.9 * gain, drive: 3.5, at })
     v.tone({ type: 'triangle', freq: 180 * v.vary(0.12), to: 60, dur: 0.12 * size, gain: 0.6 * gain, at })
 }
 
 /** Struck bell: triangle fundamental plus inharmonic partials. */
-function bell(v: FithSynthVoice, freq: number, at: number, dur: number, gain = 0.5) {
+function bell(v: ShapezzSynthVoice, freq: number, at: number, dur: number, gain = 0.5) {
     v.tone({ type: 'triangle', freq, dur, gain, at })
     v.tone({ freq: freq * 2.76, dur: dur * 0.45, gain: gain * 0.3, at })
     v.tone({ freq: freq * 5.4, dur: dur * 0.2, gain: gain * 0.12, at })
 }
 
 /** A gold coin clink: two close metallic partials. */
-function clink(v: FithSynthVoice, freq: number, at: number, gain = 0.4) {
+function clink(v: ShapezzSynthVoice, freq: number, at: number, gain = 0.4) {
     v.tone({ freq, dur: 0.16, gain, at })
     v.tone({ freq: freq * 1.49, dur: 0.12, gain: gain * 0.6, at })
     v.tone({ freq: freq * 2.63, dur: 0.07, gain: gain * 0.3, at })
@@ -77,14 +77,14 @@ function clink(v: FithSynthVoice, freq: number, at: number, gain = 0.4) {
 }
 
 /** A pile of coins pouring out. */
-function coinShower(v: FithSynthVoice, count: number, spread: number, at = 0, gain = 0.3) {
+function coinShower(v: ShapezzSynthVoice, count: number, spread: number, at = 0, gain = 0.3) {
     for (let i = 0; i < count; i++) {
         clink(v, 2400 + Math.random() * 2400, at + (i / count) * spread + Math.random() * 0.03, gain * v.vary(0.35))
     }
 }
 
 /** Brassy stab: detuned saws through a closing low-pass. */
-function brass(v: FithSynthVoice, freqs: number[], at: number, dur: number, gain = 0.18, hold = 0, bright = 2800) {
+function brass(v: ShapezzSynthVoice, freqs: number[], at: number, dur: number, gain = 0.18, hold = 0, bright = 2800) {
     const filter = v.filter({ freq: bright, to: 700, at, glide: hold + dur, q: 1.2 })
     for (const freq of freqs) {
         v.tone({ type: 'sawtooth', freq, detune: -8, dur, hold, gain, at, attack: 0.02, dest: filter })
@@ -93,7 +93,7 @@ function brass(v: FithSynthVoice, freqs: number[], at: number, dur: number, gain
 }
 
 /** Slot-machine bleep arpeggio: square blips through a soft low-pass. */
-function arpeggio(v: FithSynthVoice, steps: number[], at: number, gap: number, gain = 0.16, dur = 0.14) {
+function arpeggio(v: ShapezzSynthVoice, steps: number[], at: number, gap: number, gain = 0.16, dur = 0.14) {
     const lp = v.filter({ freq: 3600, q: 0.8, at })
     steps.forEach((step, i) => {
         v.tone({ type: 'square', freq: scaleNote(step), dur, gain, at: at + i * gap, dest: lp })
@@ -102,7 +102,7 @@ function arpeggio(v: FithSynthVoice, steps: number[], at: number, gap: number, g
 }
 
 /** Fuse: a crackling high hiss with a sizzle wobble. */
-function hiss(v: FithSynthVoice, dur: number, at = 0, gain = 0.5) {
+function hiss(v: ShapezzSynthVoice, dur: number, at = 0, gain = 0.5) {
     v.noise({ filter: 'highpass', freq: 4200, attack: 0.02, hold: dur * 0.7, dur: dur * 0.3, gain, tremolo: { rate: 23, depth: 0.7, type: 'square' }, at })
     v.noise({ filter: 'bandpass', freq: 2600, q: 3, attack: 0.02, hold: dur * 0.7, dur: dur * 0.3, gain: gain * 0.5, tremolo: { rate: 9, depth: 0.5 }, at })
     for (let i = 0; i < Math.round(dur * 22); i++) {
@@ -111,12 +111,12 @@ function hiss(v: FithSynthVoice, dur: number, at = 0, gain = 0.5) {
 }
 
 /** Whoosh: a band-pass sweep. */
-function whoosh(v: FithSynthVoice, from: number, to: number, dur: number, at = 0, gain = 0.5) {
+function whoosh(v: ShapezzSynthVoice, from: number, to: number, dur: number, at = 0, gain = 0.5) {
     v.noise({ filter: 'bandpass', freq: from, to, glide: dur, q: 1.3, attack: dur * 0.4, dur: dur * 0.6, gain, at })
 }
 
 /** Rising sparkle of short sine pings. */
-function sparkle(v: FithSynthVoice, count: number, spread: number, at = 0, gain = 0.18, low = 1800) {
+function sparkle(v: ShapezzSynthVoice, count: number, spread: number, at = 0, gain = 0.18, low = 1800) {
     for (let i = 0; i < count; i++) {
         const freq = low * (1 + (i / count) * 1.4) * v.vary(0.05)
         v.tone({ freq, dur: 0.12, gain: gain * v.vary(0.3), at: at + (i / count) * spread })
@@ -124,7 +124,7 @@ function sparkle(v: FithSynthVoice, count: number, spread: number, at = 0, gain 
 }
 
 /** A victory fanfare phrase: brass chords under a bell melody. */
-function fanfare(v: FithSynthVoice, melody: number[], gap: number, at: number, gain = 0.4) {
+function fanfare(v: ShapezzSynthVoice, melody: number[], gap: number, at: number, gain = 0.4) {
     melody.forEach((step, i) => {
         const last = i === melody.length - 1
         bell(v, scaleNote(step + 10), at + i * gap, last ? 1.4 : 0.5, gain * 0.55)
@@ -350,7 +350,7 @@ export interface FithLoopHandle {
 
 function noiseSource(ctx: BaseAudioContext): AudioBufferSourceNode {
     const src = ctx.createBufferSource()
-    src.buffer = kitWarmUp(ctx).pink
+    src.buffer = shapezzSynthWarmUp(ctx).pink
     src.loop = true
     return src
 }
@@ -445,14 +445,14 @@ export function fithMineLoop(ctx: BaseAudioContext, destination: AudioNode, leve
 }
 
 /** A water drip somewhere in the shaft. */
-export function fithDrip(v: FithSynthVoice) {
+export function fithDrip(v: ShapezzSynthVoice) {
     const freq = 900 + Math.random() * 900
     v.tone({ freq, to: freq * 2.2, glide: 0.04, dur: 0.07, gain: 0.8 })
     v.tone({ freq: freq * 1.6, to: freq * 2.8, glide: 0.03, dur: 0.05, gain: 0.3, at: 0.05 })
 }
 
 /** A timber support creaking under the weight of the mountain. */
-export function fithCreak(v: FithSynthVoice) {
+export function fithCreak(v: ShapezzSynthVoice) {
     const freq = 90 + Math.random() * 60
     const bp = v.filter({ type: 'bandpass', freq: freq * 6, q: 9 })
     v.tone({ type: 'sawtooth', freq, to: freq * 0.8, glide: 0.7, attack: 0.2, dur: 0.5, gain: 0.5, wobble: { rate: 12, depth: freq * 0.08 }, dest: bp })

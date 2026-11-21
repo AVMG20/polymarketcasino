@@ -1,6 +1,6 @@
 // Fire in the Hole sound effect events and their mix settings. Every effect is
-// synthesized at play time (./synth.ts) and played through ./sound.ts; there
-// are no sample files.
+// synthesized at play time (app/utils/fireinthehole-synth.ts) and played
+// through app/composables/fireinthehole-sound.ts; there are no sample files.
 
 export type FithSoundEvent
     = | 'click'

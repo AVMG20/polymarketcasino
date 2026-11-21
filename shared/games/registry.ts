@@ -111,7 +111,7 @@ export const GAMES: readonly GameInfo[] = [
         kind: 'slot',
         tagline: 'Cascading mine clusters, bombs that open new rows and a coin-collecting bonus',
         cover: '/images/games/fireinthehole.jpg',
-        rtp: 0.96,
+        rtp: 0.969,
         volatility: 'high',
         minBet: MIN_BET,
         maxBet: MAX_BET
