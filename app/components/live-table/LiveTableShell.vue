@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import '~/assets/css/live-table.css'
-import { Eye, Loader2, Volume2, VolumeX } from 'lucide-vue-next'
+import { DoorOpen, Eye, Loader2, Volume2, VolumeX } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { formatCoins } from '#shared/money'
 import type { ScoreEntry } from '#shared/tables/protocol'
@@ -46,6 +46,9 @@ const tableStyle = computed(() => ({
   <GameFrame :slug="slug" wide>
     <template #actions>
       <span v-if="!solo" class="mr-1 hidden items-center gap-1 text-xs text-muted-foreground sm:flex" title="Watching"><Eye class="size-3.5" />{{ watching }}</span>
+      <Button v-if="seated" size="sm" variant="ghost" class="h-9 text-muted-foreground" :disabled="leaving" :title="leaving ? 'Standing up after this hand' : 'Leave seat'" @click="$emit('leave')">
+        <DoorOpen class="size-4" /><span class="hidden sm:inline">{{ leaving ? 'Leaving' : 'Leave' }}</span>
+      </Button>
       <Button size="icon" variant="ghost" :title="sound.muted.value ? 'Sound on' : 'Mute'" @click="sound.toggle()">
         <VolumeX v-if="sound.muted.value" class="size-5" />
         <Volume2 v-else class="size-5" />
@@ -68,12 +71,9 @@ const tableStyle = computed(() => ({
 
           <slot name="controls" />
 
-          <div class="flex flex-wrap items-center gap-2 text-[11px]">
+          <div v-if="$slots.footer || (connected && !seated && openSeat !== null)" class="flex flex-wrap items-center gap-2 text-[11px]">
             <button v-if="connected && !seated && openSeat !== null" type="button" class="lb-tile lb-tile-green" @click="$emit('sit', openSeat)">TAKE A SEAT</button>
             <slot name="footer" />
-            <button v-if="seated" type="button" class="lb-tile lb-tile-ghost ml-auto min-h-9 px-3 py-1 text-[11px]" :disabled="leaving" @click="$emit('leave')">
-              {{ leaving ? 'STANDING UP AFTER THIS HAND' : 'LEAVE SEAT' }}
-            </button>
           </div>
         </div>
       </div>

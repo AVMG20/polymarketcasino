@@ -467,6 +467,7 @@
 /* A card that turns over: both faces in 3D space, the wrapper rotates. */
 .lt-flip {
     position: relative;
+    display: block;
     width: 112px;
     height: 156px;
     transform-style: preserve-3d;
@@ -476,6 +477,7 @@
 .lt-flip.down { transform: rotateY(180deg); }
 .lt-flip-face {
     position: absolute;
+    display: block;
     inset: 0;
     backface-visibility: hidden;
 }
@@ -607,7 +609,7 @@
     align-items: center;
     justify-content: safe center;
     gap: 8px;
-    padding: 8px 14px;
+    padding: 10px 16px;
     overflow-x: auto;
     border-radius: 999px;
     background: color-mix(in srgb, var(--lt-shell) 92%, transparent);
@@ -632,7 +634,7 @@
 }
 .lt-rack > button:hover:not(:disabled) { transform: translateY(-3px) scale(1.06); }
 .lt-rack > button .lt-chip { width: 100%; height: 100%; display: block; }
-.lt-rack > button.sel { transform: translateY(-4px) scale(1.12); }
+.lt-rack > button.sel { transform: translateY(-3px) scale(1.08); }
 .lt-rack > button.sel::after {
     content: '';
     position: absolute;
@@ -644,18 +646,17 @@
 .lt-rack > button:disabled { opacity: 0.3; filter: grayscale(0.6); cursor: default; }
 
 .lt-betbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
 }
-.lt-betbar .lb-tile { min-width: 64px; }
-.lt-betbar .op { font-size: 1.15rem; line-height: 1; letter-spacing: 0.02em; min-width: 52px; }
-.lt-betbar .deal { flex: 1 1 100%; }
+.lt-betbar .lb-tile { min-width: 0; padding-inline: 0.2rem; font-size: 0.75rem; letter-spacing: 0.03em; }
+.lt-betbar .op { font-size: 1.1rem; line-height: 1; }
+.lt-betbar .deal { grid-column: 1 / -1; font-size: 0.9rem; }
 @media (min-width: 640px) {
-    .lt-betbar .lb-tile { min-width: 92px; }
-    .lt-betbar .op { min-width: 60px; }
+    .lt-betbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
+    .lt-betbar .lb-tile { min-width: 92px; padding-inline: 0.9rem; font-size: 0.9rem; letter-spacing: 0.06em; }
+    .lt-betbar .op { min-width: 60px; font-size: 1.15rem; }
     .lt-betbar .deal { flex: 0 0 auto; min-width: 150px; margin-left: 8px; }
 }
 
