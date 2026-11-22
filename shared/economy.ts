@@ -12,15 +12,35 @@ export const DAILY_ALLOWANCE_COINS = 2_500
 
 export const CASINO_TIME_ZONE = 'Europe/Amsterdam'
 
+// en-CA formats as YYYY-MM-DD. Built once: a formatter costs far more than a format.
+const DAY_FORMAT = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CASINO_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+})
+
 /** The calendar day (YYYY-MM-DD) in Amsterdam at `at`. */
 export function amsterdamDay(at: Date = new Date()): string {
-    // en-CA formats as YYYY-MM-DD.
-    return new Intl.DateTimeFormat('en-CA', {
-        timeZone: CASINO_TIME_ZONE,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-    }).format(at)
+    return DAY_FORMAT.format(at)
+}
+
+/** The calendar day `days` after `day` (YYYY-MM-DD; negative goes back). */
+export function addDays(day: string, days: number): string {
+    const [y, m, d] = day.split('-').map(Number) as [number, number, number]
+    return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10)
+}
+
+/** The instant the Amsterdam day `day` (YYYY-MM-DD) starts. */
+export function amsterdamDayStart(day: string): Date {
+    // Amsterdam is UTC+1 or UTC+2, so its midnight is 22:00 or 23:00 UTC the
+    // day before: the first of those that already reads as `day`.
+    const midnight = new Date(`${day}T00:00:00Z`).getTime()
+    for (const hours of [2, 1]) {
+        const candidate = new Date(midnight - hours * 3_600_000)
+        if (DAY_FORMAT.format(candidate) === day) return candidate
+    }
+    return new Date(midnight)
 }
 
 /** The instant the next Amsterdam day starts, after `at`. */

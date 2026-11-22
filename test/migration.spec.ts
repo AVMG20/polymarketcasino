@@ -79,7 +79,9 @@ describe('0002_decimal_coins', () => {
         migrate(db, { migrationsFolder: DRIZZLE })
         migrate(db, { migrationsFolder: DRIZZLE })
         expect(sqlite.query(`select coins from players where id = 'p1'`).get()).toEqual({ coins: 24_000_000 })
-        expect(sqlite.query(`select count(*) as n from __drizzle_migrations`).get()).toEqual({ n: 3 })
+        // One row per migration in the folder: none ran twice.
+        const journal = JSON.parse(readFileSync(join(DRIZZLE, 'meta/_journal.json'), 'utf8')) as { entries: unknown[] }
+        expect(sqlite.query(`select count(*) as n from __drizzle_migrations`).get()).toEqual({ n: journal.entries.length })
         sqlite.close()
     })
 

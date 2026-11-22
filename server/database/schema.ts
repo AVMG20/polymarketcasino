@@ -60,7 +60,13 @@ export const coinTransactions = sqliteTable(
         balanceAfter: coins('balance_after').notNull(),
         createdAt: createdAt()
     },
-    table => [index('coin_transactions_player_idx').on(table.playerId, table.id)]
+    table => [
+        index('coin_transactions_player_idx').on(table.playerId, table.id),
+        // The stats page: the balance at each day's end is one seek per day,
+        // and the allowance and conversion totals a seek per category.
+        index('coin_transactions_player_time_idx').on(table.playerId, table.createdAt),
+        index('coin_transactions_player_category_idx').on(table.playerId, table.category, table.createdAt)
+    ]
 )
 
 /** Launch-token ids already exchanged for a session; a jti is accepted once. */
@@ -119,7 +125,9 @@ export const gameRounds = sqliteTable(
         summary: text('summary', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
         createdAt: createdAt()
     },
-    table => [index('game_rounds_player_idx').on(table.playerId, table.createdAt)]
+    // Covers the stats page: a player's rounds of one game over a day are one
+    // range of this index, summed without reading the rows (or their JSON).
+    table => [index('game_rounds_player_game_idx').on(table.playerId, table.game, table.createdAt, table.stake, table.payout)]
 )
 
 /**
