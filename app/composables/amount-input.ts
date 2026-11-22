@@ -10,12 +10,14 @@ import { parseAmount } from '#shared/money'
  * Typing updates `amount` as soon as the text parses; blank or unparseable
  * text reads as 0. Setting `amount` from code (½, 2×, All…) rewrites the text,
  * but a value the text already means is left alone, so `100m` stays `100m`.
- * The casino's `parseAmount` already reads whole coins.
+ * `parseAmount` reads coins with up to four decimals, Dutch first (`2.137` is
+ * 2137, `2,5` is 2.5); `integer` rounds down to whole coins (or gems). Values
+ * written back use the decimal comma, so they read back the same.
  */
 export function useAmountInput(amount: Ref<number>, options: { integer?: boolean, shorthand?: boolean } = {}) {
     // With `shorthand`, values set from code are written back as `2.5b`
     // rather than `2500000000`, so small bet fields never overflow.
-    const show = (value: number) => (options.shorthand ? amountShorthand(value) : String(value))
+    const show = (value: number) => (options.shorthand ? amountShorthand(value) : plainAmount(value))
     const read = (value: string) => {
         const parsed = parseAmount(value) ?? 0
         return options.integer ? Math.floor(parsed) : parsed
@@ -35,9 +37,14 @@ export function useAmountInput(amount: Ref<number>, options: { integer?: boolean
     return text
 }
 
+/** Digits with a decimal comma and no grouping (`2137,5`), which `parseAmount` reads back exactly. */
+export function plainAmount(value: number) {
+    return String(value).replace('.', ',')
+}
+
 /**
  * The shortest `k`/`m`/`b`/`t` spelling that parses back to exactly `value`
- * (`2500000000` → `2.5b`, `12000` → `12k`). Values that would need more than
+ * (`2500000000` → `2,5b`, `12000` → `12k`). Values that would need more than
  * two decimals keep their plain digits, so rewriting never changes the amount.
  */
 export function amountShorthand(value: number) {
@@ -46,7 +53,7 @@ export function amountShorthand(value: number) {
         if (value < size) continue
         const scaled = value / size
         const rounded = Math.round(scaled * 100) / 100
-        if (Math.abs(rounded * size - value) < 1e-6) return `${rounded}${suffix}`
+        if (Math.abs(rounded * size - value) < 1e-6) return `${plainAmount(rounded)}${suffix}`
     }
-    return String(value)
+    return plainAmount(value)
 }

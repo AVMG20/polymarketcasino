@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { LIMBO_MAX_TARGET, LIMBO_MIN_TARGET, limboChance, toCents, type LimboResult } from '#shared/games/limbo'
 import { findGame } from '#shared/games/registry'
-import { formatCoins } from '#shared/money'
+import { formatCoins, formatCoinsExact, payFor } from '#shared/money'
 
 const info = findGame('limbo')!
 const round = useGameRound<LimboResult>('limbo')
@@ -72,7 +72,7 @@ async function play() {
         </div>
         <div class="rounded-xl bg-muted p-2 text-center">
           <p class="text-xs text-muted-foreground">Win</p>
-          <p class="font-mono font-semibold">{{ formatCoins(Math.floor(bet * target)) }}</p>
+          <p class="font-mono font-semibold" :title="`${formatCoinsExact(payFor(bet, target))} coins`">{{ formatCoins(payFor(bet, target)) }}</p>
         </div>
         <Button size="lg" class="h-12 w-full font-display text-base shadow-[0_3px_0_0_color-mix(in_oklch,var(--primary)_60%,black)] active:translate-y-[2px] active:shadow-none" :disabled="round.busy.value" @click="play">
           Play

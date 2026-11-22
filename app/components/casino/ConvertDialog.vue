@@ -12,7 +12,11 @@ const open = ref(false)
 const text = ref('5')
 const busy = ref(false)
 
-const gems = computed(() => parseAmount(text.value) ?? 0)
+// Gems are whole: `2,5` reads as nothing to convert rather than rounding.
+const gems = computed(() => {
+    const amount = parseAmount(text.value)
+    return amount !== null && Number.isInteger(amount) ? amount : 0
+})
 const limits = computed(() => wallet.value?.convert ?? { min: 1, max: 100 })
 const have = computed(() => wallet.value?.gems ?? null)
 const maxGems = computed(() => Math.min(limits.value.max, have.value ?? limits.value.max))
@@ -48,7 +52,7 @@ async function submit() {
     <DialogContent class="sm:max-w-sm">
       <DialogHeader>
         <DialogTitle class="font-display">Convert gems</DialogTitle>
-        <DialogDescription>1 gem = {{ formatCoins(wallet?.coinsPerGem ?? 1000, false) }} coins. Coins never turn back into gems.</DialogDescription>
+        <DialogDescription>1 gem = {{ formatCoins(wallet?.coinsPerGem ?? 1000) }} coins. Coins never turn back into gems.</DialogDescription>
       </DialogHeader>
 
       <div class="space-y-4">
@@ -64,7 +68,7 @@ async function submit() {
             <CasinoGemIcon class="absolute top-1/2 right-3 size-4 -translate-y-1/2 text-gem" />
           </div>
           <ArrowRight class="size-4 text-muted-foreground" />
-          <CasinoCoinChip :amount="coins" :compact="false" />
+          <CasinoCoinChip :amount="coins" />
         </div>
         <p v-if="have === null" class="text-xs font-medium text-destructive">Gems unavailable right now</p>
         <p v-else class="text-xs text-muted-foreground">You have {{ have }} gems.</p>

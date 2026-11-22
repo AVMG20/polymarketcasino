@@ -6,6 +6,7 @@
 // with the same sizes and colours.
 import { CircleDotIcon, CircleHelpIcon, LoaderCircleIcon, XIcon } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
+import { payFor } from '#shared/money'
 import type { WheelResult, WheelRisk as WheelDifficulty } from '#shared/games/wheel'
 import { WHEEL_TABLES as WHEEL_CONFIGS, wheelLayout } from '#shared/games/wheel'
 
@@ -212,7 +213,7 @@ const winChancePct = computed(() => {
     return ((winning / totalSegments.value) * 100).toFixed(0)
 })
 const maxPayout = computed(() =>
-    Math.floor(bet.value * Math.max(...WHEEL_CONFIGS[difficulty.value].map(s => s.multiplier)) + 1e-6)
+    payFor(bet.value, Math.max(...WHEEL_CONFIGS[difficulty.value].map(s => s.multiplier)))
 )
 
 function onKeydown(e: KeyboardEvent) {

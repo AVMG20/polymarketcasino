@@ -1,33 +1,35 @@
 <script setup lang="ts">
-import { formatCoins, parseAmount } from '#shared/money'
+import { formatCoinsExact, parseAmount, roundCoins } from '#shared/money'
 
 /**
- * A coin amount field that takes shorthand (10k, 2.5m), shows what it read,
- * and has thumb-sized ½ / 2× / max buttons. The model is always a whole,
- * clamped number of coins.
+ * A coin amount field that takes shorthand (10k, 2,5m) and Dutch or English
+ * separators (`2.137`, `2,5`), shows what it read, and has thumb-sized ½ /
+ * 2× / max buttons. The model is always a clamped coin amount with at most
+ * four decimals.
  */
 const props = withDefaults(defineProps<{ min: number, max: number, disabled?: boolean, label?: string }>(), { label: 'Bet' })
 const model = defineModel<number>({ required: true })
 const { coins } = useCasinoSession()
 
-const text = ref(String(model.value))
+const text = ref(plainAmount(model.value))
 const parsed = computed(() => parseAmount(text.value))
 const preview = computed(() => {
-    if (parsed.value === null || !/[kmbt]/i.test(text.value)) return ''
-    return `= ${formatCoins(parsed.value, false)}`
+    if (parsed.value === null) return ''
+    const shown = formatCoinsExact(parsed.value)
+    return shown === text.value.trim() ? '' : `= ${shown}`
 })
 
 watch(model, (value) => {
-    if (parseAmount(text.value) !== value) text.value = String(value)
+    if (parseAmount(text.value) !== value) text.value = plainAmount(value)
 })
 
 function clamp(value: number) {
-    return Math.max(props.min, Math.min(props.max, Math.floor(value)))
+    return Math.max(props.min, Math.min(props.max, roundCoins(value)))
 }
 
 function commit() {
     model.value = clamp(parsed.value ?? model.value)
-    text.value = String(model.value)
+    text.value = plainAmount(model.value)
 }
 
 function scale(factor: number) {

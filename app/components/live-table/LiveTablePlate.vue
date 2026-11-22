@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { WifiOff } from 'lucide-vue-next'
-import { formatCoins } from '#shared/money'
+import { formatNumber } from '#shared/money'
 import type { SeatView } from '#shared/tables/protocol'
 
 /**
@@ -29,13 +29,13 @@ const net = computed(() => props.seat.sessionNet)
     <span class="av"><TableAvatar :name="seat.name" :image="seat.image" :size="38" /></span>
     <span class="who">
       <span class="nm">{{ seat.name }}</span>
-      <span class="net lt-mono" :class="net > 0 ? 'up' : net < 0 ? 'down' : ''">{{ net === 0 ? '—' : `${net > 0 ? '+' : '−'}${formatCoins(Math.abs(net))}` }}</span>
+      <span class="net lt-mono" :class="net > 0 ? 'up' : net < 0 ? 'down' : ''">{{ net === 0 ? '—' : `${net > 0 ? '+' : '−'}${formatNumber(Math.abs(net))}` }}</span>
     </span>
     <WifiOff v-if="!seat.connected" class="size-5 shrink-0 text-white/60" />
     <span v-else-if="ready" class="ready" title="Ready to deal">✓</span>
     <span v-if="seat.winStreak > 1" class="lt-streak" :title="`${seat.winStreak} wins in a row`">W{{ seat.winStreak }}</span>
   </div>
   <div v-if="float" :key="float.id" class="lt-float" :class="float.net > 0 ? 'up' : 'down'" :style="{ left: `${x}px`, top: `${y - 40}px` }">
-    {{ float.net > 0 ? '+' : '−' }}{{ formatCoins(Math.abs(float.net)) }}
+    {{ float.net > 0 ? '+' : '−' }}{{ formatNumber(Math.abs(float.net)) }}
   </div>
 </template>

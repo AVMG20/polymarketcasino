@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { DICE_MAX_CHANCE, DICE_MIN_CHANCE, diceMultiplier, type DiceResult } from '#shared/games/dice'
 import { findGame } from '#shared/games/registry'
-import { formatCoins } from '#shared/money'
+import { formatCoins, formatCoinsExact, payFor } from '#shared/money'
 
 const info = findGame('dice')!
 const round = useGameRound<DiceResult>('dice')
@@ -89,7 +89,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             </div>
             <div class="rounded-xl bg-muted p-2">
               <p class="text-xs text-muted-foreground">Win</p>
-              <p class="font-mono font-semibold">{{ formatCoins(Math.floor(bet * multiplier)) }}</p>
+              <p class="font-mono font-semibold" :title="`${formatCoinsExact(payFor(bet, multiplier))} coins`">{{ formatCoins(payFor(bet, multiplier)) }}</p>
             </div>
           </div>
         </div>

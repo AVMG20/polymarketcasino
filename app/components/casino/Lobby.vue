@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { GAME_KINDS, GAMES } from '#shared/games/registry'
-import { formatCoins } from '#shared/money'
+import { formatCoins, formatCoinsExact } from '#shared/money'
 import { Progress } from '@/components/ui/progress'
 
 const { coins, player } = useCasinoSession()
@@ -26,10 +26,10 @@ useHead({ title: 'Lobby' })
     <section class="grid gap-5 rounded-2xl border bg-card p-5 md:grid-cols-[1fr_auto] md:items-center">
       <div class="min-w-0 space-y-2">
         <p class="text-sm text-muted-foreground">Balance</p>
-        <p class="font-display text-3xl font-extrabold break-all tabular-nums sm:text-4xl">
-          {{ formatCoins(coins, false) }} <span class="text-base text-muted-foreground sm:text-lg">coins</span>
+        <p class="font-display text-3xl font-extrabold break-all tabular-nums sm:text-4xl" :title="`${formatCoinsExact(coins)} coins`">
+          {{ formatCoins(coins) }} <span class="text-base text-muted-foreground sm:text-lg">coins</span>
         </p>
-        <p v-if="player" class="text-xs text-muted-foreground">Best ever {{ formatCoins(player.peakCoins) }}</p>
+        <p v-if="player" class="text-xs text-muted-foreground" :title="`${formatCoinsExact(player.peakCoins)} coins`">Best ever {{ formatCoins(player.peakCoins) }}</p>
         <div class="flex flex-wrap items-center gap-2 pt-1">
           <CasinoAllowanceButton />
           <CasinoConvertDialog v-if="wallet?.hubAccount" />

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Lightbulb, LightbulbOff } from 'lucide-vue-next'
-import { formatCoins } from '#shared/money'
+import { formatNumber } from '#shared/money'
 import {
     basicStrategy, BJ_SIDE_BETS, canDouble, canSplit, canSurrender, insuranceCost,
     PERFECT_PAIRS_LABELS, PERFECT_PAIRS_PAYS, TWENTY_ONE_PLUS_THREE_LABELS, TWENTY_ONE_PLUS_THREE_PAYS,
@@ -263,7 +263,7 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
                   </div>
                 </div>
                 <span class="shrink-0 font-mono text-sm font-bold tabular-nums" :class="entry.net > 0 ? 'text-green-400' : entry.net < 0 ? 'text-red-400' : 'text-white/50'">
-                  {{ entry.net > 0 ? '+' : entry.net < 0 ? '−' : '' }}{{ formatCoins(Math.abs(entry.net)) }}
+                  {{ entry.net > 0 ? '+' : entry.net < 0 ? '−' : '' }}{{ formatNumber(Math.abs(entry.net)) }}
                 </span>
               </li>
             </ul>
@@ -280,22 +280,22 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
         <div class="lt-touch-spots grid-cols-3">
           <button type="button" class="lt-touch-spot" :disabled="!me!.pendingBet" @click="place('perfectPairs')">
             PP<small>up to {{ PERFECT_PAIRS_PAYS.perfect }}:1</small>
-            <span v-if="me!.pendingSide.perfectPairs" class="amt">{{ formatCoins(me!.pendingSide.perfectPairs) }}</span>
+            <span v-if="me!.pendingSide.perfectPairs" class="amt">{{ formatNumber(me!.pendingSide.perfectPairs) }}</span>
           </button>
           <button type="button" class="lt-touch-spot !border-[var(--lt-gold)]" @click="place('main')">
             Bet<small>3:2 · 1:1</small>
-            <span v-if="me!.pendingBet" class="amt">{{ formatCoins(me!.pendingBet) }}</span>
+            <span v-if="me!.pendingBet" class="amt">{{ formatNumber(me!.pendingBet) }}</span>
           </button>
           <button type="button" class="lt-touch-spot" :disabled="!me!.pendingBet" @click="place('twentyOnePlusThree')">
             21+3<small>up to {{ TWENTY_ONE_PLUS_THREE_PAYS.suitedTrips }}:1</small>
-            <span v-if="me!.pendingSide.twentyOnePlusThree" class="amt">{{ formatCoins(me!.pendingSide.twentyOnePlusThree) }}</span>
+            <span v-if="me!.pendingSide.twentyOnePlusThree" class="amt">{{ formatNumber(me!.pendingSide.twentyOnePlusThree) }}</span>
           </button>
         </div>
         <div class="flex items-stretch gap-2">
           <div class="lt-panel shrink-0">
             <span class="lt-panel-label">Your bet</span>
-            <span class="lt-panel-value lt-mono">{{ formatCoins(me!.pendingBet) }}</span>
-            <span v-if="sideTotal" class="text-[10px] text-white/55">+{{ formatCoins(sideTotal) }} side</span>
+            <span class="lt-panel-value lt-mono">{{ formatNumber(me!.pendingBet) }}</span>
+            <span v-if="sideTotal" class="text-[10px] text-white/55">+{{ formatNumber(sideTotal) }} side</span>
           </div>
           <LiveTableRack v-model="chip" :available="available" class="min-w-0 flex-1" />
         </div>
@@ -316,7 +316,7 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
       </template>
 
       <div v-else-if="offerInsurance" class="rounded-xl bg-amber-500/15 p-2.5 text-center ring-2 ring-amber-400/70">
-        <p class="mb-2 text-sm font-bold text-amber-200">Dealer shows an ace. Insure for {{ formatCoins(insuranceCost(me!.hands[0]!.bet)) }}?</p>
+        <p class="mb-2 text-sm font-bold text-amber-200">Dealer shows an ace. Insure for {{ formatNumber(insuranceCost(me!.hands[0]!.bet)) }}?</p>
         <div class="mx-auto flex max-w-96 gap-2">
           <button type="button" class="lb-tile lb-tile-amber flex-1" :disabled="insuranceCost(me!.hands[0]!.bet) > coins" @click="table.act({ t: 'insurance', take: true }); sound.play('chip')">INSURANCE</button>
           <button type="button" class="lb-tile lb-tile-slate flex-1" @click="table.act({ t: 'insurance', take: false })">NO THANKS</button>

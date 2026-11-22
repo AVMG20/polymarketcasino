@@ -1,3 +1,4 @@
+import { normalizeCoins } from '#shared/money'
 import { toast } from 'vue-sonner'
 
 export interface CasinoPlayer {
@@ -30,9 +31,14 @@ export function useCasinoSession() {
 
     const coins = computed(() => player.value?.coins ?? 0)
 
-    /** Apply a balance the server returned. Games call this after their win reveal. */
-    function setCoins(value: number) {
+    /**
+     * Apply a balance the server returned. Games call this after their win
+     * reveal (and with `before - cost` for an optimistic debit, so the value
+     * is snapped back onto four decimals: 10.3 - 0.1 is not 10.200000000000001).
+     */
+    function setCoins(next: number) {
         if (!player.value) return
+        const value = normalizeCoins(next)
         player.value.coins = value
         if (value > player.value.peakCoins) player.value.peakCoins = value
         useWallet().followCoins(value)

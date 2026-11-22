@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Lightbulb, LightbulbOff } from 'lucide-vue-next'
-import { formatCoins } from '#shared/money'
+import { formatNumber } from '#shared/money'
 import type { Card } from '#shared/tables/cards'
 import { faceOf } from '#shared/tables/cards'
 import {
@@ -96,9 +96,9 @@ function legState(seat: TcpSeat, spot: 'ante' | 'pairPlus' | 'play'): 'won' | 'l
 function badgeFor(seat: TcpSeat): { text: string, tone: string } | null {
     const result = seat.result
     if (showdown.value && result) {
-        if (result.ante === 'fold') return { text: result.net >= 0 ? `FOLD +${formatCoins(result.net)}` : 'FOLD', tone: 'lose' }
+        if (result.ante === 'fold') return { text: result.net >= 0 ? `FOLD +${formatNumber(result.net)}` : 'FOLD', tone: 'lose' }
         if (result.net === 0) return { text: 'PUSH', tone: 'push' }
-        const amount = `${result.net > 0 ? '+' : '−'}${formatCoins(Math.abs(result.net))}`
+        const amount = `${result.net > 0 ? '+' : '−'}${formatNumber(Math.abs(result.net))}`
         if (!result.dealerQualified) return { text: `NO QUALIFY ${amount}`, tone: 'win' }
         return { text: `${result.net > 0 ? 'WIN' : 'LOSE'} ${amount}`, tone: result.net > 0 ? 'win' : 'lose' }
     }
@@ -301,7 +301,7 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
               <LiveTableChipPile class="lt-spot-chips" :amount="onSpot(seats[i]!.game, spot)" :size="60" :max="4" />
             </div>
             <div v-for="(spot, s) in (['pairPlus', 'ante', 'play'] as const)" v-show="onSpot(seats[i]!.game, spot) > 0" :key="`${spot}-amt`" class="lt-amt" :style="pos(p.x + (s - 1) * SPOT_DX, p.y + SPOT_DY + 58)">
-              {{ formatCoins(onSpot(seats[i]!.game, spot)) }}
+              {{ formatNumber(onSpot(seats[i]!.game, spot)) }}
             </div>
             <LiveTablePlate :seat="seats[i]!" :x="p.x" :y="p.y + 230" :mine="seats[i]!.playerId === table.me.value" :turn="phase === 'decision' && !!seats[i]!.game.ante && !seats[i]!.game.decision" :ready="phase === 'betting' && seats[i]!.votedStart" />
           </template>
@@ -316,14 +316,14 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
       <p v-else-if="!mySeat" class="lt-hint-text">Click an open <b>SIT</b> spot to join the table.</p>
       <template v-else-if="betting">
         <div class="lt-touch-spots grid-cols-2">
-          <button type="button" class="lt-touch-spot" @click="place('pairPlus')">Pair Plus<small>up to {{ PAIR_PLUS_PAYS.straightFlush }}:1</small><span v-if="me!.pendingPairPlus" class="amt">{{ formatCoins(me!.pendingPairPlus) }}</span></button>
-          <button type="button" class="lt-touch-spot !border-[var(--lt-gold)]" @click="place('ante')">Ante<small>1:1 + bonus</small><span v-if="me!.pendingAnte" class="amt">{{ formatCoins(me!.pendingAnte) }}</span></button>
+          <button type="button" class="lt-touch-spot" @click="place('pairPlus')">Pair Plus<small>up to {{ PAIR_PLUS_PAYS.straightFlush }}:1</small><span v-if="me!.pendingPairPlus" class="amt">{{ formatNumber(me!.pendingPairPlus) }}</span></button>
+          <button type="button" class="lt-touch-spot !border-[var(--lt-gold)]" @click="place('ante')">Ante<small>1:1 + bonus</small><span v-if="me!.pendingAnte" class="amt">{{ formatNumber(me!.pendingAnte) }}</span></button>
         </div>
         <div class="flex items-stretch gap-2">
           <div class="lt-panel shrink-0">
             <span class="lt-panel-label">Ante</span>
-            <span class="lt-panel-value lt-mono">{{ formatCoins(me!.pendingAnte) }}</span>
-            <span v-if="me!.pendingPairPlus" class="text-[10px] text-white/55">+{{ formatCoins(me!.pendingPairPlus) }} pair plus</span>
+            <span class="lt-panel-value lt-mono">{{ formatNumber(me!.pendingAnte) }}</span>
+            <span v-if="me!.pendingPairPlus" class="text-[10px] text-white/55">+{{ formatNumber(me!.pendingPairPlus) }} pair plus</span>
           </div>
           <LiveTableRack v-model="chip" :available="available" class="min-w-0 flex-1" />
         </div>
@@ -344,9 +344,9 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
       </template>
 
       <template v-else-if="deciding">
-        <p class="lt-hint-text">You have <b>{{ me!.hand?.label }}</b>. Play for {{ formatCoins(me!.ante) }} more, or fold your ante.</p>
+        <p class="lt-hint-text">You have <b>{{ me!.hand?.label }}</b>. Play for {{ formatNumber(me!.ante) }} more, or fold your ante.</p>
         <div class="grid grid-cols-2 gap-2 sm:mx-auto sm:w-full sm:max-w-md">
-          <button type="button" class="lb-tile lb-tile-green min-h-12" :class="{ 'lb-hint': hint === true }" :disabled="me!.ante > coins" @click="decide(true)">PLAY {{ formatCoins(me!.ante) }}</button>
+          <button type="button" class="lb-tile lb-tile-green min-h-12" :class="{ 'lb-hint': hint === true }" :disabled="me!.ante > coins" @click="decide(true)">PLAY {{ formatNumber(me!.ante) }}</button>
           <button type="button" class="lb-tile lb-tile-red min-h-12" :class="{ 'lb-hint': hint === false }" @click="decide(false)">FOLD</button>
         </div>
       </template>
@@ -355,8 +355,8 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
         <span class="tcp-result" :class="badgeFor(me)?.tone">{{ badgeFor(me)?.text }}</span>
         <span class="text-xs text-white/60">
           <template v-if="me.hand">{{ me.hand.label }}</template>
-          <template v-if="me.result.anteBonus"> · ante bonus +{{ formatCoins(me.result.anteBonus) }}</template>
-          <template v-if="me.result.pairPlus"> · pair plus pays {{ formatCoins(me.result.pairPlus) }}</template>
+          <template v-if="me.result.anteBonus"> · ante bonus +{{ formatNumber(me.result.anteBonus) }}</template>
+          <template v-if="me.result.pairPlus"> · pair plus pays {{ formatNumber(me.result.pairPlus) }}</template>
         </span>
       </div>
 

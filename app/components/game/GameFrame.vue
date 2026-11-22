@@ -3,6 +3,7 @@ import { CircleHelp } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { findGame } from '#shared/games/registry'
+import { formatCoins } from '#shared/money'
 
 /** The page around every game: title, RTP, a rules dialog, and the game itself. `wide` lets a table use a big screen. */
 const props = defineProps<{ slug: string, wide?: boolean }>()
@@ -40,7 +41,7 @@ onMounted(() => postTitle(game.value.name))
         <div class="space-y-3 text-sm">
           <slot name="rules" />
           <p class="text-xs text-muted-foreground">
-            Return to player {{ (game.rtp * 100).toFixed(1) }}%. Bets {{ game.minBet.toLocaleString('en-US') }} to {{ game.maxBet.toLocaleString('en-US') }} coins.
+            Return to player {{ (game.rtp * 100).toFixed(1) }}%. Bets {{ formatCoins(game.minBet) }} to {{ formatCoins(game.maxBet) }} coins.
             Every outcome is decided on the server; wins are paid in whole coins, rounded down.
           </p>
         </div>

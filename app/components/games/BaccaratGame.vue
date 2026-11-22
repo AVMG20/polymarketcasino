@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { formatCoins } from '#shared/money'
+import { formatNumber } from '#shared/money'
 import {
     BAC_PAYS, BAC_SPOTS, bacHandTotal, bacSpotReturn, bacTotal, bigRoadColumns,
     type BacAction, type BacRound, type BacSeat, type BacShared, type BacSpot
@@ -259,7 +259,7 @@ const CARD_BACK = cardBack()
               {{ def.label }}
             </div>
             <div v-if="bacTotal(phase === 'betting' ? seats[i]!.game.bets : seats[i]!.game.staked)" class="lt-amt" :style="{ left: `${pos.x}px`, top: `${pos.y + 192}px` }">
-              {{ formatCoins(bacTotal(phase === 'betting' ? seats[i]!.game.bets : seats[i]!.game.staked)) }}
+              {{ formatNumber(bacTotal(phase === 'betting' ? seats[i]!.game.bets : seats[i]!.game.staked)) }}
             </div>
             <LiveTablePlate :seat="seats[i]!" :x="pos.x" :y="pos.y + 240" :mine="seats[i]!.playerId === table.me.value" :ready="phase === 'betting' && seats[i]!.votedStart" />
           </template>
@@ -294,16 +294,16 @@ const CARD_BACK = cardBack()
       <p v-else-if="!mySeat" class="lt-hint-text">Click an open <b>SIT</b> spot to join the table.</p>
       <template v-else-if="betting">
         <div class="lt-touch-spots grid-cols-6">
-          <button type="button" class="lt-touch-spot col-span-2" @click="place('playerPair')">P Pair<small>{{ pays('playerPair') }}</small><span v-if="me!.bets.playerPair" class="amt">{{ formatCoins(me!.bets.playerPair) }}</span></button>
-          <button type="button" class="lt-touch-spot col-span-2" @click="place('tie')">Tie<small>{{ pays('tie') }}</small><span v-if="me!.bets.tie" class="amt">{{ formatCoins(me!.bets.tie) }}</span></button>
-          <button type="button" class="lt-touch-spot col-span-2" @click="place('bankerPair')">B Pair<small>{{ pays('bankerPair') }}</small><span v-if="me!.bets.bankerPair" class="amt">{{ formatCoins(me!.bets.bankerPair) }}</span></button>
-          <button type="button" class="lt-touch-spot col-span-3 !border-sky-400/70" @click="place('player')">Player<small>{{ pays('player') }}</small><span v-if="me!.bets.player" class="amt">{{ formatCoins(me!.bets.player) }}</span></button>
-          <button type="button" class="lt-touch-spot col-span-3 !border-red-400/70" @click="place('banker')">Banker<small>{{ pays('banker') }}</small><span v-if="me!.bets.banker" class="amt">{{ formatCoins(me!.bets.banker) }}</span></button>
+          <button type="button" class="lt-touch-spot col-span-2" @click="place('playerPair')">P Pair<small>{{ pays('playerPair') }}</small><span v-if="me!.bets.playerPair" class="amt">{{ formatNumber(me!.bets.playerPair) }}</span></button>
+          <button type="button" class="lt-touch-spot col-span-2" @click="place('tie')">Tie<small>{{ pays('tie') }}</small><span v-if="me!.bets.tie" class="amt">{{ formatNumber(me!.bets.tie) }}</span></button>
+          <button type="button" class="lt-touch-spot col-span-2" @click="place('bankerPair')">B Pair<small>{{ pays('bankerPair') }}</small><span v-if="me!.bets.bankerPair" class="amt">{{ formatNumber(me!.bets.bankerPair) }}</span></button>
+          <button type="button" class="lt-touch-spot col-span-3 !border-sky-400/70" @click="place('player')">Player<small>{{ pays('player') }}</small><span v-if="me!.bets.player" class="amt">{{ formatNumber(me!.bets.player) }}</span></button>
+          <button type="button" class="lt-touch-spot col-span-3 !border-red-400/70" @click="place('banker')">Banker<small>{{ pays('banker') }}</small><span v-if="me!.bets.banker" class="amt">{{ formatNumber(me!.bets.banker) }}</span></button>
         </div>
         <div class="flex items-stretch gap-2">
           <div class="lt-panel shrink-0">
             <span class="lt-panel-label">Your bet</span>
-            <span class="lt-panel-value lt-mono">{{ formatCoins(bacTotal(me!.bets)) }}</span>
+            <span class="lt-panel-value lt-mono">{{ formatNumber(bacTotal(me!.bets)) }}</span>
           </div>
           <LiveTableRack v-model="chip" :available="available" class="min-w-0 flex-1" />
         </div>
@@ -325,7 +325,7 @@ const CARD_BACK = cardBack()
       <p v-else class="lt-hint-text">
         <template v-if="winner && me && bacTotal(me.staked)">
           {{ winner === 'tie' ? 'Tie' : `${winner === 'player' ? 'Player' : 'Banker'} wins` }}.
-          <b>{{ formatCoins(BAC_SPOTS.reduce((sum, spot) => sum + bacSpotReturn(spot, me!.staked[spot], round!), 0)) }}</b> back on {{ formatCoins(bacTotal(me.staked)) }}.
+          <b>{{ formatNumber(BAC_SPOTS.reduce((sum, spot) => sum + bacSpotReturn(spot, me!.staked[spot], round!), 0)) }}</b> back on {{ formatNumber(bacTotal(me.staked)) }}.
         </template>
         <template v-else-if="me && bacTotal(me.staked)">Your bets are in.</template>
         <template v-else>Betting opens with the next hand.</template>

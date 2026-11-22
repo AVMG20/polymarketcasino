@@ -1,6 +1,6 @@
 import gsap from 'gsap'
 import type { Application, Container, Graphics, Sprite, Text } from 'pixi.js'
-import { formatCoins as formatNumber } from '#shared/money'
+import { formatNumber } from '#shared/money'
 import { BJ_SIDE_BETS as LB_SIDE_BETS, type BjAction as LbAction, type BjHand as LbHand, type BjSideBet as LbSideBetKey, type BjSpot as LbBetSpot } from '#shared/tables/blackjack'
 import type { BjSeat, BjShared } from '#shared/tables/blackjack-wire'
 import { chipStack } from '#shared/tables/chips'

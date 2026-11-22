@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useMediaQuery } from '@vueuse/core'
 import { findGame } from '#shared/games/registry'
-import { formatCoins } from '#shared/money'
+import { formatNumber } from '#shared/money'
 import {
     betKey, betReturn, pocketColor, WHEEL_ORDER,
     type PocketColor, type RouletteBet, type RouletteBetKind, type RouletteResult
@@ -273,7 +273,7 @@ const phaseLabel = computed(() => {
 })
 const message = computed(() => {
     if (spinning.value && !result.value) return 'No more bets'
-    if (result.value) return `${result.value.pocket} ${result.value.color}${payout.value > 0 ? ` · won ${formatCoins(payout.value)}` : ''}`
+    if (result.value) return `${result.value.pocket} ${result.value.color}${payout.value > 0 ? ` · won ${formatNumber(payout.value)}` : ''}`
     return 'Place your bets'
 })
 
@@ -308,7 +308,7 @@ const title = (spot: Spot) => `${spot.label ?? spot.kind}: pays ${betReturn(spot
         </div>
         <div class="lt-phase" :style="pos(ZERO_LEFT + BETTING_WIDTH / 2, BETTING_TOP - 74)">
           <span class="label" :class="result ? (payout > 0 ? 'win' : '') : ''">{{ phaseLabel }}</span>
-          <span v-if="result && payout > 0" class="count" style="color: var(--lt-win)">+{{ formatCoins(payout) }}</span>
+          <span v-if="result && payout > 0" class="count" style="color: var(--lt-win)">+{{ formatNumber(payout) }}</span>
         </div>
 
         <div class="rl-wheel" :style="{ ...pos(WHEEL_LEFT, WHEEL_TOP), width: `${WHEEL_SIZE}px`, height: `${WHEEL_SIZE}px` }">
@@ -336,7 +336,7 @@ const title = (spot: Spot) => `${spot.label ?? spot.kind}: pays ${betReturn(spot
           </div>
         </template>
         <div v-if="stake > 0" class="rl-total" :style="pos(NUM_LEFT + GRID_WIDTH / 2, DOZENS_TOP + DOZEN_HEIGHT + 40)">
-          <span>TOTAL BET</span><b>{{ formatCoins(stake) }}</b>
+          <span>TOTAL BET</span><b>{{ formatNumber(stake) }}</b>
         </div>
 
         <div class="lt-house-well" :style="{ ...pos(HOUSE_POS.x, HOUSE_POS.y + 6), width: '170px' }" />
@@ -383,7 +383,7 @@ const title = (spot: Spot) => `${spot.label ?? spot.kind}: pays ${betReturn(spot
       <div class="flex items-stretch gap-2">
         <div class="lt-panel shrink-0">
           <span class="lt-panel-label">Total bet</span>
-          <span class="lt-panel-value lt-mono">{{ formatCoins(stake) }}</span>
+          <span class="lt-panel-value lt-mono">{{ formatNumber(stake) }}</span>
         </div>
         <LiveTableRack v-model="chip" :available="Math.max(0, limit - stake)" :ladder="LADDER" :muted="busy" class="min-w-0 flex-1" />
       </div>

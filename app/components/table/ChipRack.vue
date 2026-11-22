@@ -26,7 +26,7 @@ watch(() => props.available, (available) => {
       :title="`${formatCoins(chip.value, false)} coins`"
       @click="model = chip.value"
     >
-      {{ formatCoins(chip.value) }}
+      {{ formatCoins(chip.value, true) }}
     </button>
   </div>
 </template>
