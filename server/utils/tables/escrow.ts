@@ -1,6 +1,7 @@
 import { and, eq, inArray, lt, notInArray } from 'drizzle-orm'
 import { gameRounds, tableWagers } from '../../database/schema'
 import { db } from '../../database'
+import { isCoinAmount, sameCoins, sumCoins } from '../../../shared/money'
 import { commitCoins, getCoins, type CommittedCoins } from '../ledger'
 
 /**
@@ -67,7 +68,7 @@ export function settleWagers(input: {
     payout: number
     summary: Record<string, unknown>
 }): CommittedCoins<SettleResult> {
-    if (!Number.isSafeInteger(input.payout) || input.payout < 0) throw new Error(`table payout must be whole coins, got ${input.payout}`)
+    if (!isCoinAmount(input.payout)) throw new Error(`table payout must be coins with at most 4 decimals, got ${input.payout}`)
     return commitCoins((coins): SettleResult => {
         if (!input.wagerIds.length) return { kind: 'closed' }
         const claimed = coins.tx.update(tableWagers)
@@ -76,9 +77,9 @@ export function settleWagers(input: {
             .returning({ id: tableWagers.id, amount: tableWagers.amount })
             .all()
         if (!claimed.length) return { kind: 'closed' }
-        const escrow = claimed.reduce((sum, row) => sum + row.amount, 0)
-        if (claimed.length !== input.wagerIds.length || escrow !== input.staked) {
-            if (escrow !== input.staked && claimed.length === input.wagerIds.length) {
+        const escrow = sumCoins(claimed.map(row => row.amount))
+        if (claimed.length !== input.wagerIds.length || !sameCoins(escrow, input.staked)) {
+            if (!sameCoins(escrow, input.staked) && claimed.length === input.wagerIds.length) {
                 console.error(`[tables] ${input.game}: settle for ${input.playerId} staked ${input.staked} but escrow holds ${escrow}; refunding`)
             }
             coins.tx.update(tableWagers).set({ status: 'refunded' }).where(inArray(tableWagers.id, claimed.map(row => row.id))).run()
@@ -107,7 +108,7 @@ export function refundWagers(playerId: string, game: string, wagerIds: string[])
             .where(and(inArray(tableWagers.id, wagerIds), eq(tableWagers.status, 'open'), eq(tableWagers.playerId, playerId)))
             .returning({ amount: tableWagers.amount })
             .all()
-        const refunded = claimed.reduce((sum, row) => sum + row.amount, 0)
+        const refunded = sumCoins(claimed.map(row => row.amount))
         if (!refunded) return { refunded: 0, balance: null }
         return { refunded, balance: coins.credit({ playerId, amount: refunded, category: game, refund: true }).coins }
     })

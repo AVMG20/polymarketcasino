@@ -25,7 +25,7 @@ export const BOS_MAX_WIN = 20_000
 
 /**
  * A feature buy costs this many bets and starts the free spins for sure.
- * Old site 56.5; the casino's buy costs are whole multiples of the bet.
+ * Old site 56.5; bespoke slots' buy costs are whole multiples of the bet.
  */
 export const BOS_BUY_COST = 56
 

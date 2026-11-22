@@ -35,7 +35,7 @@ export function toCents(value: number): number {
 export function parseLimboOptions(input: Record<string, unknown> | undefined): LimboOptions {
     const target = toCents(Number(input?.target ?? 2))
     if (!Number.isFinite(target) || target < LIMBO_MIN_TARGET || target > LIMBO_MAX_TARGET) {
-        throw new RangeError(`Target must be between ${LIMBO_MIN_TARGET}× and ${LIMBO_MAX_TARGET.toLocaleString('en-US')}×`)
+        throw new RangeError(`Target must be between ${LIMBO_MIN_TARGET}× and ${LIMBO_MAX_TARGET.toLocaleString('nl-NL')}×`)
     }
     return { target }
 }

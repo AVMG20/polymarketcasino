@@ -9,6 +9,7 @@ import {
     DAILY_ALLOWANCE_COINS,
     nextAmsterdamMidnight
 } from '../../shared/economy'
+import { formatCoins } from '../../shared/money'
 import { coinTransaction, getCoins } from './ledger'
 import { hub, HubError } from './hub'
 import { syncStars, type StarChange } from './stars'
@@ -70,7 +71,7 @@ export async function settleConversion(row: Conversion): Promise<ConvertResult> 
             playerId: row.playerId,
             amount: row.gems,
             game: CASINO_GAME_SLUG,
-            reason: `Convert ${row.gems} gems to ${row.coins.toLocaleString('en-US')} coins`,
+            reason: `Convert ${row.gems} gems to ${formatCoins(row.coins)} coins`,
             idempotencyKey: row.idempotencyKey
         })
     } catch (error) {

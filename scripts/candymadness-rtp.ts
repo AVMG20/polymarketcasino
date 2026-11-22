@@ -1,6 +1,7 @@
 // `bun scripts/candymadness-rtp.ts [rounds] [bet] [seed] [buys]`: RTP of the
 // plain spin, Bonus Hunter and the free spins buy, with hit rate, bonus rate
 // and max win. Feature buys are high variance: judge them on 100k+ buys.
+import { payFor } from '../shared/money'
 import { candyMadnessStake, CM_MAX_WIN_MULT, playCandyMadness, type CandyFeature } from '../shared/games/candymadness'
 import { seededRng } from '../shared/rng'
 import { simArgs, Tally } from './lib/report'
@@ -16,7 +17,7 @@ function run(label: string, feature: CandyFeature | null, n: number) {
     const started = performance.now()
     for (let i = 0; i < n; i++) {
         const result = playCandyMadness(rng, { feature })
-        tally.add(candyMadnessStake(bet, feature), Math.floor(bet * result.win + 1e-6))
+        tally.add(candyMadnessStake(bet, feature), payFor(bet, result.win))
         if (result.bonus) bonuses++
         if (result.capped) capped++
     }

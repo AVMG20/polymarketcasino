@@ -90,7 +90,7 @@ export interface TablePayout {
     playerId: string
     /** Everything the player staked this round; must equal their open escrow. */
     staked: number
-    /** Everything returned, stakes included. Whole coins; zero on a total loss. */
+    /** Everything returned, stakes included, in coins (four decimals at most); zero on a total loss. */
     payout: number
     /** Kept with the round in game_rounds. */
     summary: Record<string, unknown>

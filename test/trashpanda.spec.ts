@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { isCoinAmount, normalizeCoins, roundCoins } from '../shared/money'
 import { seededRng, type Rng } from '../shared/rng'
 import {
     DIVE_BINS,
@@ -14,7 +15,6 @@ import {
     parseTrashPandaOptions,
     PAYTABLE,
     playTrashPanda,
-    TPH_BUY_DIVE_COST,
     TPH_BUY_FREE_SPINS_COST,
     TPH_COLS,
     TPH_MAX_WIN_MULT,
@@ -204,31 +204,32 @@ describe('trashpanda features', () => {
         expect(eaten).toBeGreaterThan(0)
     })
 
-    it('prices the buys at 110× and 21.75× the bet, in whole coins', () => {
+    it('prices the buys at 110× and 21.75× the bet, exact to 0.0001 coin', () => {
         expect(trashPandaStake(100, {})).toBe(100)
         expect(trashPandaStake(100, { feature: 'buyFreeSpins' })).toBe(100 * TPH_BUY_FREE_SPINS_COST)
         expect(trashPandaStake(100, { feature: 'buyDive' })).toBe(2_175)
-        // 101 × 21.75 = 2,196.75: the fraction rounds up.
-        expect(trashPandaStake(101, { feature: 'buyDive' })).toBe(Math.ceil(101 * TPH_BUY_DIVE_COST))
+        expect(trashPandaStake(101, { feature: 'buyDive' })).toBe(2_196.75)
+        // 10.0001 × 21.75 = 217.502175: the fraction past four decimals rounds up.
+        expect(trashPandaStake(10.0001, { feature: 'buyDive' })).toBe(217.5022)
         const r = playTrashPanda(seededRng(1), 101, { feature: 'buyDive' })
-        expect(r.cost).toBe(2_197)
+        expect(r.cost).toBe(2_196.75)
         expect(r.feature).toBe('buyDive')
     })
 })
 
 describe('trashpanda payout', () => {
-    it('is deterministic for a seed and pays whole coins, rounded down, of the capped win', () => {
+    it('is deterministic for a seed and pays the capped win rounded down to 0.0001 coin', () => {
         expect(playTrashPanda(seededRng(7), 100)).toEqual(playTrashPanda(seededRng(7), 100))
         const rng = seededRng(17)
         for (let i = 0; i < 20_000; i++) {
-            const bet = 100 + (i % 37) * 13
+            const bet = normalizeCoins(10 + (i % 37) * 13.37)
             const feature = i % 50 === 0 ? 'buyFreeSpins' : i % 50 === 25 ? 'buyDive' : undefined
             const r = playTrashPanda(rng, bet, feature ? { feature } : {})
             const total = Math.min(r.basePayout + r.divePayout + r.freeSpinsPayout, TPH_MAX_WIN_MULT * bet)
-            expect(Number.isSafeInteger(r.payout)).toBe(true)
-            expect(r.payout).toBe(Math.floor(bet * r.win + 1e-6))
-            expect(Math.abs(r.payout - total)).toBeLessThan(1.001)
-            expect(r.payout).toBeLessThanOrEqual(total + 1e-6)
+            expect(isCoinAmount(r.payout)).toBe(true)
+            expect(r.payout).toBe(roundCoins(bet * r.win))
+            expect(Math.abs(r.payout - total)).toBeLessThan(0.00011)
+            expect(r.payout).toBeLessThanOrEqual(total + 1e-9)
             expect(r.won).toBe(r.payout > r.cost)
         }
     })
@@ -262,26 +263,26 @@ describe('trashpanda rounds', () => {
             const round = await playRound(id, 'trashpanda', { bet: 100 })
             expect(round.stake).toBe(100)
             expect(round.payout).toBe((round.result as TrashPandaResult).payout)
-            expected += round.payout - round.stake
+            expected = normalizeCoins(expected + round.payout - round.stake)
             expect(round.balance).toBe(expected)
         }
         const heist = await playRound(id, 'trashpanda', { bet: 200, options: { feature: 'buyFreeSpins' } })
         expect(heist.stake).toBe(200 * TPH_BUY_FREE_SPINS_COST)
         expect((heist.result as TrashPandaResult).freeSpins?.source).toBe('buy')
-        expected += heist.payout - heist.stake
+        expected = normalizeCoins(expected + heist.payout - heist.stake)
         const dive = await playRound(id, 'trashpanda', { bet: 101, options: { feature: 'buyDive' } })
-        expect(dive.stake).toBe(2_197)
+        expect(dive.stake).toBe(2_196.75)
         expect((dive.result as TrashPandaResult).dive).not.toBeNull()
-        expected += dive.payout - dive.stake
+        expected = normalizeCoins(expected + dive.payout - dive.stake)
         expect(dive.balance).toBe(expected)
         expect(coinsOf(id).coins).toBe(expected)
-        expect(ledgerSum(id)).toBe(expected - 1_000_000)
+        expect(ledgerSum(id)).toBe(normalizeCoins(expected - 1_000_000))
     })
 
     it('rejects bad bets and options without charging', async () => {
         const id = seedPlayer(100_000)
-        await expect(playRound(id, 'trashpanda', { bet: 50 })).rejects.toMatchObject({ statusCode: 400 })
-        await expect(playRound(id, 'trashpanda', { bet: 150.5 })).rejects.toMatchObject({ statusCode: 400 })
+        await expect(playRound(id, 'trashpanda', { bet: 9.99 })).rejects.toMatchObject({ statusCode: 400 })
+        await expect(playRound(id, 'trashpanda', { bet: 150.00001 })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'trashpanda', { bet: 2_000_000 })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'trashpanda', { bet: '100' })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'trashpanda', { bet: 100, options: { feature: 'free' } })).rejects.toMatchObject({ statusCode: 400 })

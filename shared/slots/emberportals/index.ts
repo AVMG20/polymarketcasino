@@ -1,3 +1,4 @@
+import { costFor, payFor } from '../../money'
 import type { Rng } from '../../rng'
 
 /**
@@ -92,7 +93,7 @@ export const FS_AWARD = [10, 12, 14, 16, 18] as const
 export const FS_RETRIGGER_SPINS = 5
 export const FS_MAX_SPINS = 60
 
-/** Ante bet cost, × bet (the stake rounds up to whole coins). */
+/** Ante bet cost, × bet (the stake rounds up to 0.0001 coin). */
 export const EP_ANTE_COST = 1.25
 /** Free-spins buy cost, × bet. The old site charged 103 (103 → 102 with EP_PAY_SCALE). */
 export const EP_BUY_COST = 102
@@ -533,10 +534,10 @@ export function parseEmberPortalsMode(options: Record<string, unknown>): EpMode 
     return 'normal'
 }
 
-/** What a round costs in whole coins. */
+/** What a round costs, in coins (rounded up to 0.0001). */
 export function emberPortalsStake(mode: EpMode, bet: number): number {
-    if (mode === 'buy') return bet * EP_BUY_COST
-    if (mode === 'ante') return Math.ceil(bet * EP_ANTE_COST)
+    if (mode === 'buy') return costFor(bet, EP_BUY_COST)
+    if (mode === 'ante') return costFor(bet, EP_ANTE_COST)
     return bet
 }
 
@@ -560,7 +561,7 @@ export function playEmberPortals(rng: Rng, mode: EpMode): EmberPortalsResult {
     return { mode, base, freeSpins, bonusTriggered, win, capped: win >= EP_MAX_WIN_MULT }
 }
 
-/** Whole coins paid for a round at `bet`. */
+/** Coins paid for a round at `bet`, rounded down to 0.0001. */
 export function emberPortalsPayout(result: EmberPortalsResult, bet: number): number {
-    return Math.floor(bet * result.win + 1e-9)
+    return payFor(bet, result.win)
 }

@@ -1,3 +1,4 @@
+import { normalizeCoins, payFor, sumCoins } from '../money'
 import type { Card, Rank, Suit } from './cards'
 import { isRed } from './cards'
 
@@ -122,38 +123,38 @@ export function dealerHasBlackjack(cards: readonly Card[]): boolean {
 
 /** What a hand put up: its bet, twice over once doubled. */
 export function handStake(hand: Pick<BjHand, 'bet' | 'doubled'>): number {
-    return hand.doubled ? hand.bet * 2 : hand.bet
+    return hand.doubled ? sumCoins([hand.bet, hand.bet]) : hand.bet
 }
 
 export interface BjSettlement {
     status: BjHandStatus
-    /** Returned to the player, stake included, in whole coins. */
+    /** Returned to the player, stake included, rounded down to 0.0001 coin. */
     payout: number
     net: number
 }
 
-/** Settle one hand against the dealer's final cards. Pays round down to the coin. */
+/** Settle one hand against the dealer's final cards. Pays round down to 0.0001 coin. */
 export function settleHand(hand: BjHand, dealerCards: readonly Card[]): BjSettlement {
     const staked = handStake(hand)
-    const result = (status: BjHandStatus, payout: number): BjSettlement => ({ status, payout, net: payout - staked })
+    const result = (status: BjHandStatus, payout: number): BjSettlement => ({ status, payout, net: normalizeCoins(payout - staked) })
 
-    if (hand.status === 'surrendered') return result('surrendered', Math.floor(staked / 2))
+    if (hand.status === 'surrendered') return result('surrendered', payFor(staked, 0.5))
     const player = handScore(hand.cards).total
     if (player > 21) return result('busted', 0)
 
     const dealerBj = dealerHasBlackjack(dealerCards)
-    if (isBlackjack(hand)) return dealerBj ? result('push', staked) : result('blackjack', Math.floor(staked * 2.5))
+    if (isBlackjack(hand)) return dealerBj ? result('push', staked) : result('blackjack', payFor(staked, 2.5))
     if (dealerBj) return result('lost', 0)
 
     const dealer = handScore(dealerCards.map(card => ({ ...card, hidden: false }))).total
-    if (dealer > 21 || player > dealer) return result('won', staked * 2)
+    if (dealer > 21 || player > dealer) return result('won', payFor(staked, 2))
     if (player === dealer) return result('push', staked)
     return result('lost', 0)
 }
 
-/** Insurance costs half the bet, rounded down. */
+/** Insurance costs half the bet, rounded down to 0.0001 coin. */
 export function insuranceCost(bet: number): number {
-    return Math.floor(bet / 2)
+    return payFor(bet, 0.5)
 }
 
 // ─── side bets ───────────────────────────────────────────────────────────────
@@ -236,14 +237,14 @@ export function settleSideBets(stakes: Record<BjSideBet, number>, playerCards: r
             stake: stakes.perfectPairs,
             label: pp ? PERFECT_PAIRS_LABELS[pp] : null,
             multiplier: pp ? PERFECT_PAIRS_PAYS[pp] : 0,
-            payout: pp ? stakes.perfectPairs * (1 + PERFECT_PAIRS_PAYS[pp]) : 0
+            payout: pp ? payFor(stakes.perfectPairs, 1 + PERFECT_PAIRS_PAYS[pp]) : 0
         },
         {
             key: 'twentyOnePlusThree',
             stake: stakes.twentyOnePlusThree,
             label: tp ? TWENTY_ONE_PLUS_THREE_LABELS[tp] : null,
             multiplier: tp ? TWENTY_ONE_PLUS_THREE_PAYS[tp] : 0,
-            payout: tp ? stakes.twentyOnePlusThree * (1 + TWENTY_ONE_PLUS_THREE_PAYS[tp]) : 0
+            payout: tp ? payFor(stakes.twentyOnePlusThree, 1 + TWENTY_ONE_PLUS_THREE_PAYS[tp]) : 0
         }
     ]
 }

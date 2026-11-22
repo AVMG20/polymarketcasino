@@ -1,3 +1,4 @@
+import { payFor, sumCoins } from '../money'
 import type { Card, Rank } from './cards'
 import type { Shoe } from './cards'
 
@@ -28,7 +29,7 @@ export function isBacSpot(value: unknown): value is BacSpot {
 /**
  * Winnings per coin staked, on top of the returned stake. Banker pays 0.95
  * (the 5% commission is what keeps its edge near Player's even though it wins
- * more often). Chips start at 100, so 0.95 always lands on a whole coin.
+ * more often). Pays round down to 0.0001 coin.
  */
 export const BAC_PAYS: Record<BacSpot, number> = { player: 1, banker: 0.95, tie: 8, playerPair: 11, bankerPair: 11 }
 
@@ -45,7 +46,7 @@ export function emptyBacBets(): BacBets {
 }
 
 export function bacTotal(bets: BacBets): number {
-    return BAC_SPOTS.reduce((sum, spot) => sum + bets[spot], 0)
+    return sumCoins(BAC_SPOTS.map(spot => bets[spot]))
 }
 
 const TENS: readonly Rank[] = ['10', 'J', 'Q', 'K']
@@ -131,10 +132,10 @@ export function dealBaccarat(shoe: Shoe): BacRound {
     }
 }
 
-/** What one spot returns, stake included, rounded down to the coin. Player and Banker push on a tie. */
+/** What one spot returns, stake included, rounded down to 0.0001 coin. Player and Banker push on a tie. */
 export function bacSpotReturn(spot: BacSpot, amount: number, round: Pick<BacRound, 'winner' | 'playerPair' | 'bankerPair'>): number {
     if (amount <= 0) return 0
-    const win = amount + Math.floor(amount * BAC_PAYS[spot])
+    const win = sumCoins([amount, payFor(amount, BAC_PAYS[spot])])
     switch (spot) {
         case 'player':
         case 'banker':
@@ -149,8 +150,7 @@ export function bacSpotReturn(spot: BacSpot, amount: number, round: Pick<BacRoun
 }
 
 export function resolveBacBets(bets: BacBets, round: Pick<BacRound, 'winner' | 'playerPair' | 'bankerPair'>): { staked: number, payout: number } {
-    let payout = 0
-    for (const spot of BAC_SPOTS) payout += bacSpotReturn(spot, bets[spot], round)
+    const payout = sumCoins(BAC_SPOTS.map(spot => bacSpotReturn(spot, bets[spot], round)))
     return { staked: bacTotal(bets), payout }
 }
 

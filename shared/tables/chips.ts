@@ -1,7 +1,8 @@
 /**
- * The chip ladder every live table uses, and the table limits. Chips start at
- * 100 coins, so every fractional pay (baccarat's banker 0.95, blackjack's 3:2,
- * a half-bet surrender or insurance) lands on a whole coin.
+ * The chip ladder every live table uses, and the table limits. Bets are made
+ * of chips, so they are whole coins; fractional pays (baccarat's banker 0.95,
+ * blackjack's 3:2, a half-bet surrender or insurance) round down to 0.0001
+ * coin.
  */
 export interface Chip {
     value: number

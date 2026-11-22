@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { isCoinAmount, payFor } from '../shared/money'
 import { seededRng, type Rng } from '../shared/rng'
 import {
     BONUS_RETRIGGER_SPINS,
@@ -194,12 +195,13 @@ describe('book of shadows: server', () => {
         expect((buy.result as { feature: boolean }).feature).toBe(true)
     })
 
-    it('pays whole coins, rounded down', () => {
+    it('pays rounded down to 0.0001 coin', () => {
         const rng = seededRng(2)
         for (let i = 0; i < 500; i++) {
-            const out = game.play({ bet: 137, options: {}, rng })
+            const out = game.play({ bet: 13.7, options: {}, rng })
             const win = (out.result as { win: number }).win
-            expect(out.payout).toBe(Math.floor(137 * win + 1e-9))
+            expect(out.payout).toBe(payFor(13.7, win))
+            expect(isCoinAmount(out.payout)).toBe(true)
         }
     })
 
@@ -215,6 +217,7 @@ describe('book of shadows: server', () => {
         const poor = seedPlayer(100 * BOS_BUY_COST - 1)
         await expect(playRound(poor, 'bookofshadows', { bet: 100, options: { buy: true } })).rejects.toMatchObject({ statusCode: 400 })
         expect(coinsOf(poor).coins).toBe(100 * BOS_BUY_COST - 1)
-        await expect(playRound(id, 'bookofshadows', { bet: 99 })).rejects.toMatchObject({ statusCode: 400 })
+        await expect(playRound(id, 'bookofshadows', { bet: 9.99 })).rejects.toMatchObject({ statusCode: 400 })
+        await expect(playRound(id, 'bookofshadows', { bet: 10.00001 })).rejects.toMatchObject({ statusCode: 400 })
     })
 })

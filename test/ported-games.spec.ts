@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { isCoinAmount, normalizeCoins, payFor } from '../shared/money'
 import {
     candyMadnessStake,
     CM_BUY_FREESPINS_COST,
@@ -123,14 +124,15 @@ describe('poly masters', () => {
 describe('candy madness', () => {
     const sequences = (result: CandyMadnessResult): TumbleSequence[] => [result.base, ...(result.bonus?.spins.map(s => s.sequence) ?? [])]
 
-    it('validates the feature and prices it in whole coins', () => {
+    it('validates the feature and prices it exactly, rounded up to 0.0001 coin', () => {
         expect(parseCandyMadnessOptions({})).toEqual({ feature: null })
         expect(() => parseCandyMadnessOptions({ feature: 'free' })).toThrow(RangeError)
         expect(candyMadnessStake(100, null)).toBe(100)
         expect(candyMadnessStake(100, 'buyFreeSpins')).toBe(100 * CM_BUY_FREESPINS_COST)
         expect(candyMadnessStake(100, 'bonusHunt')).toBe(360)
-        expect(candyMadnessStake(101, 'bonusHunt')).toBe(364)
-        expect(Number.isSafeInteger(candyMadnessStake(1_000_000, 'bonusHunt'))).toBe(true)
+        expect(candyMadnessStake(101, 'bonusHunt')).toBe(363.6)
+        expect(candyMadnessStake(10.0001, 'bonusHunt')).toBe(36.0004)
+        expect(isCoinAmount(candyMadnessStake(1_000_000, 'bonusHunt'))).toBe(true)
     })
 
     it('pays clusters of 4+, tumbles until no win, and multiplies by the spot sum', () => {
@@ -185,7 +187,7 @@ describe('ported games through playRound', () => {
         await expect(playRound(id, 'magichands', { bet: 100, options: { placements: [5, 5] } })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'magichands', { bet: 5, options: { placements: [5] } })).rejects.toMatchObject({ statusCode: 400 })
         expect(coinsOf(id).coins).toBe(before)
-        expect(ledgerSum(id)).toBe(coinsOf(id).coins - 10_000_000)
+        expect(ledgerSum(id)).toBe(normalizeCoins(coinsOf(id).coins - 10_000_000))
     })
 
     it('charges Safe Landing and feature buys as multiples of the bet', async () => {
@@ -196,16 +198,17 @@ describe('ported games through playRound', () => {
         const buy = await playRound(id, 'candymadness', { bet: 100, options: { feature: 'buyFreeSpins' } })
         expect(buy.stake).toBe(100 * CM_BUY_FREESPINS_COST)
         expect((buy.result as CandyMadnessResult).bonus).not.toBeNull()
-        expect((await playRound(id, 'candymadness', { bet: 101, options: { feature: 'bonusHunt' } })).stake).toBe(364)
+        expect((await playRound(id, 'candymadness', { bet: 101, options: { feature: 'bonusHunt' } })).stake).toBe(363.6)
         await expect(playRound(id, 'candymadness', { bet: 100, options: { feature: 'free' } })).rejects.toMatchObject({ statusCode: 400 })
-        expect(ledgerSum(id)).toBe(coinsOf(id).coins - 10_000_000)
+        expect(ledgerSum(id)).toBe(normalizeCoins(coinsOf(id).coins - 10_000_000))
     })
 
-    it('pays the wheel in whole coins, rounded down', async () => {
+    it('pays the wheel rounded down to 0.0001 coin', async () => {
         const id = seedPlayer(1_000_000)
         for (let i = 0; i < 20; i++) {
-            const round = await playRound(id, 'wheel', { bet: 101, options: { risk: 'easy' } })
-            expect(round.payout).toBe(Math.floor(101 * (round.result as { multiplier: number }).multiplier + 1e-6))
+            const round = await playRound(id, 'wheel', { bet: 10.1, options: { risk: 'easy' } })
+            expect(round.payout).toBe(payFor(10.1, (round.result as { multiplier: number }).multiplier))
+            expect(isCoinAmount(round.payout)).toBe(true)
         }
         await expect(playRound(id, 'wheel', { bet: 100, options: { risk: 'x' } })).rejects.toMatchObject({ statusCode: 400 })
     })

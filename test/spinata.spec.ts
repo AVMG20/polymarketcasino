@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { isCoinAmount, normalizeCoins, roundCoins } from '../shared/money'
 import { seededRng, type Rng } from '../shared/rng'
 import {
     BONUS_PAY,
@@ -133,16 +134,16 @@ describe('spinata features', () => {
 })
 
 describe('spinata payout', () => {
-    it('pays whole coins, rounded down, of the capped win', () => {
+    it('pays the capped win rounded down to 0.0001 coin', () => {
         const rng = seededRng(17)
         for (let i = 0; i < 20_000; i++) {
-            const bet = 100 + (i % 37) * 13
+            const bet = normalizeCoins(10 + (i % 37) * 13.37)
             const r = playSpinata(rng, bet, i % 50 === 0 ? { feature: 'buyBonus' } : {})
             const total = Math.min(r.basePayout + r.bonusPayout, SPN_MAX_WIN_MULT * bet)
-            expect(Number.isSafeInteger(r.payout)).toBe(true)
-            expect(r.payout).toBe(Math.floor(bet * r.win + 1e-6))
-            expect(Math.abs(r.payout - total)).toBeLessThan(1.001)
-            expect(r.payout).toBeLessThanOrEqual(total + 1e-6)
+            expect(isCoinAmount(r.payout)).toBe(true)
+            expect(r.payout).toBe(roundCoins(bet * r.win))
+            expect(Math.abs(r.payout - total)).toBeLessThan(0.00011)
+            expect(r.payout).toBeLessThanOrEqual(total + 1e-9)
         }
     })
 
@@ -173,21 +174,21 @@ describe('spinata rounds', () => {
             const result = round.result as ReturnType<typeof playSpinata>
             expect(round.stake).toBe(100)
             expect(round.payout).toBe(result.payout)
-            expected += round.payout - round.stake
+            expected = normalizeCoins(expected + round.payout - round.stake)
             expect(round.balance).toBe(expected)
         }
         const buy = await playRound(id, 'spinata', { bet: 200, options: { feature: 'buyBonus' } })
         expect(buy.stake).toBe(200 * SPN_BUY_BONUS_COST)
         expect((buy.result as ReturnType<typeof playSpinata>).freeSpins).toHaveLength(SPN_FREE_SPINS)
-        expected += buy.payout - buy.stake
+        expected = normalizeCoins(expected + buy.payout - buy.stake)
         expect(coinsOf(id).coins).toBe(expected)
-        expect(ledgerSum(id)).toBe(expected - 1_000_000)
+        expect(ledgerSum(id)).toBe(normalizeCoins(expected - 1_000_000))
     })
 
     it('rejects bad bets and options without charging', async () => {
         const id = seedPlayer(100_000)
-        await expect(playRound(id, 'spinata', { bet: 50 })).rejects.toMatchObject({ statusCode: 400 })
-        await expect(playRound(id, 'spinata', { bet: 150.5 })).rejects.toMatchObject({ statusCode: 400 })
+        await expect(playRound(id, 'spinata', { bet: 9.99 })).rejects.toMatchObject({ statusCode: 400 })
+        await expect(playRound(id, 'spinata', { bet: 150.00001 })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'spinata', { bet: 2_000_000 })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'spinata', { bet: '100' })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'spinata', { bet: 100, options: { feature: 'free' } })).rejects.toMatchObject({ statusCode: 400 })

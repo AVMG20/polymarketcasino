@@ -1,3 +1,4 @@
+import { normalizeCoins, payFor, sumCoins } from '../money'
 import type { Card, Face, Rank } from './cards'
 
 /**
@@ -195,19 +196,19 @@ export function resolveCh(
     showdown: { folded: boolean, player: ChHand | null, dealer: ChHand, aa: ChHand | null }
 ): ChResolution {
     const aaMultiplier = bets.aa > 0 && showdown.aa ? aaPays(showdown.aa) : 0
-    const aaReturn = aaMultiplier ? bets.aa * (1 + aaMultiplier) : 0
-    const staked = bets.ante + bets.call + bets.aa
+    const aaReturn = aaMultiplier ? payFor(bets.aa, 1 + aaMultiplier) : 0
+    const staked = sumCoins([bets.ante, bets.call, bets.aa])
     const dealerQualified = chDealerQualifies(showdown.dealer)
     const done = (outcome: ChOutcome, anteMultiplier: number, legs: number): ChResolution => {
-        const payout = legs + aaReturn
-        return { outcome, dealerQualified, anteMultiplier, aaMultiplier, staked, payout, net: payout - staked }
+        const payout = sumCoins([legs, aaReturn])
+        return { outcome, dealerQualified, anteMultiplier, aaMultiplier, staked, payout, net: normalizeCoins(payout - staked) }
     }
     if (showdown.folded || !showdown.player) return done('folded', 0, 0)
     const anteMultiplier = antePays(showdown.player)
-    if (!dealerQualified) return done('win', anteMultiplier, bets.ante * (1 + anteMultiplier) + bets.call)
+    if (!dealerQualified) return done('win', anteMultiplier, sumCoins([payFor(bets.ante, 1 + anteMultiplier), bets.call]))
     const verdict = compareCh(showdown.player, showdown.dealer)
-    if (verdict > 0) return done('win', anteMultiplier, bets.ante * (1 + anteMultiplier) + bets.call * 2)
-    if (verdict === 0) return done('push', 0, bets.ante + bets.call)
+    if (verdict > 0) return done('win', anteMultiplier, sumCoins([payFor(bets.ante, 1 + anteMultiplier), payFor(bets.call, 2)]))
+    if (verdict === 0) return done('push', 0, sumCoins([bets.ante, bets.call]))
     return done('lose', 0, 0)
 }
 

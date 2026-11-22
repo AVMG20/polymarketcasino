@@ -16,7 +16,7 @@ import type { Rng } from '../../rng'
  *   values left on the board after the last spin.
  *
  * Every amount here is a multiple of the bet (bet = 1); the server pays
- * floor(bet × win). The whole round, bonus included, is resolved in one call.
+ * bet × win rounded down to 0.0001 coin. The whole round, bonus included, is resolved in one call.
  */
 
 export const FITH_COLS = 6

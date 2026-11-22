@@ -1,3 +1,4 @@
+import { costFor, payFor } from '../../money'
 import { randomInt, type Rng } from '../../rng'
 
 /**
@@ -338,10 +339,10 @@ export function parseXenoSlotOptions(options: Record<string, unknown>): { buy: b
 
 /** What a round costs, in coins. */
 export function xenoSlotStake(bet: number, buy: boolean): number {
-    return buy ? bet * XS_BUY_COST : bet
+    return buy ? costFor(bet, XS_BUY_COST) : bet
 }
 
-/** What a round pays, in whole coins, rounded down (the epsilon absorbs float noise like 2.3 × 100). */
+/** What a round pays, in coins rounded down to 0.0001. */
 export function xenoSlotPayout(result: XenoSlotResult, bet: number): number {
-    return Math.floor(bet * result.win + 1e-9)
+    return payFor(bet, result.win)
 }

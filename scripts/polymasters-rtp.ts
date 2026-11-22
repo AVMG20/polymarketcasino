@@ -3,6 +3,7 @@
 // and the multiplier weight (Safe Landing) for their target RTPs on common
 // random numbers; paste the values into shared/games/polymasters.ts and
 // re-run the plain check.
+import { costFor, payFor } from '../shared/money'
 import {
     PM_MAX_WIN,
     PM_NORMAL,
@@ -27,7 +28,7 @@ function check(mode: PmMode, rounds: number, bet: number, seed: number): boolean
     const landings: Record<string, number> = {}
     for (let i = 0; i < rounds; i++) {
         const outcome = playPolyMasters(rng, mode)
-        tally.add(bet * outcome.cost, Math.floor(bet * outcome.win + 1e-6))
+        tally.add(costFor(bet, outcome.cost), payFor(bet, outcome.win))
         landings[outcome.landing] = (landings[outcome.landing] ?? 0) + 1
     }
     const rtp = tally.paid / tally.staked

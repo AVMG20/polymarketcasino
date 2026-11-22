@@ -1,6 +1,6 @@
 // "Trash Panda Heist": a 5×4 ways slot (1024 ways) with two features.
 // Ported from the old site (shared/utils/gamelogic/trashpanda.ts); the rules are
-// unchanged, the RNG is passed in and the payout is whole coins.
+// unchanged, the RNG is passed in and the payout rounds down to 0.0001 coin.
 //
 // ── Base game ────────────────────────────────────────────────────────────────
 //   Every cell is an independent weighted draw from its reel's table. A win is
@@ -27,9 +27,10 @@
 //
 // ── Fairness ────────────────────────────────────────────────────────────────
 //   Base + dive + free spins are capped at TPH_MAX_WIN_MULT × bet; free spins
-//   stop early once the cap is reached, and the round pays whole coins,
-//   rounded down. Tuned with scripts/trashpanda-rtp.ts.
+//   stop early once the cap is reached, and the round pays rounded down to
+//   0.0001 coin. Tuned with scripts/trashpanda-rtp.ts.
 
+import { costFor, roundCoins } from '../../money'
 import type { Rng } from '../../rng'
 
 export const TPH_COLS = 5
@@ -226,7 +227,7 @@ export interface TrashPandaResult {
     won: boolean
     maxWin: number
     capped: boolean
-    /** The round's win in × bet, after the cap (payout = floor(bet × win)). */
+    /** The round's win in × bet, after the cap. */
     win: number
 }
 
@@ -502,17 +503,14 @@ export function parseTrashPandaOptions(options: Record<string, unknown>): TrashP
     return { feature: options.feature }
 }
 
-/**
- * What a round costs in whole coins. The dive's 21.75× is rounded up, so a bet
- * that isn't a multiple of 4 pays the fraction of a coin it would leave.
- */
+/** What a round costs, in coins. The dive's 21.75× rounds up to 0.0001 coin. */
 export function trashPandaStake(bet: number, options: TrashPandaOptions): number {
-    if (options.feature === 'buyFreeSpins') return bet * TPH_BUY_FREE_SPINS_COST
-    if (options.feature === 'buyDive') return Math.ceil(bet * TPH_BUY_DIVE_COST - 1e-9)
+    if (options.feature === 'buyFreeSpins') return costFor(bet, TPH_BUY_FREE_SPINS_COST)
+    if (options.feature === 'buyDive') return costFor(bet, TPH_BUY_DIVE_COST)
     return bet
 }
 
-/** Coin amounts are for `bet`; `payout` is the whole coins actually paid. */
+/** Coin amounts are for `bet`; `payout` is what is actually paid (rounded down to 0.0001). */
 export function playTrashPanda(rng: Rng, bet: number, options: TrashPandaOptions = {}): TrashPandaResult {
     if (!Number.isFinite(bet) || bet <= 0) throw new RangeError('Invalid bet amount')
 
@@ -550,9 +548,8 @@ export function playTrashPanda(rng: Rng, bet: number, options: TrashPandaOptions
     }
 
     const total = Math.min(maxWin, round4(basePayout + divePayout + freeSpinsPayout))
-    // Whole coins, rounded down. The epsilon keeps a sum that binary floats
-    // store a hair low (0.1 + 0.2) from losing a coin.
-    const payout = Math.floor(total + 1e-6)
+    // Rounded down to 0.0001 coin (float noise in the sum can't cost a unit).
+    const payout = roundCoins(total)
     return {
         bet,
         cost,

@@ -1,4 +1,5 @@
 import { gameRounds } from '../database/schema'
+import { formatCoins, isCoinAmount, normalizeCoins } from '../../shared/money'
 import { cryptoRng } from '../../shared/rng'
 import { coinTransaction } from './ledger'
 import { serverGame } from './games'
@@ -27,36 +28,42 @@ export async function playRound(playerId: string, slug: string, body: { bet?: un
     if (!game) throw createError({ statusCode: 404, statusMessage: 'Unknown game' })
 
     const options = body.options && typeof body.options === 'object' && !Array.isArray(body.options) ? body.options as Record<string, unknown> : {}
-    // A bet is a JSON number: no strings, arrays or booleans that Number() would coerce.
+    // A bet is a JSON number (no strings, arrays or booleans that Number()
+    // would coerce) with at most four decimals.
     const bet = game.stakeFromOptions ? 0 : body.bet
-    if (typeof bet !== 'number' || (!game.stakeFromOptions && (!Number.isSafeInteger(bet) || bet < game.info.minBet || bet > game.info.maxBet))) {
-        throw createError({ statusCode: 400, statusMessage: `Bet between ${game.info.minBet} and ${game.info.maxBet.toLocaleString('en-US')} coins` })
+    if (typeof bet !== 'number' || (!game.stakeFromOptions && (!isCoinAmount(bet) || bet < game.info.minBet || bet > game.info.maxBet))) {
+        throw createError({ statusCode: 400, statusMessage: `Bet between ${formatCoins(game.info.minBet)} and ${formatCoins(game.info.maxBet)} coins, at most 4 decimals` })
     }
 
     let outcome
     try {
-        outcome = game.play({ bet, options, rng: cryptoRng })
+        outcome = game.play({ bet: normalizeCoins(bet), options, rng: cryptoRng })
     } catch (error) {
         if (error instanceof RangeError) throw createError({ statusCode: 400, statusMessage: error.message })
         throw error
     }
     // Every implementation bounds its own stake (bet × buy cost, or the sum of a layout).
-    if (!Number.isSafeInteger(outcome.stake) || outcome.stake < 1) {
+    if (!isCoinAmount(outcome.stake) || outcome.stake <= 0) {
         throw createError({ statusCode: 400, statusMessage: 'Stake out of range' })
     }
+    // A payout past four decimals is a rules bug (it must go through payFor/roundCoins), not a player error.
+    if (!isCoinAmount(outcome.payout)) throw new Error(`${slug} paid ${outcome.payout}, not a coin amount`)
+    // Snap off float noise (0.1 × 3) so the response and game_rounds read clean.
+    const stake = normalizeCoins(outcome.stake)
+    const payout = normalizeCoins(outcome.payout)
 
     const { value, stars } = await coinTransaction((coins) => {
-        let after = coins.debit({ playerId, amount: outcome.stake, category: slug })
-        if (outcome.payout > 0) after = coins.credit({ playerId, amount: outcome.payout, category: slug })
+        let after = coins.debit({ playerId, amount: stake, category: slug })
+        if (payout > 0) after = coins.credit({ playerId, amount: payout, category: slug })
         const round = coins.tx.insert(gameRounds).values({
             playerId,
             game: slug,
-            stake: outcome.stake,
-            payout: outcome.payout,
+            stake,
+            payout,
             summary: outcome.summary
         }).returning({ id: gameRounds.id }).get()
         return { roundId: round.id, balance: after.coins }
     })
 
-    return { ...value, game: slug, stake: outcome.stake, payout: outcome.payout, result: outcome.result, stars: stars[0] ?? null }
+    return { ...value, game: slug, stake, payout, result: outcome.result, stars: stars[0] ?? null }
 }

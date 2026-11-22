@@ -1,3 +1,4 @@
+import { normalizeCoins, payFor, sumCoins } from '../money'
 import type { Card, Face, Rank } from './cards'
 
 /**
@@ -106,28 +107,28 @@ export interface TcpResolution {
  */
 export function resolveTcp(bets: { ante: number, pairPlus: number, played: boolean }, player: TcpHand, dealer: TcpHand): TcpResolution {
     const pp = player.category === 'highCard' ? 0 : PAIR_PLUS_PAYS[player.category]
-    const pairPlus = bets.pairPlus > 0 && pp ? bets.pairPlus * (1 + pp) : 0
+    const pairPlus = bets.pairPlus > 0 && pp ? payFor(bets.pairPlus, 1 + pp) : 0
     const qualified = tcpDealerQualifies(dealer)
     if (!bets.played) {
-        const staked = bets.ante + bets.pairPlus
-        return { staked, payout: pairPlus, net: pairPlus - staked, dealerQualified: qualified, ante: 'fold', play: 'none', anteBonus: 0, pairPlus }
+        const staked = sumCoins([bets.ante, bets.pairPlus])
+        return { staked, payout: pairPlus, net: normalizeCoins(pairPlus - staked), dealerQualified: qualified, ante: 'fold', play: 'none', anteBonus: 0, pairPlus }
     }
-    const anteBonus = bets.ante * (ANTE_BONUS_PAYS[player.category] ?? 0)
+    const anteBonus = payFor(bets.ante, ANTE_BONUS_PAYS[player.category] ?? 0)
     let ante: TcpLegResult
     let play: TcpLegResult
     let legs: number
     if (!qualified) {
         ante = 'win'
         play = 'push'
-        legs = bets.ante * 2 + bets.ante
+        legs = payFor(bets.ante, 3)
     } else {
         const verdict = compareTcp(player, dealer)
         ante = play = verdict > 0 ? 'win' : verdict < 0 ? 'lose' : 'push'
-        legs = verdict > 0 ? bets.ante * 4 : verdict < 0 ? 0 : bets.ante * 2
+        legs = verdict > 0 ? payFor(bets.ante, 4) : verdict < 0 ? 0 : payFor(bets.ante, 2)
     }
-    const staked = bets.ante * 2 + bets.pairPlus
-    const payout = legs + anteBonus + pairPlus
-    return { staked, payout, net: payout - staked, dealerQualified: qualified, ante, play, anteBonus, pairPlus }
+    const staked = sumCoins([bets.ante, bets.ante, bets.pairPlus])
+    const payout = sumCoins([legs, anteBonus, pairPlus])
+    return { staked, payout, net: normalizeCoins(payout - staked), dealerQualified: qualified, ante, play, anteBonus, pairPlus }
 }
 
 /** Optimal play is one threshold: Q-6-4 or better plays, anything lower folds. */

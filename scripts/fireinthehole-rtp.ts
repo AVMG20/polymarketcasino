@@ -1,5 +1,6 @@
 // `bun scripts/fireinthehole-rtp.ts [rounds] [bet] [seed] [buys]`: RTP, hit rate, bonus rate and max win,
 // paid in whole coins like the server.
+import { payFor } from '../shared/money'
 import { seededRng } from '../shared/rng'
 import { FITH_BUY_COST, FITH_MAX_LINES, FITH_MAX_WIN, FITH_STARTING_LINES, playBonus, playFireInTheHole } from '../shared/slots/fireinthehole'
 import { simArgs, Tally } from './lib/report'
@@ -7,7 +8,7 @@ import { simArgs, Tally } from './lib/report'
 const { rounds, bet, seed } = simArgs(1_000_000)
 const buyRounds = Number(process.argv[5] ?? 200_000)
 const rng = seededRng(seed)
-const pay = (win: number) => Math.floor(bet * win + 1e-9)
+const pay = (win: number) => payFor(bet, win)
 
 const spins = new Tally()
 let exact = 0

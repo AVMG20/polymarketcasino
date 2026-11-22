@@ -1,3 +1,4 @@
+import { isCoinAmount, payFor, sumCoins } from '../money'
 import type { Rng } from '../rng'
 
 /**
@@ -87,11 +88,11 @@ export function parseRouletteBets(input: unknown): RouletteBet[] {
         const value = NUMBERED_KINDS.has(kind) ? raw?.value : undefined
         if (value !== undefined && typeof value !== 'number') throw new RangeError('Invalid roulette bet')
         const amount = raw?.amount
-        if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount < 1) throw new RangeError('Every bet needs a whole coin amount')
+        if (!isCoinAmount(amount) || amount <= 0) throw new RangeError('Every bet needs a coin amount with at most 4 decimals')
         coveredPockets({ kind, value })
         const key = betKey({ kind, value })
         const existing = merged.get(key)
-        merged.set(key, { kind, ...(value === undefined ? {} : { value }), amount: (existing?.amount ?? 0) + amount })
+        merged.set(key, { kind, ...(value === undefined ? {} : { value }), amount: sumCoins([existing?.amount ?? 0, amount]) })
     }
     if (merged.size > ROULETTE_MAX_BETS) throw new RangeError(`At most ${ROULETTE_MAX_BETS} bets per spin`)
     return [...merged.values()]
@@ -104,7 +105,7 @@ export interface RouletteResult {
 }
 
 export function totalStake(bets: readonly RouletteBet[]): number {
-    return bets.reduce((sum, bet) => sum + bet.amount, 0)
+    return sumCoins(bets.map(bet => bet.amount))
 }
 
 export function playRoulette(rng: Rng, bets: readonly RouletteBet[]): RouletteResult {
@@ -114,7 +115,7 @@ export function playRoulette(rng: Rng, bets: readonly RouletteBet[]): RouletteRe
         color: pocketColor(pocket),
         bets: bets.map((bet) => {
             const won = coveredPockets(bet).includes(pocket)
-            return { ...bet, won, payout: won ? Math.floor(bet.amount * betReturn(bet)) : 0 }
+            return { ...bet, won, payout: won ? payFor(bet.amount, betReturn(bet)) : 0 }
         })
     }
 }

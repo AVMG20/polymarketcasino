@@ -1,6 +1,6 @@
 // "Spiñata Slots": 5×3 traditional reel slot, 50 fixed paylines, left-to-right wins.
 // Ported from the old site (shared/utils/gamelogic/spinata.ts); the rules are
-// unchanged, the RNG is passed in and the payout is whole coins.
+// unchanged, the RNG is passed in and the payout rounds down to 0.0001 coin.
 //
 // ── Base game ────────────────────────────────────────────────────────────────
 //   Grid is 5 columns × 3 rows. Each cell is an independent weighted draw.
@@ -23,9 +23,10 @@
 //   forces SPN_SCATTER_TRIGGER scatters onto an otherwise normal spin.
 //
 // ── Fairness ────────────────────────────────────────────────────────────────
-//   Total win is capped at SPN_MAX_WIN_MULT × bet, and paid in whole coins,
-//   rounded down.
+//   Total win is capped at SPN_MAX_WIN_MULT × bet, and paid rounded down to
+//   0.0001 coin.
 
+import { costFor, roundCoins } from '../../money'
 import type { Rng } from '../../rng'
 
 export const SPN_COLS = 5
@@ -255,7 +256,7 @@ function runFreeSpins(rng: Rng, bet: number): SpinataFreeSpin[] {
 
 // --- Result shape ────────────────────────────────────────────────────────────
 
-/** Coin amounts are for `bet`; `payout` is the whole coins actually paid. */
+/** Coin amounts are for `bet`; `payout` is what is actually paid (rounded down to 0.0001). */
 export interface SpinataResult {
     bet: number
     cost: number
@@ -274,7 +275,7 @@ export interface SpinataResult {
     bonusPrizePayout: number
     bonusPayout: number
     payout: number
-    /** The round's win in × bet, after the cap (payout = floor(bet × win)). */
+    /** The round's win in × bet, after the cap. */
     win: number
     capped: boolean
     won: boolean
@@ -313,7 +314,7 @@ export function parseSpinataOptions(options: Record<string, unknown>): SpinataOp
 }
 
 export function spinataStake(bet: number, options: SpinataOptions): number {
-    return options.feature === 'buyBonus' ? bet * SPN_BUY_BONUS_COST : bet
+    return options.feature === 'buyBonus' ? costFor(bet, SPN_BUY_BONUS_COST) : bet
 }
 
 export function playSpinata(rng: Rng, bet: number, options: SpinataOptions = {}): SpinataResult {
@@ -344,9 +345,8 @@ export function playSpinata(rng: Rng, bet: number, options: SpinataOptions = {})
     const maxWin = bet * SPN_MAX_WIN_MULT
     const capped = basePayout + bonusPayout > maxWin
     const total = Math.min(basePayout + bonusPayout, maxWin)
-    // Whole coins, rounded down. The epsilon keeps a sum that binary floats
-    // store a hair low (0.1 + 0.2) from losing a coin.
-    const payout = Math.floor(total + 1e-6)
+    // Rounded down to 0.0001 coin (float noise in the sum can't cost a unit).
+    const payout = roundCoins(total)
 
     return {
         bet,

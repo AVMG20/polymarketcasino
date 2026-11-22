@@ -1,4 +1,5 @@
 // `bun scripts/dice-rtp.ts [rounds] [bet] [seed]`: RTP at a spread of win chances.
+import { payFor } from '../shared/money'
 import { diceMultiplier, playDice } from '../shared/games/dice'
 import { seededRng } from '../shared/rng'
 import { simArgs, Tally } from './lib/report'
@@ -10,7 +11,7 @@ for (const chance of [1, 10, 49.5, 75, 95]) {
         const tally = new Tally()
         for (let i = 0; i < rounds / 10; i++) {
             const result = playDice(rng, { chance, over })
-            tally.add(bet, result.won ? Math.floor(bet * diceMultiplier(chance)) : 0)
+            tally.add(bet, result.won ? payFor(bet, diceMultiplier(chance)) : 0)
         }
         console.log(tally.line(`${chance}% ${over ? 'over' : 'under'}`))
     }

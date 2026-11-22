@@ -51,6 +51,17 @@ describe('table escrow', () => {
         expect(rounds(id)).toMatchObject([{ game: 'baccarat', stake: 300, payout: 490 }])
     })
 
+    it('settles decimal stakes and payouts to 0.0001 coin, matching the escrow without float noise', () => {
+        const id = seedPlayer(START)
+        const { wagerIds } = stakeWagers(id, 'baccarat', 1, [{ amount: 0.1, kind: 'banker' }, { amount: 0.2, kind: 'player' }, { amount: 50, kind: 'tie' }]).value
+        // 0.1 + 0.2 + 50 in floats is 50.300000000000004: still the same escrow.
+        const result = settleWagers({ playerId: id, game: 'baccarat', wagerIds, staked: 0.1 + 0.2 + 50, payout: 97.5, summary: {} }).value
+        expect(result).toEqual({ kind: 'settled', balance: START - 50.3 + 97.5 })
+        expect(coinsOf(id).coins).toBe(START + 47.2)
+        expect(ledgerSum(id)).toBe(47.2)
+        expect(() => settleWagers({ playerId: id, game: 'baccarat', wagerIds: [], staked: 0, payout: 1.23456, summary: {} })).toThrow('4 decimals')
+    })
+
     it('refunds instead of paying when part of the round was already closed', () => {
         const id = seedPlayer(START)
         const { wagerIds } = stakeWagers(id, 'blackjack', 1, [{ amount: 100, kind: 'bet' }, { amount: 100, kind: 'double' }]).value

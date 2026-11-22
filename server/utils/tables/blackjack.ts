@@ -1,3 +1,4 @@
+import { payFor } from '#shared/money'
 import { cryptoRng, type Rng } from '#shared/rng'
 import { redact, Shoe } from '#shared/tables/cards'
 import { isChip, scaleAmount, TABLE_MAX_BET, TABLE_MIN_BET } from '#shared/tables/chips'
@@ -464,7 +465,7 @@ export class BlackjackTable extends LiveTable<BjSeat, BjShared, BjTableAction> {
             }
             if (seat.insurance > 0) {
                 staked += seat.insurance
-                if (dealerBj) payout += seat.insurance * (1 + BJ_RULES.insurancePays)
+                if (dealerBj) payout += payFor(seat.insurance, 1 + BJ_RULES.insurancePays)
             }
             for (const side of seat.sideResults ?? []) {
                 staked += side.stake

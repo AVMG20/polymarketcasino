@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { isCoinAmount } from '../shared/money'
 import { seededRng } from '../shared/rng'
 import {
     aetherPayMult,
     aetherPayout,
     aetherStake,
-    AG_BONUS_CHANCE_COST,
-    AG_BUY_FREESPINS_COST,
     AG_BUY_SUPERBONUS_COST,
     AG_COLS,
     AG_FREE_SPINS,
@@ -159,19 +158,22 @@ describe('aethergates stakes and payouts', () => {
         expect(() => parseAetherOptions({ feature: 1 })).toThrow(RangeError)
     })
 
-    it('rounds feature stakes up to whole coins', () => {
+    it('prices feature stakes exactly, rounded up to 0.0001 coin', () => {
         expect(aetherStake(100, null)).toBe(100)
-        expect(aetherStake(101, 'buyFreeSpins')).toBe(Math.ceil(101 * AG_BUY_FREESPINS_COST))
-        expect(aetherStake(101, 'superBonus')).toBe(Math.ceil(101 * AG_BUY_SUPERBONUS_COST))
-        expect(aetherStake(101, 'bonusChance')).toBe(Math.ceil(101 * AG_BONUS_CHANCE_COST))
+        expect(aetherStake(101, 'buyFreeSpins')).toBe(4292.5)
+        expect(aetherStake(101, 'superBonus')).toBe(5908.5)
+        expect(aetherStake(101, 'bonusChance')).toBe(357.54)
+        expect(aetherStake(10.0001, 'bonusChance')).toBe(35.4004)
         for (const feature of [null, 'buyFreeSpins', 'superBonus', 'bonusChance'] as const) {
-            for (const bet of [100, 333, 1_000_000]) expect(Number.isSafeInteger(aetherStake(bet, feature))).toBe(true)
+            for (const bet of [10, 12.3456, 333, 1_000_000]) expect(isCoinAmount(aetherStake(bet, feature))).toBe(true)
         }
     })
 
-    it('pays whole coins, rounded down, and never past the cap', () => {
-        const result = { totalWinMult: 0.0786 } as AetherGatesResult
-        expect(aetherPayout(result, 100)).toBe(7)
+    it('pays rounded down to 0.0001 coin, and never past the cap', () => {
+        const result = { totalWinMult: 0.07869 } as AetherGatesResult
+        expect(aetherPayout(result, 100)).toBe(7.869)
+        expect(aetherPayout(result, 10)).toBe(0.7869)
+        expect(aetherPayout(result, 1)).toBe(0.0786)
         expect(aetherPayout({ totalWinMult: AG_MAX_WIN_MULT } as AetherGatesResult, 1_000_000)).toBe(AG_MAX_WIN_MULT * 1_000_000)
     })
 
@@ -181,7 +183,7 @@ describe('aethergates stakes and payouts', () => {
         const plain = game.play({ bet: 250, options: {}, rng })
         expect(plain.stake).toBe(250)
         const buy = game.play({ bet: 250, options: { feature: 'superBonus' }, rng })
-        expect(buy.stake).toBe(Math.ceil(250 * AG_BUY_SUPERBONUS_COST))
+        expect(buy.stake).toBe(250 * AG_BUY_SUPERBONUS_COST)
         const result = buy.result as AetherGatesResult
         expect(result.bonusTier).toBe('super')
         expect(buy.payout).toBe(aetherPayout(result, 250))

@@ -19,6 +19,7 @@
 // Everything is decided here in one call, in × bet units; the client replays
 // it. The total win is capped at AG_MAX_WIN_MULT × bet.
 
+import { costFor, payFor } from '../../money'
 import type { Rng } from '../../rng'
 
 export const AG_COLS = 6
@@ -39,7 +40,7 @@ export const AG_MAX_WIN_MULT = 10_000
 const AG_MAX_TUMBLES = 64
 
 /**
- * Feature costs, × bet. Stakes round up to whole coins.
+ * Feature costs, × bet. Stakes round up to 0.0001 coin.
  *
  * - buyFreeSpins: straight into the 10 free spins.
  * - superBonus: straight into the 12 free spins.
@@ -386,11 +387,11 @@ export function parseAetherOptions(options: Record<string, unknown>): AetherFeat
     return feature as AetherFeature
 }
 
-/** Whole coins one round costs at `bet`. */
+/** Coins one round costs at `bet`, rounded up to 0.0001. */
 export function aetherStake(bet: number, feature: AetherFeature | null): number {
-    if (feature === 'buyFreeSpins') return Math.ceil(bet * AG_BUY_FREESPINS_COST)
-    if (feature === 'superBonus') return Math.ceil(bet * AG_BUY_SUPERBONUS_COST)
-    if (feature === 'bonusChance') return Math.ceil(bet * AG_BONUS_CHANCE_COST)
+    if (feature === 'buyFreeSpins') return costFor(bet, AG_BUY_FREESPINS_COST)
+    if (feature === 'superBonus') return costFor(bet, AG_BUY_SUPERBONUS_COST)
+    if (feature === 'bonusChance') return costFor(bet, AG_BONUS_CHANCE_COST)
     return bet
 }
 
@@ -444,7 +445,7 @@ export function playAethergates(rng: Rng, feature: AetherFeature | null = null):
     }
 }
 
-/** Whole coins a result pays at `bet`. */
+/** Coins a result pays at `bet`, rounded down to 0.0001. */
 export function aetherPayout(result: AetherGatesResult, bet: number): number {
-    return Math.floor(bet * result.totalWinMult + 1e-9)
+    return payFor(bet, result.totalWinMult)
 }

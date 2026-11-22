@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { isCoinAmount, payFor } from '../shared/money'
 import { seededRng } from '../shared/rng'
 import {
     calculateStepPay,
@@ -192,16 +193,17 @@ describe('fire in the hole bonus', () => {
 describe('fire in the hole on the server', () => {
     const game = serverGame('fireinthehole')!
 
-    it('stakes the bet, or bet × the buy cost, and pays whole coins', () => {
-        const spin = game.play({ bet: 250, options: {}, rng: seededRng(1) })
-        expect(spin.stake).toBe(250)
-        const buy = game.play({ bet: 250, options: { buy: true }, rng: seededRng(1) })
-        expect(buy.stake).toBe(250 * FITH_BUY_COST)
+    it('stakes the bet, or bet × the buy cost, and pays rounded down to 0.0001 coin', () => {
+        const spin = game.play({ bet: 12.5, options: {}, rng: seededRng(1) })
+        expect(spin.stake).toBe(12.5)
+        const buy = game.play({ bet: 12.5, options: { buy: true }, rng: seededRng(1) })
+        expect(buy.stake).toBe(12.5 * FITH_BUY_COST)
         expect(Number.isInteger(FITH_BUY_COST)).toBe(true)
         for (const outcome of [spin, buy]) {
             const result = outcome.result as { win: number }
-            expect(outcome.payout).toBe(Math.floor(250 * result.win + 1e-9))
-            expect(outcome.payout).toBeLessThanOrEqual(250 * FITH_MAX_WIN)
+            expect(outcome.payout).toBe(payFor(12.5, result.win))
+            expect(isCoinAmount(outcome.payout)).toBe(true)
+            expect(outcome.payout).toBeLessThanOrEqual(12.5 * FITH_MAX_WIN)
         }
     })
 

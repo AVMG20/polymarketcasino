@@ -30,12 +30,11 @@ export interface GameInfo {
 }
 
 /**
- * Payouts are whole coins, rounded down. Below ~100 coins that rounding eats
- * a visible slice of a fractional multiplier (dice 1.96× on 10 pays 19), so
- * games with fractional pays start at 100. Roulette pays whole multiples and
- * starts at 10.
+ * Bets and payouts carry up to four decimals (payouts round down to 0.0001
+ * coin), so a small bet loses nothing to rounding: dice 1.96× on 10 pays
+ * 19.6. Bets start at 10 coins. The live tables keep their chip minimum.
  */
-export const MIN_BET = 100
+export const MIN_BET = 10
 export const MAX_BET = 1_000_000
 
 export const GAMES: readonly GameInfo[] = [
@@ -135,7 +134,7 @@ export const GAMES: readonly GameInfo[] = [
         cover: '/images/games/roulette.jpg',
         rtp: 0.973,
         volatility: 'low',
-        minBet: 10,
+        minBet: MIN_BET,
         maxBet: MAX_BET
     },
     {
@@ -238,8 +237,8 @@ export const GAMES: readonly GameInfo[] = [
         cover: '/images/games/magichands.jpg',
         rtp: 0.96,
         volatility: 'high',
-        // Per hand. Tiles pay whole multiples, so a hand starts at 10 like roulette.
-        minBet: 10,
+        // Per hand.
+        minBet: MIN_BET,
         maxBet: MAX_BET
     }
 ]

@@ -1,3 +1,4 @@
+import { costFor } from '../money'
 import type { Rng } from '../rng'
 
 /**
@@ -49,10 +50,10 @@ export function parseCandyMadnessOptions(input: Record<string, unknown> | undefi
     return { feature }
 }
 
-/** Whole coins a round costs: the bet, or a feature's price (rounded up). */
+/** Coins a round costs: the bet, or a feature's price (rounded up to 0.0001). */
 export function candyMadnessStake(bet: number, feature: CandyFeature | null): number {
-    if (feature === 'buyFreeSpins') return bet * CM_BUY_FREESPINS_COST
-    if (feature === 'bonusHunt') return Math.ceil(bet * CM_BONUS_HUNT_COST - 1e-9)
+    if (feature === 'buyFreeSpins') return costFor(bet, CM_BUY_FREESPINS_COST)
+    if (feature === 'bonusHunt') return costFor(bet, CM_BONUS_HUNT_COST)
     return bet
 }
 
@@ -186,7 +187,7 @@ export interface CandyMadnessResult {
     scatterCells: Cell[]
     base: TumbleSequence
     bonus: BonusResult | null
-    /** Total win in × bet, after the cap. The payout is floor(bet × win). */
+    /** Total win in × bet, after the cap. The payout is bet × win, rounded down to 0.0001. */
     win: number
     capped: boolean
 }

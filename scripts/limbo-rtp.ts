@@ -1,4 +1,5 @@
 // `bun scripts/limbo-rtp.ts [rounds] [bet] [seed]`: RTP at a spread of targets.
+import { payFor } from '../shared/money'
 import { playLimbo } from '../shared/games/limbo'
 import { seededRng } from '../shared/rng'
 import { simArgs, Tally } from './lib/report'
@@ -9,7 +10,7 @@ for (const target of [1.01, 1.5, 2, 10, 100, 1000]) {
     const tally = new Tally()
     for (let i = 0; i < rounds / 6; i++) {
         const result = playLimbo(rng, { target })
-        tally.add(bet, result.won ? Math.floor(bet * target) : 0)
+        tally.add(bet, result.won ? payFor(bet, target) : 0)
     }
     console.log(tally.line(`target ${target}×`))
 }

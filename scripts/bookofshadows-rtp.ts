@@ -1,11 +1,12 @@
 // `bun scripts/bookofshadows-rtp.ts [rounds] [bet] [seed] [buys]`: RTP, hit rate, feature rate, max win and the buy.
+import { payFor } from '../shared/money'
 import { seededRng } from '../shared/rng'
 import { BOS_BUY_COST, BOS_MAX_WIN, playBookOfShadows } from '../shared/slots/bookofshadows'
 import { simArgs, Tally } from './lib/report'
 
 const { rounds, bet, seed } = simArgs(2_000_000)
 const rng = seededRng(seed)
-const pay = (win: number) => Math.floor(bet * win + 1e-9)
+const pay = (win: number) => payFor(bet, win)
 
 const spins = new Tally()
 let exact = 0

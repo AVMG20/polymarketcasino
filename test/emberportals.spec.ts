@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { isCoinAmount } from '../shared/money'
 import { seededRng } from '../shared/rng'
 import {
     clusterPay,
@@ -229,18 +230,19 @@ describe('ember portals free spins', () => {
 describe('ember portals stakes', () => {
     const game = serverGame('emberportals')!
 
-    it('stakes the bet, the ante or the buy price in whole coins', () => {
+    it('stakes the bet, the ante or the buy price, exact to 0.0001 coin', () => {
         expect(emberPortalsStake('normal', 100)).toBe(100)
         expect(emberPortalsStake('ante', 100)).toBe(100 * EP_ANTE_COST)
-        expect(emberPortalsStake('ante', 101)).toBe(Math.ceil(101 * EP_ANTE_COST))
+        expect(emberPortalsStake('ante', 101)).toBe(126.25)
+        expect(emberPortalsStake('ante', 10.0001)).toBe(12.5002)
         expect(emberPortalsStake('buy', 100)).toBe(100 * EP_BUY_COST)
         const rng = seededRng(8)
-        for (const [options, stake] of [[{}, 333], [{ ante: true }, Math.ceil(333 * EP_ANTE_COST)], [{ buy: true }, 333 * EP_BUY_COST]] as const) {
+        for (const [options, stake] of [[{}, 333], [{ ante: true }, 416.25], [{ buy: true }, 333 * EP_BUY_COST]] as const) {
             const outcome = game.play({ bet: 333, options, rng })
             expect(outcome.stake).toBe(stake)
-            expect(Number.isSafeInteger(outcome.stake)).toBe(true)
+            expect(isCoinAmount(outcome.stake)).toBe(true)
             expect(outcome.payout).toBe(emberPortalsPayout(outcome.result as ReturnType<typeof playEmberPortals>, 333))
-            expect(Number.isSafeInteger(outcome.payout)).toBe(true)
+            expect(isCoinAmount(outcome.payout)).toBe(true)
         }
     })
 
@@ -252,9 +254,11 @@ describe('ember portals stakes', () => {
         expect(parseEmberPortalsMode({ ante: false, buy: false })).toBe('normal')
     })
 
-    it('pays whole coins, rounded down', () => {
+    it('pays rounded down to 0.0001 coin', () => {
         const result = { ...playEmberPortals(seededRng(1), 'normal'), win: 1.2345 }
-        expect(emberPortalsPayout(result, 100)).toBe(123)
+        expect(emberPortalsPayout(result, 100)).toBe(123.45)
+        expect(emberPortalsPayout(result, 10)).toBe(12.345)
         expect(emberPortalsPayout({ ...result, win: 0.29 }, 100)).toBe(29)
+        expect(emberPortalsPayout({ ...result, win: 0.00005 }, 1)).toBe(0)
     })
 })

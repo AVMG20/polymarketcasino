@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { isCoinAmount, payFor } from '../shared/money'
 import { seededRng, type Rng } from '../shared/rng'
 import {
     evaluateLine,
@@ -194,13 +195,14 @@ describe('xenoslot buy and stakes', () => {
         }
     })
 
-    it('stakes the bet, or the buy price, and pays whole coins', () => {
+    it('stakes the bet, or the buy price, and pays rounded down to 0.0001 coin', () => {
         const game = serverGame('xenoslot')!
         const rng = seededRng(5)
         for (let i = 0; i < 200; i++) {
-            const spin = game.play({ bet: 150, options: {}, rng })
-            expect(spin.stake).toBe(150)
-            expect(Number.isSafeInteger(spin.payout)).toBe(true)
+            const spin = game.play({ bet: 15.5, options: {}, rng })
+            expect(spin.stake).toBe(15.5)
+            expect(spin.payout).toBe(payFor(15.5, (spin.result as { win: number }).win))
+            expect(isCoinAmount(spin.payout)).toBe(true)
         }
         const buy = game.play({ bet: 150, options: { buy: true }, rng })
         expect(buy.stake).toBe(150 * XS_BUY_COST)
@@ -217,7 +219,7 @@ describe('xenoslot buy and stakes', () => {
 
     it('settles through playRound within the bet limits', async () => {
         const id = seedPlayer(100_000)
-        await expect(playRound(id, 'xenoslot', { bet: 99 })).rejects.toMatchObject({ statusCode: 400 })
+        await expect(playRound(id, 'xenoslot', { bet: 9.99 })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'xenoslot', { bet: 1_000_001 })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'xenoslot', { bet: 100, options: { buy: 1 } })).rejects.toMatchObject({ statusCode: 400 })
         expect(coinsOf(id).coins).toBe(100_000)

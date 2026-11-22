@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Card, Rank, Suit } from '../shared/tables/cards'
 import { Shoe } from '../shared/tables/cards'
 import { seededRng } from '../shared/rng'
-import { dealerShouldHit, handScore, settleHand, settleSideBets, type BjHand } from '../shared/tables/blackjack'
+import { dealerShouldHit, handScore, insuranceCost, settleHand, settleSideBets, type BjHand } from '../shared/tables/blackjack'
 import { bacSpotReturn, bankerDraws, dealBaccarat, resolveBacBets, emptyBacBets } from '../shared/tables/baccarat'
 import { compareTcp, evaluateTcp, resolveTcp, tcpDealerQualifies } from '../shared/tables/three-card-poker'
 import { bestHand, chDealerQualifies, compareCh, evaluateFive, resolveCh } from '../shared/tables/casino-holdem'
@@ -26,10 +26,11 @@ describe('blackjack rules', () => {
         expect(dealerShouldHit(cards('10h 6d'))).toBe(true)
     })
 
-    it('pays 3:2 on a blackjack, rounded down, and pushes against a dealer blackjack', () => {
+    it('pays 3:2 on a blackjack, rounded down to 0.0001 coin, and pushes against a dealer blackjack', () => {
         expect(settleHand(hand('Ah Kd', 100), cards('9s 8c'))).toMatchObject({ status: 'blackjack', payout: 250, net: 150 })
         expect(settleHand(hand('Ah Kd', 150), cards('9s 8c')).payout).toBe(375)
-        expect(settleHand(hand('Ah Kd', 101), cards('9s 8c')).payout).toBe(252)
+        expect(settleHand(hand('Ah Kd', 101), cards('9s 8c')).payout).toBe(252.5)
+        expect(settleHand(hand('Ah Kd', 0.0003), cards('9s 8c')).payout).toBe(0.0007)
         expect(settleHand(hand('Ah Kd'), cards('As Qc'))).toMatchObject({ status: 'push', payout: 100 })
         // A split 21 is not a blackjack.
         expect(settleHand(hand('Ah Kd', 100, { fromSplit: true }), cards('10s 9c'))).toMatchObject({ status: 'won', payout: 200 })
@@ -44,6 +45,8 @@ describe('blackjack rules', () => {
         expect(settleHand(hand('5h 6d 9c', 100, { doubled: true }), cards('10s 8c'))).toMatchObject({ status: 'won', payout: 400, net: 200 })
         expect(settleHand(hand('10h 6d', 100, { status: 'surrendered' }), cards('10s 8c'))).toMatchObject({ payout: 50, net: -50 })
         expect(settleHand(hand('10h 6d', 150, { status: 'surrendered' }), cards('10s 8c')).payout).toBe(75)
+        expect(settleHand(hand('10h 6d', 151, { status: 'surrendered' }), cards('10s 8c'))).toMatchObject({ payout: 75.5, net: -75.5 })
+        expect(insuranceCost(151)).toBe(75.5)
     })
 
     it('pays the side bets off the first two cards and the upcard', () => {
@@ -70,10 +73,12 @@ describe('baccarat rules', () => {
         expect(bankerDraws(5, null)).toBe(true)
     })
 
-    it('pays banker 0.95 to the coin, pushes the main bets on a tie, pays the pairs on their own', () => {
+    it('pays banker 0.95 to 0.0001 coin, pushes the main bets on a tie, pays the pairs on their own', () => {
         const banker = { winner: 'banker' as const, playerPair: false, bankerPair: true }
         expect(bacSpotReturn('banker', 100, banker)).toBe(195)
-        expect(bacSpotReturn('banker', 150, banker)).toBe(292)
+        expect(bacSpotReturn('banker', 150, banker)).toBe(292.5)
+        expect(bacSpotReturn('banker', 50, banker)).toBe(97.5)
+        expect(resolveBacBets({ ...emptyBacBets(), banker: 150, bankerPair: 50 }, banker)).toEqual({ staked: 200, payout: 892.5 })
         expect(bacSpotReturn('player', 100, banker)).toBe(0)
         expect(bacSpotReturn('bankerPair', 100, banker)).toBe(1_200)
         const tie = { winner: 'tie' as const, playerPair: false, bankerPair: false }

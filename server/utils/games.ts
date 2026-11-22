@@ -6,6 +6,7 @@ import { parsePolyMastersOptions, playPolyMasters } from '#shared/games/polymast
 import { GAMES, type GameInfo } from '#shared/games/registry'
 import { parseRouletteBets, playRoulette, totalStake } from '#shared/games/roulette'
 import { parseWheelOptions, playWheel } from '#shared/games/wheel'
+import { costFor, formatCoins, payFor, sumCoins } from '#shared/money'
 import type { Rng } from '#shared/rng'
 import { aetherPayout, aetherStake, parseAetherOptions, playAethergates } from '#shared/slots/aethergates'
 import { BOS_BUY_COST, playBookOfShadows } from '#shared/slots/bookofshadows'
@@ -54,8 +55,8 @@ interface BespokeOutcome {
 
 /**
  * A slot with its own rules module that only knows a buy flag. The module
- * resolves the whole round in multiples of the bet; this pays it in whole
- * coins and bounds the stake (bet, or bet × the integer buy cost).
+ * resolves the whole round in multiples of the bet; this pays it rounded
+ * down to 0.0001 coin and bounds the stake (bet, or bet × the integer buy cost).
  */
 function bespokeSlot(info: GameInfo, buyCost: number, play: (rng: Rng, buy: boolean) => BespokeOutcome): ServerGame {
     if (!Number.isSafeInteger(buyCost) || buyCost < 1) throw new Error(`${info.slug}: the buy cost must be a whole multiple of the bet`)
@@ -66,21 +67,13 @@ function bespokeSlot(info: GameInfo, buyCost: number, play: (rng: Rng, buy: bool
             const buy = options.buy === true
             const outcome = play(rng, buy)
             return {
-                stake: buy ? bet * buyCost : bet,
-                payout: Math.floor(bet * outcome.win + 1e-9),
+                stake: buy ? costFor(bet, buyCost) : bet,
+                payout: payFor(bet, outcome.win),
                 result: outcome,
                 summary: { bet, buy, win: outcome.win, feature: outcome.feature, capped: outcome.capped }
             }
         }
     }
-}
-
-/**
- * Coins for a win of `multiple` × bet, rounded down. The epsilon keeps a
- * decimal multiple that binary floats store a hair low (1.3 × 100) whole.
- */
-function payFor(bet: number, multiple: number): number {
-    return Math.floor(bet * multiple + 1e-6)
 }
 
 function info(slug: string): GameInfo {
@@ -178,7 +171,7 @@ const implementations: Record<string, ServerGame> = {
             const { mode } = parsePolyMastersOptions(options)
             const result = playPolyMasters(rng, mode)
             return {
-                stake: bet * result.cost,
+                stake: costFor(bet, result.cost),
                 payout: payFor(bet, result.win),
                 result,
                 summary: { bet, mode, landing: result.landing, win: result.win, events: result.events.length }
@@ -199,12 +192,12 @@ const implementations: Record<string, ServerGame> = {
         // `bet` is one hand; the stake is a hand per placed tile.
         play({ bet, options, rng }) {
             const parsed = parseMagicHandsOptions(options)
-            const stake = bet * parsed.placements.length
-            if (stake > this.info.maxBet) throw new RangeError(`At most ${this.info.maxBet.toLocaleString('en-US')} coins per round`)
+            const stake = costFor(bet, parsed.placements.length)
+            if (stake > this.info.maxBet) throw new RangeError(`At most ${formatCoins(this.info.maxBet)} coins per round`)
             const result = playMagicHands(rng, parsed)
             return {
                 stake,
-                payout: bet * result.win,
+                payout: payFor(bet, result.win),
                 result,
                 summary: { bet, hands: parsed.placements.length, winners: result.winners.length, win: result.win }
             }
@@ -215,7 +208,7 @@ const implementations: Record<string, ServerGame> = {
         info: info('dice'),
         play({ bet, options, rng }) {
             const result = playDice(rng, parseDiceOptions(options))
-            const payout = result.won ? Math.floor(bet * result.multiplier) : 0
+            const payout = result.won ? payFor(bet, result.multiplier) : 0
             return { stake: bet, payout, result, summary: { ...result } }
         }
     },
@@ -224,7 +217,7 @@ const implementations: Record<string, ServerGame> = {
         info: info('limbo'),
         play({ bet, options, rng }) {
             const result = playLimbo(rng, parseLimboOptions(options))
-            const payout = result.won ? Math.floor(bet * result.target) : 0
+            const payout = result.won ? payFor(bet, result.target) : 0
             return { stake: bet, payout, result, summary: { ...result } }
         }
     },
@@ -237,10 +230,10 @@ const implementations: Record<string, ServerGame> = {
             const bets = parseRouletteBets(options.bets)
             const stake = totalStake(bets)
             const { minBet, maxBet } = this.info
-            if (bets.some(bet => bet.amount < minBet)) throw new RangeError(`Every bet is at least ${minBet} coins`)
-            if (stake > maxBet) throw new RangeError(`At most ${maxBet.toLocaleString('en-US')} coins per spin`)
+            if (bets.some(bet => bet.amount < minBet)) throw new RangeError(`Every bet is at least ${formatCoins(minBet)} coins`)
+            if (stake > maxBet) throw new RangeError(`At most ${formatCoins(maxBet)} coins per spin`)
             const result = playRoulette(rng, bets)
-            const payout = result.bets.reduce((sum, b) => sum + b.payout, 0)
+            const payout = sumCoins(result.bets.map(b => b.payout))
             return { stake, payout, result, summary: { pocket: result.pocket, bets: bets.length } }
         }
     }

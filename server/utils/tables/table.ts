@@ -1,3 +1,4 @@
+import { isCoinAmount, normalizeCoins, sameCoins, sumCoins } from '#shared/money'
 import type { ScoreEntry, SeatView, ServerMessage, TablePayout, TableState } from '#shared/tables/protocol'
 import type { CommittedCoins } from '../ledger'
 import { getCoins } from '../ledger'
@@ -267,7 +268,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
      */
     protected stake(player: TablePlayer<TSeat>, stakes: { amount: number, kind: string }[]) {
         for (const { amount } of stakes) {
-            if (!Number.isSafeInteger(amount) || amount <= 0) fail('Invalid bet')
+            if (!isCoinAmount(amount) || amount <= 0) fail('Invalid bet')
         }
         let committed
         try {
@@ -277,7 +278,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
             throw error
         }
         player.wagerIds.push(...committed.value.wagerIds)
-        player.staked += stakes.reduce((sum, s) => sum + s.amount, 0)
+        player.staked = sumCoins([player.staked, ...stakes.map(s => s.amount)])
         this.pushBalance(player, committed.value.balance, committed)
     }
 
@@ -292,14 +293,14 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
             if (!player?.wagerIds.length) continue
             const wagerIds = player.wagerIds
             const staked = player.staked
-            if (staked !== result.staked) console.error(`[tables] ${this.config.slug}: ${player.playerId} staked ${staked}, game says ${result.staked}`)
+            if (!sameCoins(staked, result.staked)) console.error(`[tables] ${this.config.slug}: ${player.playerId} staked ${staked}, game says ${result.staked}`)
             try {
                 const committed = settleWagers({
                     playerId: player.playerId,
                     game: this.config.slug,
                     wagerIds,
-                    staked: result.staked,
-                    payout: result.payout,
+                    staked: normalizeCoins(result.staked),
+                    payout: normalizeCoins(result.payout),
                     summary: { round: this.roundId, ...result.summary }
                 })
                 player.wagerIds = []
@@ -312,7 +313,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
                     continue
                 }
                 this.pushBalance(player, outcome.balance, committed)
-                const net = result.payout - result.staked
+                const net = normalizeCoins(result.payout - result.staked)
                 this.recordResult(player, net)
             } catch (error) {
                 console.error(`[tables] ${this.config.slug}: settling ${player.playerId} failed`, error)
@@ -324,13 +325,13 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
 
     private recordResult(player: TablePlayer<TSeat>, net: number) {
         player.lastNet = net
-        player.sessionNet += net
+        player.sessionNet = normalizeCoins(player.sessionNet + net)
         player.roundsPlayed++
         if (net > 0) player.winStreak++
         else if (net < 0) player.winStreak = 0
         const record = this.scores.get(player.playerId)
         if (record) {
-            record.net += net
+            record.net = normalizeCoins(record.net + net)
             record.winStreak = player.winStreak
         }
         this.bus.broadcast({ t: 'event', kind: 'settled', seat: player.seatIndex, name: player.name, net })

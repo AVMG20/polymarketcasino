@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { normalizeCoins } from '../shared/money'
 import { GAMES } from '../shared/games/registry'
 import { TPH_BUY_FREE_SPINS_COST } from '../shared/slots/trashpanda'
 import { serverGame } from '../server/utils/games'
@@ -24,12 +25,12 @@ describe('playRound', () => {
         let expected = 10_000
         for (let i = 0; i < 30; i++) {
             const round = await playRound(id, 'dice', { bet: 100, options: { chance: 50 } })
-            expected += round.payout - round.stake
+            expected = normalizeCoins(expected + round.payout - round.stake)
             expect(round.balance).toBe(expected)
             expect(round.payout === 0 || round.payout === 196).toBe(true)
         }
         expect(coinsOf(id).coins).toBe(expected)
-        expect(ledgerSum(id)).toBe(expected - 10_000)
+        expect(ledgerSum(id)).toBe(normalizeCoins(expected - 10_000))
     })
 
     it('settles slot rounds and feature buys', async () => {
@@ -41,6 +42,22 @@ describe('playRound', () => {
         expect((buy.result as { freeSpins: { spins: unknown[] } }).freeSpins.spins.length).toBeGreaterThan(0)
     })
 
+    it('plays a decimal bet from the minimum of 10 and pays to 0.0001 coin', async () => {
+        const id = seedPlayer(100)
+        let expected = 100
+        for (let i = 0; i < 20; i++) {
+            const round = await playRound(id, 'dice', { bet: 10.0001, options: { chance: 50 } })
+            expect(round.stake).toBe(10.0001)
+            // 10.0001 × 1.96 = 19.600196: rounded down to 19.6001.
+            expect([0, 19.6001]).toContain(round.payout)
+            expected = normalizeCoins(expected - round.stake + round.payout)
+            expect(round.balance).toBe(expected)
+            if (expected < 10.0001) break
+        }
+        expect(coinsOf(id).coins).toBe(expected)
+        expect(ledgerSum(id)).toBe(normalizeCoins(expected - 100))
+    })
+
     it('takes the roulette stake from the bets on the layout', async () => {
         const id = seedPlayer(1_000)
         const round = await playRound(id, 'roulette', { options: { bets: [{ kind: 'red', amount: 30 }, { kind: 'straight', value: 7, amount: 20 }] } })
@@ -50,8 +67,8 @@ describe('playRound', () => {
     it('rejects bad bets and unknown games', async () => {
         const id = seedPlayer(1_000)
         await expect(playRound(id, 'nope', { bet: 100 })).rejects.toMatchObject({ statusCode: 404 })
-        await expect(playRound(id, 'dice', { bet: 50 })).rejects.toMatchObject({ statusCode: 400 })
-        await expect(playRound(id, 'dice', { bet: 150.5 })).rejects.toMatchObject({ statusCode: 400 })
+        await expect(playRound(id, 'dice', { bet: 9.9999 })).rejects.toMatchObject({ statusCode: 400 })
+        await expect(playRound(id, 'dice', { bet: 150.00001 })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'dice', { bet: 100, options: { chance: 99 } })).rejects.toMatchObject({ statusCode: 400 })
         await expect(playRound(id, 'dice', { bet: 2_000 })).rejects.toMatchObject({ statusCode: 400 })
         expect(coinsOf(id).coins).toBe(1_000)
@@ -65,7 +82,7 @@ describe('playRound', () => {
         await expect(playRound(id, 'dice', { bet: 100, options: ['chance'] })).resolves.toMatchObject({ stake: 100 })
         // Only that last round moved coins: lost 100 or won 196 - 100.
         expect([9_900, 10_096]).toContain(coinsOf(id).coins)
-        expect(ledgerSum(id)).toBe(coinsOf(id).coins - 10_000)
+        expect(ledgerSum(id)).toBe(normalizeCoins(coinsOf(id).coins - 10_000))
     })
 
     it('rejects malformed roulette layouts without charging', async () => {
@@ -76,7 +93,7 @@ describe('playRound', () => {
             [{ kind: 'straight', value: '7', amount: 10 }],
             [{ kind: 'dozen', value: 4, amount: 10 }],
             [{ kind: 'red', amount: '10' }],
-            [{ kind: 'red', amount: 10.5 }],
+            [{ kind: 'red', amount: 10.00001 }],
             [null],
             // 41 different spots: one more than a layout holds.
             [...Array.from({ length: 37 }, (_, n) => ({ kind: 'straight', value: n, amount: 10 })), { kind: 'red', amount: 10 }, { kind: 'black', amount: 10 }, { kind: 'odd', amount: 10 }, { kind: 'even', amount: 10 }]
@@ -97,7 +114,7 @@ describe('playRound', () => {
         const played = results.filter(r => r.status === 'fulfilled').length
         const { coins } = coinsOf(id)
         expect(coins).toBeGreaterThanOrEqual(0)
-        expect(ledgerSum(id)).toBe(coins - 500)
+        expect(ledgerSum(id)).toBe(normalizeCoins(coins - 500))
         expect(played).toBeGreaterThanOrEqual(5)
         for (const r of results) if (r.status === 'rejected') expect(r.reason).toMatchObject({ statusCode: 400 })
     })
