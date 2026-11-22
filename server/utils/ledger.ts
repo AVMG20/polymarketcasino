@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { db, type DbExecutor, type Tx, writeTx } from '../database'
 import { coinTransactions, players } from '../database/schema'
+import { isCoinAmount, normalizeCoins, toUnits } from '../../shared/money'
 import { starLevel } from '../../shared/stars'
 import { syncStars, type StarChange } from './stars'
 
@@ -12,8 +13,10 @@ import { syncStars, type StarChange } from './stars'
  * from a failed report is retried in the background). A game cannot move
  * coins without its stars following.
  *
- * Amounts are whole positive coins. Every change writes a coin_transactions
- * row; its id is the `seq` star reports use.
+ * Amounts are positive coins with at most four decimals; the database holds
+ * them as units of 1/10,000 coin (schema.ts converts its columns, the raw SQL
+ * here binds `toUnits` itself). Every change writes a coin_transactions row;
+ * its id is the `seq` star reports use.
  */
 
 export interface CoinChange {
@@ -39,10 +42,11 @@ export interface CoinWork {
     debit(change: Omit<CoinChange, 'refund'>): CoinBalance
 }
 
-function assertAmount(amount: number) {
-    if (!Number.isSafeInteger(amount) || amount <= 0) {
-        throw createError({ statusCode: 400, statusMessage: 'Invalid amount' })
-    }
+/** The amount in database units; throws 400 unless it is a positive coin amount (four decimals at most). */
+function amountUnits(amount: number): number {
+    const units = isCoinAmount(amount) ? toUnits(amount) : 0
+    if (units <= 0) throw createError({ statusCode: 400, statusMessage: 'Invalid amount' })
+    return units
 }
 
 /** A balance as the ledger sees it: plus the level the hub last confirmed. */
@@ -53,13 +57,13 @@ interface LedgerBalance extends CoinBalance {
 const balanceColumns = { coins: players.coins, peakCoins: players.peakCoins, starsReported: players.starsReported }
 
 function applyCredit(tx: Tx, change: CoinChange): LedgerBalance {
-    assertAmount(change.amount)
+    const units = amountUnits(change.amount)
     // Balance and peak move in one statement. In SET, `coins` is the old value
     // on both sides, so the peak can never lag behind a credit that beat it.
     const updated = tx.update(players)
         .set({
-            coins: sql`${players.coins} + ${change.amount}`,
-            peakCoins: sql`max(${players.peakCoins}, ${players.coins} + ${change.amount})`,
+            coins: sql`${players.coins} + ${units}`,
+            peakCoins: sql`max(${players.peakCoins}, ${players.coins} + ${units})`,
             updatedAt: new Date()
         })
         .where(eq(players.id, change.playerId))
@@ -81,10 +85,10 @@ function applyCredit(tx: Tx, change: CoinChange): LedgerBalance {
 // The `coins >= amount` guard lives in the WHERE clause: the check and the
 // decrement are one statement, so nothing can push a balance negative.
 function applyDebit(tx: Tx, change: Omit<CoinChange, 'refund'>): LedgerBalance {
-    assertAmount(change.amount)
+    const units = amountUnits(change.amount)
     const updated = tx.update(players)
-        .set({ coins: sql`${players.coins} - ${change.amount}`, updatedAt: new Date() })
-        .where(and(eq(players.id, change.playerId), sql`${players.coins} >= ${change.amount}`))
+        .set({ coins: sql`${players.coins} - ${units}`, updatedAt: new Date() })
+        .where(and(eq(players.id, change.playerId), sql`${players.coins} >= ${units}`))
         .returning(balanceColumns)
         .get()
     if (!updated) throw createError({ statusCode: 400, statusMessage: 'Not enough coins' })
@@ -131,7 +135,7 @@ export function commitCoins<T>(work: (coins: CoinWork) => T): CommittedCoins<T> 
     const after = new Map<string, LedgerBalance>()
     const value = writeTx((tx) => {
         const track = (playerId: string, balance: LedgerBalance, delta: number): CoinBalance => {
-            if (!before.has(playerId)) before.set(playerId, balance.coins - delta)
+            if (!before.has(playerId)) before.set(playerId, normalizeCoins(balance.coins - delta))
             after.set(playerId, balance)
             return { coins: balance.coins, peakCoins: balance.peakCoins }
         }

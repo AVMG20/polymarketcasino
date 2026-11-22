@@ -15,6 +15,13 @@
       "when": 1795271512832,
       "tag": "0001_table_wagers",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795300351183,
+      "tag": "0002_decimal_coins",
+      "breakpoints": true
     }
   ]
 }

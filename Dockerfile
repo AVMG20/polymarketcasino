@@ -17,11 +17,13 @@ WORKDIR /app
 
 # Migrations run at container start against the mounted database, so the
 # runtime image keeps the migrator: drizzle-orm (the locked version from the
-# build stage; it has no dependencies), the schema and the SQL files.
+# build stage; it has no dependencies), the schema, the coin-unit helpers the
+# schema imports (shared/money.ts has no imports of its own) and the SQL files.
 COPY --from=build /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
 COPY --from=build /app/.output ./.output
 COPY drizzle ./drizzle
 COPY server/database ./server/database
+COPY shared/money.ts ./shared/money.ts
 COPY scripts/migrate.ts ./scripts/migrate.ts
 COPY --chmod=755 docker-entrypoint.sh ./
 

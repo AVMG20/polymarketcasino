@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { coinTransaction, listCoinHistory } from '../server/utils/ledger'
-import { writeTx } from '../server/database'
+import { sqlite, writeTx } from '../server/database'
 import { coinsOf, ledgerSum, seedPlayer } from './setup/players'
 
 const credit = (playerId: string, amount: number) => coinTransaction(coins => coins.credit({ playerId, amount, category: 'dice' }))
@@ -33,9 +33,27 @@ describe('coin ledger', () => {
         expect(listCoinHistory(id)).toHaveLength(0)
     })
 
-    it('rejects fractional, zero and negative amounts', async () => {
+    it('rejects zero, negative and past-four-decimal amounts', async () => {
         const id = seedPlayer(100)
-        for (const amount of [0, -5, 1.5, Number.NaN]) await expect(credit(id, amount)).rejects.toMatchObject({ statusCode: 400 })
+        for (const amount of [0, -5, 1.23456, 0.00001, Number.NaN, Number.POSITIVE_INFINITY]) {
+            await expect(credit(id, amount)).rejects.toMatchObject({ statusCode: 400 })
+        }
+        expect(coinsOf(id).coins).toBe(100)
+    })
+
+    it('moves decimal amounts exactly and stores them as units', async () => {
+        const id = seedPlayer(10)
+        expect((await credit(id, 0.1)).value.coins).toBe(10.1)
+        expect((await credit(id, 0.2)).value.coins).toBe(10.3)
+        expect((await debit(id, 0.0001)).value.coins).toBe(10.2999)
+        expect((await debit(id, 10.2999)).value.coins).toBe(0)
+        await expect(debit(id, 0.0001)).rejects.toMatchObject({ statusCode: 400 })
+        expect(listCoinHistory(id).map(row => row.amount)).toEqual([10.2999, 0.0001, 0.2, 0.1])
+        expect(ledgerSum(id)).toBe(-10)
+        const raw = sqlite.query('select coins, peak_coins as peak from players where id = ?').get(id)
+        expect(raw).toEqual({ coins: 0, peak: 103_000 })
+        const rows = sqlite.query('select amount, balance_after as after from coin_transactions where player_id = ? order by id').all(id)
+        expect(rows).toEqual([{ amount: 1_000, after: 101_000 }, { amount: 2_000, after: 103_000 }, { amount: 1, after: 102_999 }, { amount: 102_999, after: 0 }])
     })
 
     it('raises the peak only when a credit beats it', async () => {

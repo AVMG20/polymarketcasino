@@ -1,10 +1,22 @@
 import { sql } from 'drizzle-orm'
-import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { customType, index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { fromUnits, toUnits } from '../../shared/money'
 
 /**
- * Coins are whole integers (SQLite INTEGER is 64-bit). Payouts round down to
- * the coin, so rounding never creates coins. Timestamps are Unix milliseconds.
+ * Coins carry four decimals and are stored as whole units of 1/10,000 coin
+ * (SQLite INTEGER, 64-bit), so the database never holds a float. Every coin
+ * column is a `coins()` column: Drizzle converts coins ↔ units on the way in
+ * and out, so code reads and writes coins. Raw `sql` fragments are not
+ * converted: bind `toUnits(x)` there yourself (see ledger.ts). Payouts round
+ * down to 0.0001 coin, so rounding never creates coins. Timestamps are Unix
+ * milliseconds.
  */
+
+const coins = customType<{ data: number, driverData: number }>({
+    dataType: () => 'integer',
+    toDriver: value => toUnits(value),
+    fromDriver: value => fromUnits(Number(value))
+})
 
 const createdAt = () => integer('created_at', { mode: 'timestamp_ms' }).notNull().default(sql`(unixepoch('subsec') * 1000)`)
 
@@ -21,10 +33,10 @@ export const players = sqliteTable('players', {
     // 'hub' players arrived with a launch token and exist at the hub; 'dev'
     // players come from the dev login and never touch the hub.
     origin: text('origin', { enum: ['hub', 'dev'] }).notNull().default('hub'),
-    coins: integer('coins').notNull().default(0),
+    coins: coins('coins').notNull().default(0),
     // Highest balance ever held (a stat), raised in the same statement as the
     // credit that beats it.
-    peakCoins: integer('peak_coins').notNull().default(0),
+    peakCoins: coins('peak_coins').notNull().default(0),
     // The star level the hub last confirmed, and the ledger row id (`seq`) it
     // was reported with. When starLevel(coins) differs, a report is due.
     starsReported: integer('stars_reported').notNull().default(0),
@@ -40,12 +52,12 @@ export const coinTransactions = sqliteTable(
         id: integer('id').primaryKey({ autoIncrement: true }),
         playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
         // Always positive; `type` says which way it moved.
-        amount: integer('amount').notNull(),
+        amount: coins('amount').notNull(),
         type: text('type', { enum: ['credit', 'debit'] }).notNull(),
         category: text('category').notNull(),
         // The player's own money coming back (a crash refund): never income.
         refund: integer('refund', { mode: 'boolean' }).notNull().default(false),
-        balanceAfter: integer('balance_after').notNull(),
+        balanceAfter: coins('balance_after').notNull(),
         createdAt: createdAt()
     },
     table => [index('coin_transactions_player_idx').on(table.playerId, table.id)]
@@ -68,7 +80,7 @@ export const gemConversions = sqliteTable(
         id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
         playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
         gems: integer('gems').notNull(),
-        coins: integer('coins').notNull(),
+        coins: coins('coins').notNull(),
         status: text('status', { enum: ['pending', 'done', 'failed'] }).notNull().default('pending'),
         idempotencyKey: text('idempotency_key').notNull().unique(),
         spendId: text('spend_id'),
@@ -86,7 +98,7 @@ export const allowanceClaims = sqliteTable(
     {
         playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
         day: text('day').notNull(),
-        amount: integer('amount').notNull(),
+        amount: coins('amount').notNull(),
         createdAt: createdAt()
     },
     table => [primaryKey({ columns: [table.playerId, table.day] })]
@@ -102,8 +114,8 @@ export const gameRounds = sqliteTable(
         id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
         playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
         game: text('game').notNull(),
-        stake: integer('stake').notNull(),
-        payout: integer('payout').notNull(),
+        stake: coins('stake').notNull(),
+        payout: coins('payout').notNull(),
         summary: text('summary', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
         createdAt: createdAt()
     },
@@ -126,7 +138,7 @@ export const tableWagers = sqliteTable(
         // The table's slug, which is also the ledger category.
         game: text('game').notNull(),
         roundId: integer('round_id').notNull(),
-        amount: integer('amount').notNull(),
+        amount: coins('amount').notNull(),
         // What the stake was for: 'bet', 'double', 'split', 'ante', 'call', …
         kind: text('kind').notNull(),
         status: text('status', { enum: ['open', 'settled', 'refunded'] }).notNull().default('open'),
