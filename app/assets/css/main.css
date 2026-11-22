@@ -44,6 +44,11 @@
     --success: oklch(0.70 0.17 150);
     --warning: oklch(0.77 0.16 70);
     --info: oklch(0.66 0.14 240);
+    /* Stats charts: gain (teal), loss (coral) and balance (violet), the hub's
+       chart steps, validated together for CVD and contrast on the card. */
+    --chart-gain: oklch(0.62 0.12 185);
+    --chart-loss: oklch(0.62 0.18 35);
+    --chart-balance: oklch(0.57 0.21 285);
 }
 
 .dark {
@@ -73,6 +78,9 @@
     --success: oklch(0.74 0.16 150);
     --warning: oklch(0.82 0.15 75);
     --info: oklch(0.72 0.13 240);
+    --chart-gain: oklch(0.66 0.12 185);
+    --chart-loss: oklch(0.66 0.16 38);
+    --chart-balance: oklch(0.66 0.18 285);
 }
 
 @theme inline {
@@ -112,6 +120,9 @@
     --color-warning: var(--warning);
     --color-info: var(--info);
     --color-error: var(--destructive);
+    --color-chart-gain: var(--chart-gain);
+    --color-chart-loss: var(--chart-loss);
+    --color-chart-balance: var(--chart-balance);
 }
 
 @layer base {

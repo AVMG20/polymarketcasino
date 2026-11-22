@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronLeft, LogOut } from 'lucide-vue-next'
+import { ChartNoAxesColumn, ChevronLeft, LogOut } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 
 /**
@@ -10,7 +10,9 @@ const { player, coins, signOut } = useCasinoSession()
 const { wallet, refresh, setGems } = useWallet()
 const { embedded, onHello } = useHubBridge()
 const route = useRoute()
-const inGame = computed(() => route.path.startsWith('/games/'))
+// Every page but the lobby gets the way back to it.
+const away = computed(() => route.path !== '/')
+const onStats = computed(() => route.path === '/stats')
 
 onMounted(() => {
     if (!wallet.value) void refresh()
@@ -22,7 +24,7 @@ onMounted(() => {
 <template>
   <header class="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
     <div class="mx-auto flex max-w-7xl items-center gap-3 px-4" :class="embedded ? 'h-11' : 'h-14'">
-      <NuxtLink v-if="inGame" to="/" class="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground">
+      <NuxtLink v-if="away" to="/" class="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground">
         <ChevronLeft class="size-4" />
         Lobby
       </NuxtLink>
@@ -32,6 +34,11 @@ onMounted(() => {
 
       <div class="ml-auto flex items-center gap-2">
         <CasinoStarTrack v-if="wallet && !embedded" :level="wallet.stars.level" size="sm" class="mr-1 hidden md:flex" />
+        <Button v-if="!onStats" as-child size="icon" variant="ghost" class="max-sm:size-11" title="Stats">
+          <NuxtLink to="/stats" aria-label="Stats">
+            <ChartNoAxesColumn class="size-4" />
+          </NuxtLink>
+        </Button>
         <CasinoCoinChip :amount="coins" />
         <template v-if="!embedded && wallet?.hubAccount">
           <CasinoGemChip :amount="wallet.gems" />
