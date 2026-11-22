@@ -1,6 +1,6 @@
 # Polynux Casino
 
-The casino app of the Polynux platform. Players hold casino-local **coins** (whole integers) and play
+The casino app of the Polynux platform. Players hold casino-local **coins** (up to four decimals) and play
 slots, roulette, originals and multiplayer live tables (blackjack, baccarat, casino hold'em, three card poker). The hub (`polymarketcore`, `CORE_URL`) owns accounts, gems and stars;
 `docs/platform-contract.md` is the binding contract and `docs/casino-economy.md` the binding economy.
 
@@ -89,7 +89,16 @@ Multiplayer tables over WebSockets (`nitro.experimental.websocket`), one in-memo
 
 ## Coins and the ledger
 
-- Coins are whole integers. Payouts are `floor(bet × multiple)`.
+- Coins carry up to four decimals. The database stores **units of 1/10,000 coin** as integers: every
+  coin column in `schema.ts` is a `coins()` column that converts on the way in and out, so code reads and
+  writes coins. Raw `sql` fragments are not converted: bind `toUnits(x)` yourself (as `ledger.ts` does),
+  and read sums back with `fromUnits`. The schema imports `shared/money.ts`, so the runtime image copies
+  that file for the migrator; keep it free of imports.
+- Money math goes through `#shared/money`: `payFor(bet, multiple)` (rounded down to 0.0001),
+  `costFor(bet, cost)` (feature prices, rounded up), `roundCoins` (a summed coin total, rounded down),
+  `sumCoins` / `sameCoins` / `normalizeCoins` (add and compare without float noise: 0.1 + 0.2),
+  `isCoinAmount` (validates input: at most four decimals). Never `Math.floor(bet * x)`.
+- Bets are 10 to 1,000,000 coins with at most four decimals (live tables: their chip minimum).
 - **Every coin change goes through `coinTransaction` in `server/utils/ledger.ts`**: one `BEGIN
   IMMEDIATE` transaction whose body is synchronous, then a star-level report for every player whose
   level moved (`commitCoins` is the same unit with the star report returned as a promise; the live
@@ -141,8 +150,12 @@ Outcomes use `cryptoRng` from `shared/rng.ts` on the server. `seededRng` is for 
   star level and celebrations. `useGameRound(slug)`: `play()` then `settle()` **after** the animation and
   win reveal (it applies the balance and stars; leaving mid-round settles too). Don't refetch the
   session per round.
-- `formatCoins` for every coin or gem amount; `parseAmount` (via `GameBetInput`) for amount fields
-  (accepts `10k`, `2.5m`).
+- Numbers are Dutch (nl-NL). `formatCoins(value)` for every coin or gem amount in the casino's own UI:
+  whole coins with `.` thousands (`2.137`), up to two decimals only under 10 coins (`2,5`), never
+  rounded up; put `formatCoinsExact(value)` (`2.137,5`) in a `title`. `formatCoins(value, true)` is the
+  compact form for chips (`25K`). Ported games keep the old site's `formatNumber` (`2,14K`).
+- `parseAmount` (via `GameBetInput` / `useAmountInput`) for amount fields, Dutch first: `2.137` is
+  2137, `2,5` is 2.5, `2,137.5` is 2137.5, plus `10k` / `2,5m`. The rules are on `parseAmount`.
 - Toasts are for errors and failures only. No success toasts.
 - Layouts must work at phone width inside the hub iframe: no horizontal scroll (use `grid-cols-1` /
   `minmax(0,1fr)` so wide children can't widen a track), thumb-sized controls (44 px+).

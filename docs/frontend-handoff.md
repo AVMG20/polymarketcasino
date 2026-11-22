@@ -17,9 +17,11 @@ below.
 | `useLiveTable(slug, onGameEvent?)` | A live table's socket: `state` (snapshot), `me`, `mySeat`, `phase`, `connected`, `feed`, `secondsLeft`, `phaseProgress`, `nextRoundIn`, `sit`, `leave`, `voteStart`, `chat`, `act(action)`. Applies pushed balances and stars itself. |
 | `useTableSound()` | Synthesized chip, card, flip, win, lose and turn effects; shares the mute switch. |
 
-Coins and gems are whole numbers. Show them with `formatCoins(value, compact = true)` from
-`#shared/money` (12.3K, 4.56M; never rounds up). Amount inputs go through `GameBetInput` (accepts `10k`,
-`2.5m`, shows what it read).
+Coins carry up to four decimals, gems are whole. Show amounts with `formatCoins(value)` from
+`#shared/money` (nl-NL: `2.137`, decimals only under 10 coins, `2,5`; never rounds up), with
+`formatCoinsExact` (`2.137,5`) in a `title` where the decimals matter, and `formatCoins(value, true)`
+(`25K`, `1,5m`) on chips. Ported games use the old site's `formatNumber`. Amount inputs go through
+`GameBetInput` (accepts `2.137`, `2,5`, `2,137.5`, `10k`, `2,5m`, shows what it read).
 
 ## API shapes
 

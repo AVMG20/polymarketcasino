@@ -11,8 +11,8 @@ port (`app/components/games/SpinataGame.vue`, `shared/slots/spinata/`).
 |---|---|---|
 | `composables/useSlotGame.ts` | same | Plays through `useGameRound(slug)`. `bet` starts at the registry `minBet`. |
 | `composables/slot-autoplay.ts` (`useSlotAutoplay`) | same | Also stops when the game unmounts. |
-| `composables/amount-input.ts` (`useAmountInput`, `amountShorthand`) | same | Parses with `parseAmount` from `#shared/money` (whole coins). |
-| `utils/amount-preview.ts`, `utils/format-number.ts` (`formatNumber`) | same | `formatNumber` is the casino's `formatCoins` for whole amounts (en-US, `12.3K` from 10,000); fractions keep 2 decimals below 1,000, as before. |
+| `composables/amount-input.ts` (`useAmountInput`, `amountShorthand`) | same | Parses with `parseAmount` from `#shared/money` (coins to four decimals, Dutch first: `2.137` is 2137, `2,5` is 2.5); writes values back with a decimal comma. |
+| `utils/amount-preview.ts`, `utils/format-number.ts` (`formatNumber`) | same | `formatNumber` is the old site's, verbatim (nl-NL, two decimals: `2,14K` compact, `2.137` standard; lives in `shared/money.ts`). The preview shows every decimal (`formatCoinsExact`). |
 | `utils/slots/slot-controls.ts`, `utils/slots/reel-suspense.ts` | same | None. |
 | `components/slots/SlotControlBar, SlotAutoSpinDialog, SlotBuyDialog, SlotDialog` | same | `UIcon` → lucide icons. |
 | `components/AutoSpinModal, BetControls, BigWinOverlay, SlotVolatility` | same | `UModal`/`UButton`/`UInput`/`UTooltip` rebuilt (see below). |
@@ -30,7 +30,7 @@ port (`app/components/games/SpinataGame.vue`, `shared/slots/spinata/`).
   returns `{ gameData: response.result, balance, stake, payout }`, so code reading `data.gameData` ports unchanged; a result
   that no longer carries the old `bet`/`payout`/`cost` fields rebuilds them from `stake` and `payout` (Candy Madness).
   A failure sets `errorMsg` (the server's message) and `useGameRound` toasts it.
-- **Bets.** Bounds come from the registry (`findGame(slug).minBet/maxBet`, 100 to 1,000,000), not the old
+- **Bets.** Bounds come from the registry (`findGame(slug).minBet/maxBet`, 10 to 1,000,000), not the old
   1 to 100B. Build the old 1-2-5 ladder inside those bounds.
 - **Sound.** Keep the game's own sound composable with its per-game `localStorage` keys (mute, effects,
   music), every access in try/catch. Module-level watchers belong in a detached `effectScope(true)`, or
@@ -50,7 +50,8 @@ port (`app/components/games/SpinataGame.vue`, `shared/slots/spinata/`).
 1. Port `shared/utils/gamelogic/<game>.ts` verbatim into `shared/slots/<game>/index.ts`: same constants,
    tables and result shape (the client reads it), with an `rng: Rng` parameter instead of `randomFloat`
    (never `Math.random`), `RangeError` instead of `createError`.
-2. Pay whole coins: `payout = floor(bet × win)`; keep the old cap. Add `parse<Game>Options` (unknown keys
+2. Pay `payout = payFor(bet, win)` (bet × win rounded down to 0.0001 coin, from `#shared/money`); price buys with
+   `costFor(bet, cost)`; keep the old cap. Add `parse<Game>Options` (unknown keys
    and bad values throw `RangeError`) and `<game>Stake`.
 3. Add the entry in `server/utils/games.ts` (`stake`, `payout`, `result`, `summary`).
 4. `scripts/<game>-rtp.ts` runs the real module with `seededRng`. Target ≈96% for spins and buys; if the

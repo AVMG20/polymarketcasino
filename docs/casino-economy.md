@@ -6,10 +6,11 @@ slug `casino`, name "Polynux Casino", playPath `/`, visibility `public`. All slo
 ## Coins
 
 - Coins are casino-local. They never leave the casino and never turn back into gems.
-- **Whole integers** everywhere: SQLite `INTEGER` columns, the API, the client. Payouts are
-  `floor(bet × multiple)`, so rounding never creates coins. Games with fractional multipliers start at a
-  100-coin minimum bet, where that rounding costs well under 1% RTP (roulette pays whole multiples and
-  starts at 10). Max bet 1,000,000.
+- Coins carry **up to four decimals**. The database counts them in units of 1/10,000 coin (SQLite
+  `INTEGER` columns, so sums stay exact); the API and the client carry decimal coins (`2137.5`).
+  Payouts are `bet × multiple` rounded down to 0.0001 coin (`payFor`), so rounding never creates coins
+  and costs no visible RTP at small bets; feature prices round up to 0.0001 (`costFor`). Bets may have
+  decimals too. Slots, originals and roulette take 10 to 1,000,000 per bet. Gems stay whole.
 - Every change goes through `coinTransaction` in `server/utils/ledger.ts` (or `commitCoins`, the same
   transaction with the star report left in the background, used by the live tables) and writes a
   `coin_transactions` row (category = the game's plain lowercase name: `'spinata'`, `'dice'`,
