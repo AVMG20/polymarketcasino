@@ -641,7 +641,7 @@ onUnmounted(() => {
     portals.clear()
     drift?.destroy()
     safeDestroy(() => fx?.destroy())
-    safeDestroy(() => app?.destroy(true, { children: true }))
+    safeDestroy(() => app?.destroy({ removeView: true }, { children: true }))
     for (const t of ownedTextures.splice(0)) safeDestroy(() => t.destroy(true))
     fx = null
     app = null
@@ -1592,7 +1592,7 @@ async function spin(buy = false) {
     const mode: Mode = buy ? 'buy' : ante.value ? 'ante' : 'normal'
     const cost = mode === 'buy' ? buyCost.value : spinCost.value
     if (balance.value < cost) {
-        errorMsg.value = 'Not enough coins for this bet'
+        errorMsg.value = 'Balance too low for this bet'
         sfx('error')
         stopAutoplay()
         return
@@ -2113,8 +2113,8 @@ const portalChipColor = (m: number) => tierCss(m).glow
   /* Size scale for the HUD around the board (0.88 on desktop). */
   --ep-s: 1;
   /* The board is the hero: as big as the viewport allows beside the signs. */
-  /* Room is kept for the top padding, and the win row and deck below. */
-  --board: clamp(340px, min(calc(88vh - 186px), calc(100vw - 560px)), 830px);
+  /* Room is kept for the game overlay's header, the top padding, and the win row and deck below. */
+  --board: clamp(340px, min(calc(100dvh - 330px), calc(100vw - 560px)), 830px);
   position: relative;
   min-height: 100%;
   display: flex;
@@ -2533,8 +2533,9 @@ const portalChipColor = (m: number) => tierCss(m).glow
 /* ── Control deck: one slim dark-glass strip ─────────────────────── */
 .ep-deck {
   position: relative;
-  /* As wide as the stage (sign to legend), and always inside the pillars. */
-  width: min(100%, calc(var(--board) + 2 * (240px + 28px) * var(--ep-s)), calc(var(--ep-pillars, 100%) - 48px));
+  /* As wide as the stage (sign to legend), at least wide enough for the control bar's
+     one-row layout (it folds into two rows under 900px), and always inside the pillars. */
+  width: min(100%, max(calc(var(--board) + 2 * (240px + 28px) * var(--ep-s)), 940px), calc(var(--ep-pillars, 100%) - 48px));
   margin-top: 6px;
   padding: 4px 18px;
   background: linear-gradient(180deg, rgba(8, 6, 20, 0.5), rgba(8, 6, 20, 0.78));
@@ -2732,6 +2733,11 @@ const portalChipColor = (m: number) => tierCss(m).glow
   .ep-page { --ep-s: 0.88; }
 }
 
+/* Very short desktop screens: the control bar folds into two rows, so the board gives way. */
+@media (min-width: 1101px) and (max-height: 800px) {
+  .ep-page { --board: clamp(300px, min(calc(100dvh - 412px), calc(100vw - 560px)), 830px); padding-top: 16px; }
+}
+
 /* ── Narrow screens: signs fold into rows around the board ───────── */
 @media (max-width: 1100px) {
   .ep-page { --board: min(calc(100vw - 32px), 680px); }
@@ -2758,6 +2764,12 @@ const portalChipColor = (m: number) => tierCss(m).glow
   .ep-legend__name { display: none; }
   .ep-right > .ep-hang { flex: 1 1 auto; max-width: 420px; }
   .ep-deck { width: 100%; }
+  /* Phones and the overlay on narrow screens: the deck right under the board, the buy signs after it. */
+  .ep-layout { display: contents; }
+  .ep-right { order: 1; width: var(--board); margin-bottom: 12px; }
+  .ep-center { order: 2; width: var(--board); }
+  .ep-deck { order: 3; }
+  .ep-left { order: 4; width: var(--board); margin-top: 12px; }
 }
 
 @media (max-width: 560px) {

@@ -411,7 +411,7 @@ onUnmounted(() => {
     safeDestroy(() => fx?.destroy())
     safeDestroy(() => board?.destroy())
     safeDestroy(() => reelSet?.destroy())
-    safeDestroy(() => app?.destroy(true, { children: true }))
+    safeDestroy(() => app?.destroy({ removeView: true }, { children: true }))
     for (const t of ownedTextures.splice(0)) safeDestroy(() => t.destroy(true))
     fx = null
     board = null
@@ -892,7 +892,7 @@ async function spin(buy = false) {
     sound.startMusic()
     const cost = buy ? buyBonusCost.value : bet.value
     if (balance.value < cost) {
-        say('Not enough coins for this bet', 'warn')
+        say('Balance too low for this bet', 'warn')
         sound.play('error')
         stopAutoplay()
         return
@@ -2105,6 +2105,17 @@ const volatilityPips = Array.from({ length: 5 }, (_, i) => i < XS_VOLATILITY)
   .xs-badge + .xs-badge::before { margin: 0 7px; }
 
   .xs-ticker { font-size: 10px; letter-spacing: 0.08em; }
+}
+
+/* Short desktop screens (the game overlay): a compact marquee, and reels sized to the
+   viewport's height while the control bar keeps the cabinet's width. */
+@media (min-width: 481px) and (max-height: 1000px) {
+  .xs-page { padding-top: 12px; padding-bottom: 14px; }
+  .xs-marquee { gap: 4px; padding: 4px 6px 8px; }
+  .xs-marquee__eyebrow { display: none; }
+  .xs-logo__ufo { width: 56px; }
+  .xs-logo__word { font-size: 38px; }
+  .xs-window { max-width: max(320px, calc((100dvh - 365px) * 1.71 + 8px)); margin-inline: auto; }
 }
 
 @media (max-width: 480px) {

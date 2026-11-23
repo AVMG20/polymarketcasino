@@ -7,7 +7,9 @@ import { ChevronsUpIcon, FastForwardIcon, InfoIcon, LoaderCircleIcon, MinusIcon,
 //
 // Space spins, stops or skips (never while typing or with a dialog open).
 import SlotAutoSpinDialog from '~/components/slots/SlotAutoSpinDialog.vue'
+import SlotBalanceIcons from '~/components/slots/SlotBalanceIcons.vue'
 import SlotBuyDialog from '~/components/slots/SlotBuyDialog.vue'
+import SlotCurrencyIcon from '~/components/slots/SlotCurrencyIcon.vue'
 import {
     slotAmount,
     slotThemeVars,
@@ -252,7 +254,7 @@ onBeforeUnmount(() => {
           class="sc-meter sc-a-bal"
           :class="{ 'is-shake': balanceShake > 0 }"
         >
-          <span class="sc-label">Balance</span>
+          <span class="sc-label"><SlotBalanceIcons />Balance</span>
           <span class="sc-value">
             <span class="sc-wide">{{ slotAmount(balance) }}</span>
             <span class="sc-narrow">{{ slotAmount(balance, true) }}</span>
@@ -271,7 +273,7 @@ onBeforeUnmount(() => {
             :key="`win${winPulse}`"
             class="sc-value"
             :class="{ 'is-pop': winPulse > 0 && win > 0 }"
-          >{{ slotAmount(win) }}</span>
+          ><SlotCurrencyIcon v-if="win > 0" currency="chips" class="sc-cur" />{{ slotAmount(win) }}</span>
           <span
             v-if="winNote"
             class="sc-meter__note"
@@ -620,6 +622,8 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.sc-cur { margin-right: 0.22em; font-size: 0.82em; }
 
 .sc-meter--win .sc-value { color: var(--sc-muted); transition: color 0.2s; }
 .sc-meter--win.is-hot .sc-value { color: var(--sc-win); text-shadow: 0 0 14px color-mix(in srgb, var(--sc-win) 45%, transparent); }
@@ -1028,6 +1032,14 @@ onBeforeUnmount(() => {
   .sc-step { width: 28px; height: 28px; }
   .sc-bet__value, .sc-bet__input { width: 52px; font-size: 15px; }
   .sc-sound__panel { right: 0; left: auto; }
+}
+
+/* ── narrow phones and iframes (360px and under): squeeze the play row ── */
+@container sc (max-width: 360px) {
+  .sc-zone--play { gap: 4px; }
+  .sc-bet { gap: 2px; }
+  .sc-bet__value, .sc-bet__input { width: 44px; }
+  .sc-tile--max { width: 36px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

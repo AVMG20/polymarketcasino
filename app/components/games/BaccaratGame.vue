@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { formatNumber } from '#shared/money'
+import { formatCoins, sumCoins } from '#shared/money'
 import {
     BAC_PAYS, BAC_SPOTS, bacHandTotal, bacSpotReturn, bacTotal, bigRoadColumns,
     type BacAction, type BacRound, type BacSeat, type BacShared, type BacSpot
@@ -8,9 +8,10 @@ import type { Card } from '#shared/tables/cards'
 import { cardBack, cardFace } from '~/utils/live-table/art'
 
 const sound = useTableSound()
-const table = useLiveTable<BacSeat, BacShared, BacAction>('baccarat')
+const table = useLiveTable<BacSeat, BacShared, BacAction>('baccarat', undefined, seat => bacTotal(seat.staked))
 const { state, mySeat, phase, connected } = table
-const { coins } = useCasinoSession()
+/** What the player can stake: coins first, then chips (the name stays for the checks below). */
+const coins = useBankroll().total
 const chip = ref(100)
 
 // ─── felt geometry, the old table's 1720-wide stage ─────────────────────────
@@ -146,6 +147,13 @@ const votes = computed(() => {
     return seated.length > 1 ? ` ${seated.filter(s => s!.votedStart).length}/${seated.length}` : ''
 })
 
+/** What the revealed hand returns on your bets, less what they cost. */
+const myNet = computed(() => {
+    if (!me.value || !round.value) return 0
+    const back = sumCoins(BAC_SPOTS.map(spot => bacSpotReturn(spot, me.value!.staked[spot], round.value!)))
+    return sumCoins([back, -bacTotal(me.value.staked)])
+})
+
 const phaseLabel = computed(() => {
     if (phase.value === 'betting') return 'PLACE YOUR BETS'
     if (winner.value) return winner.value === 'tie' ? 'TIE' : `${winner.value.toUpperCase()} WINS`
@@ -165,21 +173,24 @@ const CARD_BACK = cardBack()
     slug="baccarat"
     :connected="connected"
     :message="revealed || !round ? (state?.message ?? 'Connecting') : 'Dealing'"
-    :seconds="table.secondsLeft.value"
-    :progress="table.phaseProgress.value"
-    :next-round-in="table.nextRoundIn.value"
+    :clock="table.clock.value"
     :watching="state?.watching ?? 0"
     :seated="!!mySeat"
     :leaving="!!mySeat?.leaving"
     :open-seat="openSeat"
     :feed="table.feed.value"
     :scoreboard="state?.scoreboard ?? []"
-    @chat="table.chat"
+    tone="red"
+    :can-sit="table.canSit.value"
+    :players="seats.filter(Boolean).length"
+    :win="table.win.value"
+    :send-chat="table.chat"
     @leave="table.leave"
     @sit="table.sit"
+    @build="table.build"
   >
     <template #felt>
-      <LiveTableStage>
+      <LiveTableStage tone="red">
         <!-- Shoe and discard: the trays every card is dealt from and swept to. -->
         <div class="lt-tray" :style="{ left: `${DISCARD_POS.x}px`, top: `${DISCARD_POS.y}px` }">
           <template v-if="(shoe?.dealt ?? 0) > 0">
@@ -227,19 +238,16 @@ const CARD_BACK = cardBack()
         </div>
 
         <div class="lt-rules" style="top: 372px">PLAYER PAYS 1:1 · BANKER PAYS 0.95:1 · TIE PAYS 8:1 · PAIRS PAY 11:1</div>
-        <div class="lt-phase" style="top: 412px">
-          <span class="label" :class="{ win: !!winner }">{{ phaseLabel }}</span>
-          <template v-if="table.nextRoundIn.value !== null">
-            <span class="next">NEXT HAND</span>
-            <span class="count">{{ table.nextRoundIn.value }}</span>
-          </template>
-          <span v-else-if="table.secondsLeft.value !== null && phase === 'betting'" class="count" :class="{ urgent: table.secondsLeft.value <= 5 }">{{ table.secondsLeft.value }}</span>
-        </div>
+        <LiveTablePhase
+          :label="phaseLabel"
+          :tone="winner ? 'win' : ''"
+          :top="400"
+          :clock="table.clock.value"
+          :timed="phase === 'betting'"
+        />
 
         <template v-for="(pos, i) in SEAT_POS" :key="i">
-          <div v-if="!seats[i]" class="lt-sit" :class="{ taken: !!mySeat || !connected }" :style="{ left: `${pos.x}px`, top: `${pos.y + 106}px` }" @click="!mySeat && connected && table.sit(i)">
-            <span class="lbl">SIT</span>
-          </div>
+          <LiveTableSit v-if="!seats[i]" :x="pos.x" :y="pos.y + 106" :mode="!!mySeat || !connected ? 'taken' : table.canSit.value ? 'open' : 'locked'" @sit="table.canSit.value ? table.sit(i) : table.build()" />
           <template v-else>
             <div
               v-for="def in SPOT_DEFS"
@@ -259,7 +267,7 @@ const CARD_BACK = cardBack()
               {{ def.label }}
             </div>
             <div v-if="bacTotal(phase === 'betting' ? seats[i]!.game.bets : seats[i]!.game.staked)" class="lt-amt" :style="{ left: `${pos.x}px`, top: `${pos.y + 192}px` }">
-              {{ formatNumber(bacTotal(phase === 'betting' ? seats[i]!.game.bets : seats[i]!.game.staked)) }}
+              {{ formatCoins(bacTotal(phase === 'betting' ? seats[i]!.game.bets : seats[i]!.game.staked)) }}
             </div>
             <LiveTablePlate :seat="seats[i]!" :x="pos.x" :y="pos.y + 240" :mine="seats[i]!.playerId === table.me.value" :ready="phase === 'betting' && seats[i]!.votedStart" />
           </template>
@@ -290,20 +298,19 @@ const CARD_BACK = cardBack()
     </template>
 
     <template #controls>
-      <p v-if="!connected" class="lt-hint-text">Connecting…</p>
-      <p v-else-if="!mySeat" class="lt-hint-text">Click an open <b>SIT</b> spot to join the table.</p>
+      <template v-if="!connected || !mySeat" />
       <template v-else-if="betting">
         <div class="lt-touch-spots grid-cols-6">
-          <button type="button" class="lt-touch-spot col-span-2" @click="place('playerPair')">P Pair<small>{{ pays('playerPair') }}</small><span v-if="me!.bets.playerPair" class="amt">{{ formatNumber(me!.bets.playerPair) }}</span></button>
-          <button type="button" class="lt-touch-spot col-span-2" @click="place('tie')">Tie<small>{{ pays('tie') }}</small><span v-if="me!.bets.tie" class="amt">{{ formatNumber(me!.bets.tie) }}</span></button>
-          <button type="button" class="lt-touch-spot col-span-2" @click="place('bankerPair')">B Pair<small>{{ pays('bankerPair') }}</small><span v-if="me!.bets.bankerPair" class="amt">{{ formatNumber(me!.bets.bankerPair) }}</span></button>
-          <button type="button" class="lt-touch-spot col-span-3 !border-sky-400/70" @click="place('player')">Player<small>{{ pays('player') }}</small><span v-if="me!.bets.player" class="amt">{{ formatNumber(me!.bets.player) }}</span></button>
-          <button type="button" class="lt-touch-spot col-span-3 !border-red-400/70" @click="place('banker')">Banker<small>{{ pays('banker') }}</small><span v-if="me!.bets.banker" class="amt">{{ formatNumber(me!.bets.banker) }}</span></button>
+          <button type="button" class="lt-touch-spot col-span-2" @click="place('playerPair')">P Pair<small>{{ pays('playerPair') }}</small><span v-if="me!.bets.playerPair" class="amt">{{ formatCoins(me!.bets.playerPair) }}</span></button>
+          <button type="button" class="lt-touch-spot col-span-2" @click="place('tie')">Tie<small>{{ pays('tie') }}</small><span v-if="me!.bets.tie" class="amt">{{ formatCoins(me!.bets.tie) }}</span></button>
+          <button type="button" class="lt-touch-spot col-span-2" @click="place('bankerPair')">B Pair<small>{{ pays('bankerPair') }}</small><span v-if="me!.bets.bankerPair" class="amt">{{ formatCoins(me!.bets.bankerPair) }}</span></button>
+          <button type="button" class="lt-touch-spot col-span-3 !border-sky-400/70" @click="place('player')">Player<small>{{ pays('player') }}</small><span v-if="me!.bets.player" class="amt">{{ formatCoins(me!.bets.player) }}</span></button>
+          <button type="button" class="lt-touch-spot col-span-3 !border-red-400/70" @click="place('banker')">Banker<small>{{ pays('banker') }}</small><span v-if="me!.bets.banker" class="amt">{{ formatCoins(me!.bets.banker) }}</span></button>
         </div>
         <div class="flex items-stretch gap-2">
           <div class="lt-panel shrink-0">
             <span class="lt-panel-label">Your bet</span>
-            <span class="lt-panel-value lt-mono">{{ formatNumber(bacTotal(me!.bets)) }}</span>
+            <span class="lt-panel-value">{{ formatCoins(bacTotal(me!.bets)) }}</span>
           </div>
           <LiveTableRack v-model="chip" :available="available" class="min-w-0 flex-1" />
         </div>
@@ -322,12 +329,14 @@ const CARD_BACK = cardBack()
           @deal="table.voteStart"
         />
       </template>
+      <div v-else-if="winner && me && bacTotal(me.staked)" class="flex flex-col items-center gap-1">
+        <span class="lt-result" :class="myNet > 0 ? 'win' : myNet === 0 ? 'push' : ''">
+          {{ myNet > 0 ? `WIN +${formatCoins(myNet)}` : myNet < 0 ? `LOSE −${formatCoins(-myNet)}` : 'PUSH' }}<CasinoChipIcon v-if="myNet > 0" />
+        </span>
+        <span class="text-xs text-white/60">{{ winner === 'tie' ? 'Tie' : `${winner === 'player' ? 'Player' : 'Banker'} wins` }}</span>
+      </div>
       <p v-else class="lt-hint-text">
-        <template v-if="winner && me && bacTotal(me.staked)">
-          {{ winner === 'tie' ? 'Tie' : `${winner === 'player' ? 'Player' : 'Banker'} wins` }}.
-          <b>{{ formatNumber(BAC_SPOTS.reduce((sum, spot) => sum + bacSpotReturn(spot, me!.staked[spot], round!), 0)) }}</b> back on {{ formatNumber(bacTotal(me.staked)) }}.
-        </template>
-        <template v-else-if="me && bacTotal(me.staked)">Your bets are in.</template>
+        <template v-if="me && bacTotal(me.staked)">Your bets are in.</template>
         <template v-else>Betting opens with the next hand.</template>
       </p>
     </template>
@@ -347,23 +356,25 @@ const CARD_BACK = cardBack()
     top: 82px;
     transform: translate(-50%, -50%);
     border-radius: 999px;
-    padding: 3px 18px;
-    font-size: 17px;
-    font-weight: 800;
-    letter-spacing: 0.14em;
+    padding: 3px 22px;
+    font-family: var(--font-game);
+    font-size: 22px;
+    letter-spacing: 0.12em;
     color: #fff;
-    transition: box-shadow 0.3s ease;
+    text-shadow: 0 2px 0 rgb(0 0 0 / 0.35);
+    border: 3px solid rgb(255 255 255 / 0.85);
+    transition: box-shadow 0.3s ease, transform 0.3s cubic-bezier(0.3, 0.7, 0.4, 1.5);
 }
-.bac-side.player { background: #2563eb; }
-.bac-side.banker { background: #dc2626; }
-.bac-side.won { box-shadow: 0 0 0 3px #fff, 0 0 26px 4px rgba(217, 177, 103, 0.8); }
+.bac-side.player { background: linear-gradient(180deg, #5b9bff, #2563eb); box-shadow: 0 4px 0 #173f9a; }
+.bac-side.banker { background: linear-gradient(180deg, #ff6b6b, #c81e1e); box-shadow: 0 4px 0 #7a1010; }
+.bac-side.won { transform: translate(-50%, -50%) scale(1.12); box-shadow: 0 4px 0 rgb(0 0 0 / 0.4), 0 0 0 3px #ffd36b, 0 0 30px 6px rgb(255 200 80 / 0.75); }
 .bac-hand > * + * { margin-left: -40px; }
 /* The third card is drawn sideways, the way a baccarat dealer lays it. */
 .bac-third { transform: rotate(90deg); margin: 0 22px; }
 
 .bac-road-label {
-    font-size: 13px;
-    font-weight: 800;
+    font-family: var(--font-game);
+    font-size: 15px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--lt-gold);

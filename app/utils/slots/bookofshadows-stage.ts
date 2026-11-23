@@ -1141,7 +1141,7 @@ export class BosStage {
         }
         safeDestroy(() => this.reelSet?.destroy())
         this.reelSet = null
-        safeDestroy(() => this.app?.destroy(true, { children: true }))
+        safeDestroy(() => this.app?.destroy({ removeView: true }, { children: true }))
         this.app = null
         for (const s of this.spritePool) safeDestroy(() => s.destroy())
         this.spritePool.length = 0

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import SlotBalanceIcons from '~/components/slots/SlotBalanceIcons.vue'
+import SlotCurrencyIcon from '~/components/slots/SlotCurrencyIcon.vue'
 import { InfoIcon, LoaderCircleIcon, MinusIcon, PlusIcon, RepeatIcon, SquareIcon, Volume2Icon, VolumeXIcon, ZapIcon } from 'lucide-vue-next'
 import '@fontsource/cinzel/700.css'
 import '@fontsource/cinzel/900.css'
@@ -1187,7 +1189,7 @@ onBeforeUnmount(() => {
     for (const t of looseTweens) safeDestroy(() => t.kill())
     looseTweens.clear()
     safeDestroy(() => reelSet?.destroy?.())
-    safeDestroy(() => app?.destroy?.(true, { children: true, texture: true }))
+    safeDestroy(() => app?.destroy?.({ removeView: true }, { children: true, texture: true }))
     for (const tex of Object.values(TEX)) safeDestroy(() => tex?.destroy?.(true))
 })
 
@@ -1430,7 +1432,7 @@ const canSpin = computed(() => ready.value && !overlayBusy.value && (isSpinning.
         </div>
 
         <div class="ag-lcd is-balance">
-          <span class="ag-lcd-label">Balance</span>
+          <span class="ag-lcd-label"><SlotBalanceIcons />Balance</span>
           <strong class="ag-lcd-value">{{ formatNumber(balance) }}</strong>
         </div>
 
@@ -1486,7 +1488,7 @@ const canSpin = computed(() => ready.value && !overlayBusy.value && (isSpinning.
           :class="{ 'is-lit': winShown > 0 }"
         >
           <span class="ag-lcd-label">{{ winLabel }}</span>
-          <strong class="ag-lcd-value">{{ formatNumber(winShown) }}</strong>
+          <strong class="ag-lcd-value"><SlotCurrencyIcon v-if="winShown > 0" currency="chips" class="ag-cur" />{{ formatNumber(winShown) }}</strong>
         </div>
 
         <div class="ag-deck-play">
@@ -2624,6 +2626,17 @@ const canSpin = computed(() => ready.value && !overlayBusy.value && (isSpinning.
 }
 
 /* responsive ------------------------------------------------------------------- */
+/* Short desktop screens (the game overlay): a compact marquee and reels sized to the
+   viewport's height, so reels and the deck fit without scrolling. */
+@media (min-width: 1024px) and (max-height: 1000px) {
+  .ag-shell { --ag-cab: max(400px, calc((100dvh - 382px) * 1.192 + 16px)); gap: 10px; padding-top: 10px; padding-bottom: 12px; }
+  .ag-marquee { gap: 4px; padding-bottom: 0; }
+  .ag-marquee-logo { width: 210px; }
+  .ag-marquee-caption { display: none; }
+  .ag-stage { grid-template-columns: 190px minmax(0, var(--ag-cab)) 190px; justify-content: center; }
+  .ag-deck { width: min(calc(100% - 428px), max(var(--ag-cab), 560px)); }
+}
+
 @media (max-width: 1023px) {
   .ag-shell {
     gap: 8px;
@@ -2769,5 +2782,11 @@ const canSpin = computed(() => ready.value && !overlayBusy.value && (isSpinning.
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Wins pay chips. */
+.ag-cur {
+  margin-right: 0.25em;
+  font-size: 0.85em;
 }
 </style>

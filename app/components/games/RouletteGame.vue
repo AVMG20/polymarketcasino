@@ -1,544 +1,530 @@
 <script setup lang="ts">
-import { useMediaQuery } from '@vueuse/core'
+import { RotateCcw, Trash2, Undo2 } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
-import { formatNumber } from '#shared/money'
+import { formatCoins, formatCoinsExact, payFor, sumCoins } from '#shared/money'
 import {
-    betKey, betReturn, pocketColor, WHEEL_ORDER,
+    betKey, betReturn, coveredPockets, pocketColor, ROULETTE_MAX_BETS, ROULETTE_POCKETS,
     type PocketColor, type RouletteBet, type RouletteBetKind, type RouletteResult
 } from '#shared/games/roulette'
+import { CHIP_LADDER, chipsFor } from '~/components/game/Chip.vue'
+import type { WinShow } from '~/components/game/WinBurst.vue'
 
 /**
- * Single-zero roulette on the old site's live felt: the wheel beside the
- * layout, chip piles on the cells, the ball run against the wheel. The round
- * itself is the casino's single-player play endpoint.
+ * Single-zero roulette: a wheel with a real ball run above a layout you drop
+ * chips on. One spin settles every bet on the layout (the server draws the
+ * pocket); the wheel plays it out, then the layout pays where the chips lie.
  */
 const info = findGame('roulette')!
 const round = useGameRound<RouletteResult>('roulette')
-const { coins } = useCasinoSession()
+const bankroll = useBankroll()
 const sound = useTableSound()
-// Phones get the board stood upright: the felt's cells are too small to tap.
-const upright = useMediaQuery('(max-width: 767px)')
 
-const LADDER = [10, 50, 100, 500, 1_000, 5_000, 25_000] as const
-const chip = ref(100)
+const chip = ref<number>(100)
 
-// ─── felt geometry, the old table's 1720-wide stage ─────────────────────────
-const CENTER_Y = 540
-const COL_W = 60
-const ROW_H = 92
-const ZERO_WIDTH = 66
-const COLBET_WIDTH = 94
-const GRID_WIDTH = 12 * COL_W
-const OUTSIDE_HEIGHT = 82
-const DOZEN_HEIGHT = 82
-const BETTING_HEIGHT = OUTSIDE_HEIGHT + 3 * ROW_H + DOZEN_HEIGHT
-const BETTING_WIDTH = ZERO_WIDTH + GRID_WIDTH + COLBET_WIDTH
-const WHEEL_SIZE = 460
-const WHEEL_GAP = 60
-const WHEEL_LEFT = (1720 - (WHEEL_SIZE + WHEEL_GAP + BETTING_WIDTH)) / 2
-const WHEEL_TOP = CENTER_Y - WHEEL_SIZE / 2
-const ZERO_LEFT = WHEEL_LEFT + WHEEL_SIZE + WHEEL_GAP
-const NUM_LEFT = ZERO_LEFT + ZERO_WIDTH
-const COLBET_LEFT = NUM_LEFT + GRID_WIDTH
-const BETTING_TOP = CENTER_Y - BETTING_HEIGHT / 2
-const GRID_TOP = BETTING_TOP + OUTSIDE_HEIGHT
-const DOZENS_TOP = GRID_TOP + 3 * ROW_H
-const OUTSIDE_WIDTH = GRID_WIDTH / 6
-const DOZEN_WIDTH = GRID_WIDTH / 3
-const HOUSE_POS = { x: WHEEL_LEFT + WHEEL_SIZE / 2, y: 872 }
-const SPIN_MS = 5_000
-
+// ─── the layout ───────────────────────────────────────────────────────────────
 interface Spot {
+    key: string
     kind: RouletteBetKind
     value?: number
     label?: string
-    diamond?: string
+    diamond?: 'red' | 'black'
     tone: 'red' | 'black' | 'green' | 'outside'
-    /** Felt box, stage pixels. */
-    box: { x: number, y: number, w: number, h: number }
-    /** [col, row, colSpan, rowSpan] on the phone's upright board (5 × 14). */
-    at: [number, number, number, number]
+    pockets: number[]
+    /** Grid placement on the wide board and on the upright (phone) board: col / row / col span / row span. */
+    wide: [number, number, number, number]
+    tall: [number, number, number, number]
 }
 
-const numberAt = (row: number, col: number) => 3 * (col + 1) - row
+function spot(s: Omit<Spot, 'key' | 'pockets'>): Spot {
+    return { ...s, key: betKey(s), pockets: coveredPockets(s) }
+}
 
 const spots: Spot[] = [
-    { kind: 'straight', value: 0, label: '0', tone: 'green', box: { x: ZERO_LEFT, y: GRID_TOP, w: ZERO_WIDTH, h: ROW_H * 3 }, at: [1, 1, 3, 1] },
-    ...Array.from({ length: 36 }, (_, i): Spot => {
+    spot({ kind: 'straight', value: 0, label: '0', tone: 'green', wide: [1, 1, 1, 3], tall: [1, 1, 3, 1] }),
+    ...Array.from({ length: 36 }, (_, i) => {
         const row = i % 3
         const col = Math.floor(i / 3)
-        const n = numberAt(row, col)
-        return { kind: 'straight', value: n, label: String(n), tone: pocketColor(n) as 'red' | 'black', box: { x: NUM_LEFT + col * COL_W, y: GRID_TOP + row * ROW_H, w: COL_W, h: ROW_H }, at: [3 - row, col + 2, 1, 1] }
+        const n = 3 * (col + 1) - row
+        return spot({ kind: 'straight', value: n, label: String(n), tone: pocketColor(n) as 'red' | 'black', wide: [col + 2, row + 1, 1, 1], tall: [3 - row, col + 2, 1, 1] })
     }),
-    ...[0, 1, 2].map((row): Spot => ({ kind: 'column', value: 3 - row, label: '2:1', tone: 'outside', box: { x: COLBET_LEFT, y: GRID_TOP + row * ROW_H, w: COLBET_WIDTH, h: ROW_H }, at: [3 - row, 14, 1, 1] })),
-    ...[1, 2, 3].map((dozen): Spot => ({ kind: 'dozen', value: dozen, label: `${dozen === 1 ? '1st' : dozen === 2 ? '2nd' : '3rd'} 12`, tone: 'outside', box: { x: NUM_LEFT + (dozen - 1) * DOZEN_WIDTH, y: DOZENS_TOP, w: DOZEN_WIDTH, h: DOZEN_HEIGHT }, at: [4, 2 + (dozen - 1) * 4, 1, 4] })),
+    ...[0, 1, 2].map(row => spot({ kind: 'column', value: 3 - row, label: '2:1', tone: 'outside', wide: [14, row + 1, 1, 1], tall: [3 - row, 14, 1, 1] })),
+    ...[1, 2, 3].map(d => spot({ kind: 'dozen', value: d, label: `${d === 1 ? '1st' : d === 2 ? '2nd' : '3rd'} 12`, tone: 'outside', wide: [2 + (d - 1) * 4, 4, 4, 1], tall: [4, 2 + (d - 1) * 4, 1, 4] })),
     ...([
-        { kind: 'low', label: '1 – 18' },
-        { kind: 'even', label: 'EVEN' },
-        { kind: 'red', diamond: '#c02434' },
-        { kind: 'black', diamond: '#14181f' },
-        { kind: 'odd', label: 'ODD' },
-        { kind: 'high', label: '19 – 36' }
-    ] as const).map((bet, i): Spot => ({ ...bet, tone: 'outside', box: { x: NUM_LEFT + i * OUTSIDE_WIDTH, y: BETTING_TOP, w: OUTSIDE_WIDTH, h: OUTSIDE_HEIGHT }, at: [5, 2 + i * 2, 1, 2] }))
+        { kind: 'low', label: '1-18' },
+        { kind: 'even', label: 'Even' },
+        { kind: 'red', diamond: 'red' },
+        { kind: 'black', diamond: 'black' },
+        { kind: 'odd', label: 'Odd' },
+        { kind: 'high', label: '19-36' }
+    ] as const).map((s, i) => spot({ ...s, tone: 'outside', wide: [2 + i * 2, 5, 2, 1], tall: [5, 2 + i * 2, 1, 2] }))
 ]
+const spotByKey = new Map(spots.map(s => [s.key, s]))
 
-const center = (spot: Spot) => ({ x: spot.box.x + spot.box.w / 2, y: spot.box.y + spot.box.h / 2 })
-const spotByKey = new Map(spots.map(spot => [betKey(spot), spot]))
-
-function uprightStyle(spot: Spot) {
-    const [col, row, colSpan, rowSpan] = spot.at
-    return { gridColumn: `${col} / span ${colSpan}`, gridRow: `${row} / span ${rowSpan}` }
+function placement(s: Spot) {
+    const area = ([col, row, cols, rows]: Spot['wide']) => ({ col: `${col} / span ${cols}`, row: `${row} / span ${rows}` })
+    const wide = area(s.wide)
+    const tall = area(s.tall)
+    return { '--wc': wide.col, '--wr': wide.row, '--tc': tall.col, '--tr': tall.row }
 }
 
-// ─── the layout ───────────────────────────────────────────────────────────────
 const bets = ref<Record<string, RouletteBet>>({})
 const placed = ref<{ key: string, amount: number }[]>([])
+/** Bumped on every chip dropped on a spot, so its top chip lands again. */
+const drops = ref<Record<string, number>>({})
 const lastLayout = ref<RouletteBet[]>([])
-/** After a spin: what each winning spot paid, left on the felt until the next chip goes down. */
-const paid = ref<Record<string, number>>({})
+/** After a spin: every spot's result, left on the layout until the next chip goes down. */
+const outcome = ref<Record<string, { won: boolean, amount: number, payout: number }> | null>(null)
 const result = ref<RouletteResult | null>(null)
-const payout = ref(0)
 const spinning = ref(false)
+const errorMsg = ref('')
+const win = ref<WinShow | null>(null)
 const history = ref<{ id: string, pocket: number, color: PocketColor }[]>([])
+const hovered = ref<string | null>(null)
 
-const stake = computed(() => Object.values(bets.value).reduce((sum, bet) => sum + bet.amount, 0))
-const limit = computed(() => Math.min(info.maxBet, coins.value))
-const winningKeys = computed(() => new Set(result.value?.bets.filter(bet => bet.won).map(bet => betKey(bet)) ?? []))
 const busy = computed(() => spinning.value || round.busy.value)
+const stake = computed(() => sumCoins(Object.values(bets.value).map(b => b.amount)))
+/** A layout is paid from coins first, then chips: the bankroll is the limit. */
+const limit = computed(() => Math.min(info.maxBet, bankroll.total.value))
+const covered = computed(() => new Set(Object.values(bets.value).flatMap(b => coveredPockets(b))))
+const lit = computed(() => new Set(hovered.value ? spotByKey.get(hovered.value)?.pockets ?? [] : []))
+/** The most the layout can return: the best pocket for it. */
+const maxWin = computed(() => {
+    const layout = Object.values(bets.value)
+    let best = 0
+    for (let pocket = 0; pocket < ROULETTE_POCKETS; pocket++) {
+        const total = sumCoins(layout.filter(b => coveredPockets(b).includes(pocket)).map(b => payFor(b.amount, betReturn(b))))
+        best = Math.max(best, total)
+    }
+    return best
+})
+const canSpin = computed(() => !busy.value && (stake.value > 0 || (!!outcome.value && lastLayout.value.length > 0)))
 
-function pileOn(key: string): number {
-    return bets.value[key]?.amount ?? paid.value[key] ?? 0
-}
+/** What lies on each spot: open chips, or after a spin the payout (won) or the lost stake. */
+const piles = computed(() => {
+    const out: Record<string, { chips: number[], label: string, state: 'open' | 'won' | 'lost' }> = {}
+    const add = (key: string, amount: number, state: 'open' | 'won' | 'lost') => {
+        out[key] = { chips: chipsFor(amount, 5).reverse(), label: formatCoins(amount, true), state }
+    }
+    for (const [key, settled] of Object.entries(outcome.value ?? {})) add(key, settled.won ? settled.payout : settled.amount, settled.won ? 'won' : 'lost')
+    for (const [key, bet] of Object.entries(bets.value)) add(key, bet.amount, 'open')
+    return out
+})
 
+/** Starts a new layout once the last spin's result has been looked at. */
 function freshLayout() {
-    if (Object.keys(paid.value).length) paid.value = {}
+    if (!outcome.value) return
+    outcome.value = null
+    result.value = null
+    win.value = null
 }
 
-function place(spot: Spot) {
+const nudge = ref(0)
+function refuse() {
+    nudge.value++
+}
+
+function place(s: Spot) {
     if (busy.value) return
-    if (stake.value + chip.value > limit.value) return
-    const key = betKey(spot)
-    if (!bets.value[key] && Object.keys(bets.value).length >= 40) return
+    errorMsg.value = ''
     freshLayout()
-    const existing = bets.value[key]
-    bets.value = { ...bets.value, [key]: { kind: spot.kind, ...(spot.value === undefined ? {} : { value: spot.value }), amount: (existing?.amount ?? 0) + chip.value } }
-    placed.value.push({ key, amount: chip.value })
+    const existing = bets.value[s.key]
+    if (!existing && Object.keys(bets.value).length >= ROULETTE_MAX_BETS) return refuse()
+    if (stake.value + chip.value > limit.value) return refuse()
+    bets.value = { ...bets.value, [s.key]: { kind: s.kind, ...(s.value === undefined ? {} : { value: s.value }), amount: sumCoins([existing?.amount ?? 0, chip.value]) } }
+    placed.value.push({ key: s.key, amount: chip.value })
+    drops.value = { ...drops.value, [s.key]: (drops.value[s.key] ?? 0) + 1 }
     sound.play('chip')
 }
 
-function undo() {
-    const last = placed.value.pop()
-    if (!last) return
-    const bet = bets.value[last.key]
-    if (!bet) return
+function takeBack(key?: string) {
+    if (busy.value) return
+    let index = placed.value.length - 1
+    if (key) while (index >= 0 && placed.value[index]!.key !== key) index--
+    const last = index >= 0 ? placed.value.splice(index, 1)[0] : undefined
+    const bet = last && bets.value[last.key]
+    if (!last || !bet) return
     const next = { ...bets.value }
-    if (bet.amount - last.amount <= 0) delete next[last.key]
-    else next[last.key] = { ...bet, amount: bet.amount - last.amount }
+    const left = sumCoins([bet.amount, -last.amount])
+    if (left <= 0) delete next[last.key]
+    else next[last.key] = { ...bet, amount: left }
     bets.value = next
+    sound.play('chip')
 }
 
 function clear() {
+    if (busy.value) return
+    freshLayout()
     bets.value = {}
     placed.value = []
 }
 
 function setLayout(layout: RouletteBet[]) {
-    bets.value = Object.fromEntries(layout.map(bet => [betKey(bet), { ...bet }]))
-    placed.value = layout.map(bet => ({ key: betKey(bet), amount: bet.amount }))
+    bets.value = Object.fromEntries(layout.map(b => [betKey(b), { ...b }]))
+    placed.value = layout.map(b => ({ key: betKey(b), amount: b.amount }))
+    drops.value = Object.fromEntries(layout.map(b => [betKey(b), (drops.value[betKey(b)] ?? 0) + 1]))
+}
+
+function layoutFits(layout: RouletteBet[]): boolean {
+    return layout.length > 0 && sumCoins(layout.map(b => b.amount)) <= limit.value
 }
 
 function rebet() {
-    const total = lastLayout.value.reduce((sum, bet) => sum + bet.amount, 0)
-    if (!total || total > limit.value) return
+    if (busy.value) return
+    if (!layoutFits(lastLayout.value)) return refuse()
     freshLayout()
     setLayout(lastLayout.value)
     sound.play('chip')
 }
 
-/** Halve or double the whole layout (or last spin's, when the felt is empty). */
-function scale(factor: 0.5 | 2) {
+/** Doubles the layout (or last spin's, when the felt is empty). */
+function double() {
+    if (busy.value) return
     const base = stake.value ? Object.values(bets.value) : lastLayout.value
-    const next = base.map(bet => ({ ...bet, amount: Math.floor(bet.amount * factor) })).filter(bet => bet.amount >= 1)
-    const total = next.reduce((sum, bet) => sum + bet.amount, 0)
-    if (!next.length || total > limit.value) return
+    const next = base.map(b => ({ ...b, amount: payFor(b.amount, 2) }))
+    if (!layoutFits(next)) return refuse()
     freshLayout()
     setLayout(next)
     sound.play('chip')
 }
 
-// ─── the wheel and the ball ───────────────────────────────────────────────────
-const STEP = 360 / WHEEL_ORDER.length
-const wheelRotation = ref(0)
-const ballRotation = ref(0)
-
-/** Wheel rotation that brings `pocket`'s centre to `targetAngle`, always turning forward a few times. */
-function wheelRotationFor(current: number, pocket: number, targetAngle: number, extraTurns = 3) {
-    const centre = WHEEL_ORDER.indexOf(pocket as typeof WHEEL_ORDER[number]) * STEP + STEP / 2
-    const targetWithin = (((targetAngle - centre) % 360) + 360) % 360
-    const currentWithin = ((current % 360) + 360) % 360
-    let delta = targetWithin - currentWithin
-    if (delta <= 0) delta += 360
-    return current + delta + 360 * extraTurns
-}
-
-/** The wheel turns one way and the ball runs the other; both stop with the pocket under the ball. */
-function spinTo(pocket: number): Promise<void> {
-    // Cosmetic only: where on the rim the ball comes to rest.
-    const landing = Math.random() * 360
-    wheelRotation.value = wheelRotationFor(wheelRotation.value, pocket, landing)
-    const within = ((ballRotation.value % 360) + 360) % 360
-    let delta = landing - within
-    if (delta >= 0) delta -= 360
-    ballRotation.value += delta - 360 * 5
-    return new Promise(resolve => setTimeout(resolve, SPIN_MS + 80))
-}
-
-function buildWheelSvg(size: number): string {
-    const r = size / 2
-    const rimWidth = 12
-    const outerR = r - rimWidth
-    const innerR = outerR - 80
-    const hubR = innerR - 8
-    let pockets = ''
-    let labels = ''
-    let spokes = ''
-    WHEEL_ORDER.forEach((num, i) => {
-        const a0 = (i * STEP - 90) * Math.PI / 180
-        const a1 = ((i + 1) * STEP - 90) * Math.PI / 180
-        const color = pocketColor(num) === 'red' ? '#c02434' : pocketColor(num) === 'black' ? '#14181f' : '#0f6e3c'
-        const p = (a: number, rad: number) => `${(Math.cos(a) * rad).toFixed(2)},${(Math.sin(a) * rad).toFixed(2)}`
-        pockets += `<path d="M ${p(a0, outerR)} A ${outerR} ${outerR} 0 0 1 ${p(a1, outerR)} L ${p(a1, innerR)} A ${innerR} ${innerR} 0 0 0 ${p(a0, innerR)} Z" fill="${color}" stroke="rgba(217,177,103,.5)" stroke-width="1.5"/>`
-        const mid = (a0 + a1) / 2
-        const labelR = (outerR + innerR) / 2
-        const lx = (Math.cos(mid) * labelR).toFixed(2)
-        const ly = (Math.sin(mid) * labelR).toFixed(2)
-        labels += `<text x="${lx}" y="${ly}" transform="rotate(${(mid * 180 / Math.PI + 90).toFixed(2)} ${lx} ${ly})" text-anchor="middle" dominant-baseline="central" font-size="20" font-weight="800" fill="#f7f3e8" font-family="system-ui,sans-serif">${num}</text>`
-    })
-    for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2
-        spokes += `<line x1="0" y1="0" x2="${(Math.cos(a) * hubR * 0.92).toFixed(2)}" y2="${(Math.sin(a) * hubR * 0.92).toFixed(2)}" stroke="#5b5f66" stroke-width="5" stroke-linecap="round"/>`
-    }
-    return `<svg width="${size}" height="${size}" viewBox="${-r} ${-r} ${size} ${size}" xmlns="http://www.w3.org/2000/svg">`
-        + '<defs><radialGradient id="rlHub" cx="35%" cy="32%" r="75%"><stop offset="0%" stop-color="#d7dade"/><stop offset="55%" stop-color="#8b8e94"/><stop offset="100%" stop-color="#4d4f54"/></radialGradient></defs>'
-        + `<circle cx="0" cy="0" r="${r}" fill="#1c1109"/>`
-        + `<circle cx="0" cy="0" r="${r - rimWidth / 2}" fill="none" stroke="#d9b167" stroke-width="${rimWidth}"/>`
-        + pockets + labels
-        + `<circle cx="0" cy="0" r="${hubR}" fill="url(#rlHub)" stroke="#d9b167" stroke-width="3"/>`
-        + spokes
-        + `<circle cx="0" cy="0" r="${(hubR * 0.32).toFixed(2)}" fill="#3a3c40" stroke="#d9b167" stroke-width="2"/>`
-        + '</svg>'
-}
-const wheelSvg = buildWheelSvg(WHEEL_SIZE)
-
 // ─── a spin ───────────────────────────────────────────────────────────────────
-const flights = ref<{ fly: (from: { x: number, y: number }, to: { x: number, y: number }, amount: number, options?: { delay?: number, size?: number, ladder?: readonly number[] }) => void } | null>(null)
+const wheel = ref<{ spin: (pocket: number) => Promise<void>, clear: () => void } | null>(null)
+const wheelArea = ref<HTMLElement>()
+
+/** On a phone the layout sits under the wheel: bring the wheel into view for the run. */
+function showWheel() {
+    const box = wheelArea.value?.getBoundingClientRect()
+    if (!box || (box.top >= 0 && box.bottom <= window.innerHeight)) return
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    wheelArea.value?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
+}
 
 async function spin() {
+    if (busy.value) return
+    // Spin again: the last layout goes back down.
+    if (!stake.value && outcome.value && lastLayout.value.length) {
+        if (!layoutFits(lastLayout.value)) return refuse()
+        freshLayout()
+        setLayout(lastLayout.value)
+    }
     const layout = Object.values(bets.value)
-    if (!layout.length || busy.value) return
+    if (!layout.length) return
+    if (stake.value > limit.value) return refuse()
+
+    errorMsg.value = ''
     spinning.value = true
+    win.value = null
     result.value = null
+    wheel.value?.clear()
+    showWheel()
     const response = await round.play({ options: { bets: layout } })
     if (!response) {
         spinning.value = false
+        errorMsg.value = round.error.value || 'The spin did not go through'
         return
     }
-    lastLayout.value = layout.map(bet => ({ ...bet }))
-    await spinTo(response.result.pocket)
-    result.value = response.result
-    payout.value = response.payout
+    lastLayout.value = layout.map(b => ({ ...b }))
+    await wheel.value?.spin(response.result.pocket)
 
-    // Lost chips go back to the house, winners are paid where they stand.
-    for (const bet of response.result.bets) {
-        const spot = spotByKey.get(betKey(bet))
-        if (!spot) continue
-        if (bet.won) flights.value?.fly(HOUSE_POS, center(spot), bet.payout - bet.amount, { size: 44, delay: 400, ladder: LADDER })
-        else flights.value?.fly(center(spot), HOUSE_POS, bet.amount, { size: 44, ladder: LADDER })
-    }
-    paid.value = Object.fromEntries(response.result.bets.filter(bet => bet.won).map(bet => [betKey(bet), bet.payout]))
+    result.value = response.result
+    outcome.value = Object.fromEntries(response.result.bets.map(b => [betKey(b), { won: b.won, amount: b.amount, payout: b.payout }]))
     bets.value = {}
     placed.value = []
-    history.value = [{ id: response.roundId, pocket: response.result.pocket, color: response.result.color }, ...history.value].slice(0, 12)
-    if (response.payout > 0) sound.play('win')
-    setTimeout(() => {
-        round.settle()
-        spinning.value = false
-    }, 900)
+    history.value = [{ id: response.roundId, pocket: response.result.pocket, color: response.result.color }, ...history.value].slice(0, 16)
+    const multiple = response.stake > 0 ? Math.floor((response.payout / response.stake) * 100) / 100 : 0
+    win.value = { id: response.roundId, payout: response.payout, multiplier: multiple }
+    sound.play(response.payout > 0 ? 'win' : 'lose')
+    round.settle()
+    spinning.value = false
 }
 
-const phaseLabel = computed(() => {
-    if (spinning.value && !result.value) return 'NO MORE BETS'
-    if (result.value) return `${result.value.pocket} ${result.value.color.toUpperCase()}`
-    return 'PLACE YOUR BETS'
+function onKey(event: KeyboardEvent) {
+    if (event.target !== document.body) return
+    if (event.code === 'Space') {
+        event.preventDefault()
+        void spin()
+    } else if ((event.ctrlKey || event.metaKey) && event.key === 'z') {
+        event.preventDefault()
+        takeBack()
+    }
+}
+onMounted(() => {
+    window.addEventListener('keydown', onKey)
+    // Start on a modest chip: the biggest under a hundredth of the balance, at most 1K.
+    chip.value = [...CHIP_LADDER].reverse().find(v => v <= 1_000 && v * 100 <= bankroll.total.value) ?? CHIP_LADDER[0]
 })
-const message = computed(() => {
-    if (spinning.value && !result.value) return 'No more bets'
-    if (result.value) return `${result.value.pocket} ${result.value.color}${payout.value > 0 ? ` · won ${formatNumber(payout.value)}` : ''}`
-    return 'Place your bets'
-})
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
-const pos = (x: number, y: number) => ({ left: `${x}px`, top: `${y}px` })
-const box = (spot: Spot) => ({ left: `${spot.box.x}px`, top: `${spot.box.y}px`, width: `${spot.box.w}px`, height: `${spot.box.h}px` })
-const title = (spot: Spot) => `${spot.label ?? spot.kind}: pays ${betReturn(spot)}×`
+const pocketText = computed(() => (result.value ? `${result.value.pocket} ${result.value.color}` : ''))
 </script>
 
 <template>
-  <LiveTableShell
-    slug="roulette"
-    solo
-    connected
-    :message="message"
-    :seconds="null"
-    :progress="null"
-    :next-round-in="null"
-    :watching="0"
-    :seated="false"
-    :leaving="false"
-    :open-seat="null"
-    :feed="[]"
-    :scoreboard="[]"
-  >
-    <template #felt>
-      <LiveTableStage v-if="!upright">
-        <div class="lt-rules" style="top: 92px">SINGLE ZERO EUROPEAN WHEEL</div>
-        <div class="rl-history" :style="{ left: '50%', top: '134px', transform: 'translateX(-50%)' }">
-          <span class="rl-history-label">LAST</span>
-          <span v-for="item in history.slice(0, 10)" :key="item.id" class="rl-pill" :class="item.color">{{ item.pocket }}</span>
-          <span v-if="!history.length" class="rl-history-empty">No spins yet</span>
-        </div>
-        <div class="lt-phase" :style="pos(ZERO_LEFT + BETTING_WIDTH / 2, BETTING_TOP - 74)">
-          <span class="label" :class="result ? (payout > 0 ? 'win' : '') : ''">{{ phaseLabel }}</span>
-          <span v-if="result && payout > 0" class="count" style="color: var(--lt-win)">+{{ formatNumber(payout) }}</span>
-        </div>
+  <GameFrame slug="roulette" wide>
+    <div class="@container">
+      <div class="flex flex-col gap-3 @3xl:grid @3xl:grid-cols-[minmax(0,1fr)_20rem] @3xl:grid-rows-[auto_1fr] @3xl:items-start @7xl:grid-cols-[minmax(0,1fr)_23rem]">
+        <GameFelt tone="green" class="@3xl:row-span-2">
+          <div class="flex flex-col gap-2 p-3 sm:p-4">
+            <!-- Last numbers, newest first. -->
+            <div class="flex min-h-8 items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none]">
+              <TransitionGroup name="rl-hist">
+                <span
+                  v-for="(h, i) in history" :key="h.id"
+                  class="rl-disc g-num grid shrink-0 place-items-center rounded-full text-white"
+                  :class="[h.color, i === 0 ? 'size-8 text-base' : 'size-7 text-sm opacity-80']"
+                >{{ h.pocket }}</span>
+              </TransitionGroup>
+              <span v-if="!history.length" class="g-title rounded-full bg-black/25 px-3 py-1 text-xs text-white/60">Single zero</span>
+            </div>
 
-        <div class="rl-wheel" :style="{ ...pos(WHEEL_LEFT, WHEEL_TOP), width: `${WHEEL_SIZE}px`, height: `${WHEEL_SIZE}px` }">
-          <div class="rl-wheel-spin" :style="{ transform: `rotate(${wheelRotation}deg)`, transitionDuration: `${SPIN_MS}ms` }" v-html="wheelSvg" />
-          <div class="rl-ball-orbit" :style="{ transform: `rotate(${ballRotation}deg)`, transitionDuration: `${SPIN_MS}ms` }"><div class="rl-ball" /></div>
-        </div>
+            <!-- The wheel, where the result shows. -->
+            <GameWinBurst :show="win" class="rounded-[1.25rem]">
+              <div ref="wheelArea" class="flex flex-col items-center gap-2 pb-1">
+                <!-- Bigger with the screen: the pocket numbers stay legible on a desktop. -->
+                <div class="w-[min(74cqw,19rem)] @3xl:w-[min(52cqw,clamp(18rem,calc(60dvh-11rem),30rem))]">
+                  <GameRouletteWheel ref="wheel" />
+                </div>
+                <div class="flex h-8 items-center justify-center">
+                  <p v-if="result && win && win.payout <= 0" class="rl-zero g-title text-base text-[#ffc2cc] sm:text-lg">
+                    ×0 <span class="text-sm text-white/55 capitalize">{{ pocketText }}</span>
+                  </p>
+                  <p v-else-if="result && win" class="g-title text-sm text-white/80 capitalize sm:text-base">{{ pocketText }}</p>
+                  <p v-else class="g-title inline-flex items-center gap-1.5 rounded-full bg-black/30 px-3 py-0.5 text-sm text-white/85 sm:text-base">
+                    {{ spinning ? 'No more bets' : stake > 0 ? 'Ready to spin' : 'Place your chips' }}
+                  </p>
+                </div>
+              </div>
+            </GameWinBurst>
 
-        <div class="rl-layout" :class="{ closed: busy }" :style="{ left: `${ZERO_LEFT - 4}px`, top: `${BETTING_TOP - 4}px`, width: `${BETTING_WIDTH + 8}px`, height: `${BETTING_HEIGHT + 8}px` }" />
-        <div
-          v-for="spot in spots"
-          :key="betKey(spot)"
-          class="rl-cell"
-          :class="[spot.tone, { zero: spot.value === 0 && spot.kind === 'straight', won: winningKeys.has(betKey(spot)), hit: result && spot.kind === 'straight' && spot.value === result.pocket }]"
-          :style="{ ...box(spot), fontSize: spot.value === 0 && spot.kind === 'straight' ? '30px' : spot.tone === 'outside' ? '16px' : undefined }"
-          :title="title(spot)"
-          @click="place(spot)"
-          @contextmenu.prevent="undo()"
-        >
-          <span v-if="spot.diamond" class="rl-diamond" :style="{ background: spot.diamond }" />
-          <template v-else>{{ spot.label }}</template>
-        </div>
-        <template v-for="spot in spots" :key="`pile-${betKey(spot)}`">
-          <div v-if="pileOn(betKey(spot))" class="rl-pile" :class="{ won: !!paid[betKey(spot)] && !bets[betKey(spot)] }" :style="pos(center(spot).x, center(spot).y)">
-            <LiveTableChipPile :amount="pileOn(betKey(spot))" :size="44" :max="5" :ladder="LADDER" />
+            <!-- The layout: upright on a phone, the classic wide board from ~34rem. -->
+            <div class="@container/board">
+              <div class="rl-board" :class="{ 'rl-closed': busy }" @pointerleave="hovered = null">
+                <button
+                  v-for="s in spots" :key="s.key"
+                  type="button"
+                  class="rl-spot"
+                  :class="[
+                    s.tone,
+                    s.kind === 'straight' && s.value === 0 ? 'rl-zero-spot' : '',
+                    {
+                      'rl-lit': lit.has(s.value ?? -1) && s.kind === 'straight',
+                      'rl-hit': result && s.kind === 'straight' && s.value === result.pocket,
+                      'rl-won': outcome?.[s.key]?.won
+                    }
+                  ]"
+                  :style="placement(s)"
+                  :disabled="busy"
+                  :title="`${s.label ?? s.kind}: pays ${betReturn(s)}×`"
+                  :aria-label="`${s.label ?? s.kind}, pays ${betReturn(s)} times${bets[s.key] ? `, ${formatCoins(bets[s.key]!.amount)} on it` : ''}`"
+                  @click="place(s)"
+                  @contextmenu.prevent="takeBack(s.key)"
+                  @pointerenter="e => e.pointerType === 'mouse' && (hovered = s.key)"
+                >
+                  <span v-if="s.tone !== 'outside'" class="rl-tile">{{ s.label }}</span>
+                  <span v-else-if="s.diamond" class="rl-diamond" :class="s.diamond" />
+                  <span v-else class="rl-text">{{ s.label }}</span>
+                  <svg v-if="result && s.kind === 'straight' && s.value === result.pocket" class="rl-dolly" viewBox="0 0 20 24" aria-hidden="true">
+                    <ellipse cx="10" cy="20" rx="8" ry="3.4" fill="#7a4c0e" />
+                    <rect x="2" y="7" width="16" height="13" fill="#e2b34e" />
+                    <ellipse cx="10" cy="7" rx="8" ry="3.4" fill="#fff1b8" stroke="#a8761c" stroke-width="1" />
+                  </svg>
+
+                  <span v-if="piles[s.key]" class="rl-pile" :class="`rl-pile-${piles[s.key]!.state}`">
+                    <GameChip
+                      v-for="(value, i) in piles[s.key]!.chips"
+                      :key="i === piles[s.key]!.chips.length - 1 ? `top-${drops[s.key] ?? 0}` : i"
+                      :value="value"
+                      :label="i === piles[s.key]!.chips.length - 1 ? piles[s.key]!.label : null"
+                      class="rl-chip"
+                      :class="i === piles[s.key]!.chips.length - 1 && piles[s.key]!.state === 'open' ? 'rl-drop' : ''"
+                      :style="{ transform: `translateY(${-i * 3}px)` }"
+                    />
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
-        </template>
-        <div v-if="stake > 0" class="rl-total" :style="pos(NUM_LEFT + GRID_WIDTH / 2, DOZENS_TOP + DOZEN_HEIGHT + 40)">
-          <span>TOTAL BET</span><b>{{ formatNumber(stake) }}</b>
-        </div>
+        </GameFelt>
 
-        <div class="lt-house-well" :style="{ ...pos(HOUSE_POS.x, HOUSE_POS.y + 6), width: '170px' }" />
-        <div class="lt-house" :style="pos(HOUSE_POS.x, HOUSE_POS.y + 10)">
-          <LiveTableChipPile :column="[10, 8]" :size="38" :ladder="LADDER" />
-          <LiveTableChipPile :column="[1_000, 11]" :size="38" />
-          <LiveTableChipPile :column="[25_000, 6]" :size="38" />
-          <LiveTableChipPile :column="[500, 9]" :size="38" />
-        </div>
-        <LiveTableChipFlights ref="flights" />
-      </LiveTableStage>
-
-      <!-- Phones: the wheel, then the board stood upright. -->
-      <div v-else class="rl-felt space-y-3 p-3">
-        <div class="relative mx-auto aspect-square w-52">
-          <div class="rl-wheel">
-            <div class="rl-wheel-spin" :style="{ transform: `rotate(${wheelRotation}deg)`, transitionDuration: `${SPIN_MS}ms` }" v-html="wheelSvg" />
-            <div class="rl-ball-orbit" :style="{ transform: `rotate(${ballRotation}deg)`, transitionDuration: `${SPIN_MS}ms` }"><div class="rl-ball" /></div>
+        <div class="g-ui g-panel flex min-w-0 flex-col gap-3 rounded-[1.5rem] p-3 sm:p-4">
+          <div :key="nudge" class="grid grid-cols-3 gap-2 text-center" :class="nudge ? 'rl-nudge' : ''">
+            <div class="g-well min-w-0 rounded-2xl px-1 py-2">
+              <p class="text-[11px] font-semibold tracking-wide text-[var(--g-muted)] uppercase">Bet</p>
+              <p class="g-num flex items-center justify-center gap-1 truncate text-xl" :title="`${formatCoinsExact(stake)} of ${formatCoinsExact(limit)}`">
+                <GameStakeIcons :amount="stake" class="text-base" />{{ formatCoins(stake) }}
+              </p>
+            </div>
+            <div class="g-well min-w-0 rounded-2xl px-1 py-2" title="Numbers your chips cover">
+              <p class="text-[11px] font-semibold tracking-wide text-[var(--g-muted)] uppercase">Numbers</p>
+              <p class="g-num truncate text-xl">{{ covered.size }}<span class="text-sm text-[var(--g-muted)]">/{{ ROULETTE_POCKETS }}</span></p>
+            </div>
+            <div class="g-well min-w-0 rounded-2xl px-1 py-2">
+              <p class="text-[11px] font-semibold tracking-wide text-[var(--g-muted)] uppercase">Win up to</p>
+              <p class="g-num flex items-center justify-center gap-1 truncate text-xl text-[var(--g-green)]" :title="`${formatCoinsExact(maxWin)} chips`">
+                <CasinoChipIcon class="size-4" />{{ formatCoins(maxWin) }}
+              </p>
+            </div>
           </div>
+
+          <p v-if="errorMsg" role="alert" class="rounded-xl bg-destructive/15 p-3 text-sm text-[#ff8da0]">{{ errorMsg }}</p>
         </div>
-        <div class="flex min-h-7 flex-wrap justify-center gap-1">
-          <span v-for="item in history" :key="item.id" class="rl-pill small" :class="item.color">{{ item.pocket }}</span>
-        </div>
-        <div class="grid gap-1 select-none" style="grid-template-columns: repeat(3, minmax(0, 1fr)) 1.1fr 1.1fr; grid-template-rows: repeat(14, minmax(2.6rem, auto))">
-          <button
-            v-for="spot in spots"
-            :key="betKey(spot)"
-            type="button"
-            class="rl-cell static"
-            :class="[spot.tone, { won: winningKeys.has(betKey(spot)), hit: result && spot.kind === 'straight' && spot.value === result.pocket }]"
-            :style="uprightStyle(spot)"
-            :title="title(spot)"
-            @click="place(spot)"
-          >
-            <span v-if="spot.diamond" class="rl-diamond small" :style="{ background: spot.diamond }" />
-            <span v-else :class="spot.at[3] > 1 ? '[writing-mode:vertical-rl]' : ''">{{ spot.label }}</span>
-            <LiveTableChipPile v-if="pileOn(betKey(spot))" class="absolute -top-1 -right-1 z-10" :amount="pileOn(betKey(spot))" :size="24" :max="3" :ladder="LADDER" />
-          </button>
+
+        <!-- The dock: chips and Spin, stuck to the bottom of the screen on a phone. -->
+        <div class="g-ui g-panel sticky bottom-2 z-20 flex flex-col gap-2 rounded-[1.5rem] p-2 sm:p-3 @3xl:static @3xl:col-start-2">
+          <div role="radiogroup" aria-label="Chip" class="grid grid-cols-7 gap-0.5">
+            <button
+              v-for="value in CHIP_LADDER" :key="value"
+              type="button" role="radio" :aria-checked="chip === value" :aria-label="`${formatCoins(value)} chip`"
+              class="rl-rack grid h-12 place-items-center rounded-xl disabled:opacity-35"
+              :class="chip === value ? 'rl-rack-on' : ''"
+              :disabled="value > limit"
+              @click="chip = value; sound.play('chip')"
+            >
+              <GameChip :value="value" class="w-[min(100%,2.75rem)]" />
+            </button>
+          </div>
+          <div class="flex gap-1.5">
+            <button type="button" class="g-btn g-dark size-12 shrink-0 rounded-2xl" :disabled="busy || !placed.length" title="Take the last chip back" aria-label="Undo" @click="takeBack()">
+              <Undo2 class="size-5" :stroke-width="3" />
+            </button>
+            <button type="button" class="g-btn g-dark size-12 shrink-0 rounded-2xl" :disabled="busy || (!placed.length && !outcome)" title="Clear the layout" aria-label="Clear" @click="clear">
+              <Trash2 class="size-5" :stroke-width="2.75" />
+            </button>
+            <button type="button" class="g-btn g-dark size-12 shrink-0 rounded-2xl" :disabled="busy || !lastLayout.length || stake > 0" title="Last layout again" aria-label="Rebet" @click="rebet">
+              <RotateCcw class="size-5" :stroke-width="3" />
+            </button>
+            <button type="button" class="g-btn g-dark size-12 shrink-0 rounded-2xl text-lg" :disabled="busy || (!stake && !lastLayout.length)" title="Double the layout" aria-label="Double" @click="double">
+              ×2
+            </button>
+            <button type="button" class="g-btn g-green h-12 min-w-0 flex-1 rounded-2xl text-2xl uppercase" :disabled="!canSpin" @click="spin">
+              {{ spinning ? '…' : 'Spin' }}
+            </button>
+          </div>
         </div>
       </div>
-    </template>
-
-    <template #controls>
-      <div class="flex items-stretch gap-2">
-        <div class="lt-panel shrink-0">
-          <span class="lt-panel-label">Total bet</span>
-          <span class="lt-panel-value lt-mono">{{ formatNumber(stake) }}</span>
-        </div>
-        <LiveTableRack v-model="chip" :available="Math.max(0, limit - stake)" :ladder="LADDER" :muted="busy" class="min-w-0 flex-1" />
-      </div>
-      <LiveTableBetBar
-        :can-repeat="!busy && lastLayout.length > 0"
-        :can-scale="!busy && (stake > 0 || lastLayout.length > 0)"
-        :can-undo="!busy && placed.length > 0"
-        :can-clear="!busy && placed.length > 0"
-        :can-deal="!busy && stake > 0"
-        deal-label="SPIN"
-        @repeat="rebet"
-        @scale="scale"
-        @undo="undo"
-        @clear="clear"
-        @deal="spin"
-      />
-    </template>
+    </div>
 
     <template #rules>
-      <p>Single-zero European roulette. Pick a chip, click the layout to place it (right-click takes the last chip back), then spin. One spin settles every bet.</p>
-      <p>A bet returns 36 ÷ the pockets it covers: a number 36×, a dozen or column 3×, red, black, odd, even, 1-18 and 19-36 2×. Zero loses every outside bet.</p>
+      <p>Single-zero European roulette. Pick a chip and tap the layout to drop it (right-click a spot takes a chip back). Spin settles every bet at once; Spin again right after a result replays the same layout.</p>
+      <p>A bet returns 36 ÷ the numbers it covers: a number 36×, a dozen or column 3×, red, black, odd, even, 1-18 and 19-36 2×. Zero loses every outside bet.</p>
+      <p>Space spins; Ctrl+Z takes the last chip back.</p>
     </template>
-  </LiveTableShell>
+  </GameFrame>
 </template>
 
 <style scoped>
-.rl-felt {
-    background: radial-gradient(ellipse at 50% 30%, #14663f 0%, #0f5132 50%, #0c4128 100%);
-    box-shadow: inset 0 0 0 6px #3b2416, inset 0 0 40px rgba(0, 0, 0, 0.5);
-}
-.rl-cell {
-    position: absolute;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: system-ui, sans-serif;
-    font-weight: 800;
-    letter-spacing: 0.03em;
-    color: #f7f3e8;
-    border: 1px solid rgba(217, 177, 103, 0.35);
-    box-sizing: border-box;
-    font-size: 22px;
-    cursor: pointer;
+.rl-disc { box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.3), 0 2px 0 rgb(0 0 0 / 0.35); border: 2px solid rgb(255 236 190 / 0.55); }
+.rl-disc.red { background: #d3263a; }
+.rl-disc.black { background: #1f1d26; }
+.rl-disc.green { background: #119a5c; }
+.rl-hist-enter-active { transition: transform 0.3s cubic-bezier(0.3, 0.7, 0.4, 1.5), opacity 0.2s; }
+.rl-hist-enter-from { transform: scale(0.3); opacity: 0; }
+.rl-hist-move { transition: transform 0.25s ease; }
+
+/* ─── the board ─────────────────────────────────────────────────────────────── */
+.rl-board {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 0.95fr) minmax(0, 0.95fr);
+    grid-template-rows: repeat(14, 2.75rem);
+    border: 2px solid rgb(255 236 190 / 0.6);
+    border-radius: 0.9rem;
+    background: rgb(0 0 0 / 0.14);
+    box-shadow: 0 0 0 4px rgb(0 0 0 / 0.12), inset 0 2px 10px rgb(0 0 0 / 0.25);
+    overflow: hidden;
+    transition: filter 0.25s;
     user-select: none;
-    z-index: 2;
-    transition: filter 0.15s ease, box-shadow 0.2s ease;
+    -webkit-user-select: none;
 }
-.rl-cell.static { position: relative; font-size: 14px; border-radius: 6px; }
-.rl-cell:hover { filter: brightness(1.25); }
-.rl-cell.red { background: rgba(176, 32, 46, 0.9); }
-.rl-cell.black { background: rgba(15, 18, 24, 0.9); }
-.rl-cell.green { background: rgba(13, 99, 54, 0.9); }
-.rl-cell.outside { background: rgba(217, 177, 103, 0.14); }
-.rl-cell.zero { border-radius: 10px 0 0 10px; }
-.rl-cell.won { box-shadow: inset 0 0 0 3px var(--lt-gold), 0 0 18px rgba(217, 177, 103, 0.6); z-index: 3; }
-.rl-cell.hit { box-shadow: inset 0 0 0 4px #fff, 0 0 26px rgba(255, 255, 255, 0.7); z-index: 4; animation: rl-hit 0.6s ease-in-out 3; }
-@keyframes rl-hit { 50% { filter: brightness(1.6); } }
-.rl-diamond {
-    width: 24px;
-    height: 24px;
-    transform: rotate(45deg);
-    box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.35);
-    border-radius: 3px;
+.rl-board.rl-closed { filter: saturate(0.8) brightness(0.92); }
+.rl-spot {
+    grid-column: var(--tc);
+    grid-row: var(--tr);
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-width: 0;
+    border: 1px solid rgb(255 236 190 / 0.35);
+    color: #fff7e6;
+    cursor: pointer;
+    transition: background-color 0.12s;
+    -webkit-tap-highlight-color: transparent;
 }
-.rl-diamond.small { width: 14px; height: 14px; }
-.rl-layout {
-    position: absolute;
-    border-radius: 14px;
-    background: rgba(0, 0, 0, 0.18);
-    box-shadow: inset 0 0 0 1.5px rgba(217, 177, 103, 0.3);
-    z-index: 1;
-    pointer-events: none;
-    transition: opacity 0.2s;
+.rl-spot:disabled { cursor: default; }
+.rl-spot:hover:not(:disabled) { background: rgb(255 255 255 / 0.1); }
+.rl-spot:active:not(:disabled) { background: rgb(255 255 255 / 0.18); }
+.rl-spot:focus-visible { outline: 3px solid #fff; outline-offset: -3px; z-index: 5; }
+.rl-tile {
+    display: grid;
+    place-items: center;
+    width: 78%;
+    height: 74%;
+    border-radius: 0.45rem;
+    font-family: var(--font-game);
+    font-size: 1.05rem;
+    line-height: 1;
+    text-shadow: 0 2px 0 rgb(0 0 0 / 0.35);
+    box-shadow: inset 0 2px 0 rgb(255 255 255 / 0.18), inset 0 -3px 0 rgb(0 0 0 / 0.28), 0 2px 0 rgb(0 0 0 / 0.25);
+    transition: transform 0.15s, filter 0.15s, box-shadow 0.15s;
 }
-.rl-layout.closed { opacity: 0.55; }
+.red .rl-tile { background: linear-gradient(180deg, #e8394c, #b81a2d); }
+.black .rl-tile { background: linear-gradient(180deg, #34313f, #15131a); }
+.green .rl-tile { background: linear-gradient(180deg, #1cc477, #0b8048); }
+.rl-zero-spot .rl-tile { width: 70%; height: 86%; font-size: 1.35rem; }
+.rl-text { font-family: var(--font-game); font-size: 0.95rem; letter-spacing: 0.03em; text-shadow: 0 2px 0 rgb(0 0 0 / 0.3); white-space: nowrap; }
+.rl-diamond { width: 1.35rem; height: 1.35rem; transform: rotate(45deg) scaleY(0.8); border-radius: 0.2rem; box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.45), 0 2px 0 rgb(0 0 0 / 0.35); }
+.rl-diamond.red { background: #d3263a; }
+.rl-diamond.black { background: #1a181f; }
+.rl-lit .rl-tile { transform: scale(1.07); filter: brightness(1.25); box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.75), 0 0 12px rgb(255 255 255 / 0.35); }
+.rl-hit { z-index: 4; }
+.rl-hit .rl-tile { transform: scale(1.1); box-shadow: inset 0 0 0 2px #fff, 0 0 0 3px #ffd84a, 0 0 22px 4px rgb(255 216 74 / 0.8); animation: rl-hit 0.7s ease-in-out 3 alternate; }
+.rl-won { background: rgb(255 216 74 / 0.22); box-shadow: inset 0 0 0 2px #ffd84a, inset 0 0 18px rgb(255 216 74 / 0.45); z-index: 3; }
+.rl-dolly { position: absolute; left: 50%; top: -0.35rem; width: 1rem; translate: -50% 0; filter: drop-shadow(0 2px 1px rgb(0 0 0 / 0.5)); z-index: 7; animation: rl-dolly 0.45s cubic-bezier(0.3, 0.7, 0.4, 1.5) both; }
 
-.rl-history {
-    position: absolute;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(11, 8, 6, 0.6);
-    border: 1.5px solid rgba(217, 177, 103, 0.3);
-    border-radius: 999px;
-    padding: 6px 14px;
-    white-space: nowrap;
-}
-.rl-history-label { font-size: 13px; font-weight: 800; letter-spacing: 0.08em; color: var(--lt-gold); margin-right: 4px; }
-.rl-history-empty { font-size: 14px; color: #9a8f7a; }
-.rl-pill {
-    width: 30px;
-    height: 30px;
-    border-radius: 999px;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    font-weight: 800;
-    color: #f7f3e8;
-    box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.35);
-}
-.rl-pill.small { width: 26px; height: 26px; font-size: 11px; }
-.rl-pill.red { background: #c02434; }
-.rl-pill.black { background: #14181f; }
-.rl-pill.green { background: #0f6e3c; }
+/* ─── chips on the layout ───────────────────────────────────────────────────── */
+.rl-pile { position: absolute; left: 50%; top: 50%; width: 1.7rem; height: 1.7rem; translate: -50% -42%; pointer-events: none; z-index: 6; }
+.rl-chip { position: absolute; inset: 0; width: 100%; filter: drop-shadow(0 2px 1px rgb(0 0 0 / 0.45)); }
+.rl-drop { animation: rl-drop 0.32s cubic-bezier(0.3, 0.7, 0.4, 1.4) both; }
+.rl-pile-won { filter: drop-shadow(0 0 8px rgb(255 216 74 / 0.95)); animation: rl-pay 0.5s cubic-bezier(0.3, 0.7, 0.4, 1.6) both; }
+.rl-pile-lost { animation: rl-sweep 0.55s 0.15s ease-in both; }
 
-.rl-wheel { position: absolute; inset: 0; }
-.rl-wheel-spin {
-    width: 100%;
-    height: 100%;
-    transition-property: transform;
-    transition-timing-function: cubic-bezier(0.1, 0.74, 0.2, 1);
-    filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.6));
+/* ─── the chip rack ─────────────────────────────────────────────────────────── */
+.rl-rack { transition: transform 0.12s, background-color 0.12s; }
+.rl-rack:active:not(:disabled) { transform: translateY(2px); }
+.rl-rack-on { background: rgb(255 255 255 / 0.1); box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.85), 0 0 14px rgb(255 216 74 / 0.45); }
+.rl-rack-on :deep(.game-chip) { transform: translateY(-3px) scale(1.06); }
+.rl-rack :deep(.game-chip) { transition: transform 0.15s cubic-bezier(0.3, 0.7, 0.4, 1.5); }
+
+.rl-zero { animation: rl-zero 0.3s cubic-bezier(0.3, 0.7, 0.4, 1.5); }
+.rl-nudge { animation: rl-nudge 0.35s ease-out; }
+
+/* The wide board from ~34rem: zero on the left, 12 columns, 2:1 on the right. */
+@container board (min-width: 34rem) {
+    .rl-board {
+        grid-template-columns: minmax(0, 1.15fr) repeat(12, minmax(0, 1fr)) minmax(0, 1.15fr);
+        grid-template-rows: repeat(3, 3.25rem) 2.75rem 2.75rem;
+    }
+    .rl-spot { grid-column: var(--wc); grid-row: var(--wr); }
+    .rl-zero-spot .rl-tile { width: 76%; height: 80%; border-radius: 1.4rem 0.45rem 0.45rem 1.4rem; }
+    .rl-pile { width: 1.85rem; height: 1.85rem; }
 }
-.rl-wheel-spin :deep(svg) { width: 100%; height: 100%; display: block; }
-.rl-ball-orbit {
-    position: absolute;
-    inset: 0;
-    transition-property: transform;
-    transition-timing-function: cubic-bezier(0.14, 0.8, 0.22, 1);
-    pointer-events: none;
-}
-.rl-ball {
-    position: absolute;
-    left: 50%;
-    top: 5.2%;
-    width: 3.5%;
-    height: 3.5%;
-    transform: translateX(-50%);
-    border-radius: 999px;
-    background: radial-gradient(circle at 35% 30%, #ffffff, #d6d6d6 60%, #8c8c8c 100%);
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.65);
+@container board (min-width: 44rem) {
+    /* From here the board grows with its width (cqw: the board's container), so cells stay near square. */
+    .rl-board { grid-template-rows: repeat(3, clamp(3.6rem, 5.6cqw, 5.5rem)) repeat(2, clamp(3rem, 4.2cqw, 4.25rem)); }
+    .rl-tile { font-size: clamp(1.25rem, 2cqw, 1.85rem); }
+    .rl-zero-spot .rl-tile { font-size: clamp(1.35rem, 2.3cqw, 2.1rem); }
+    .rl-text { font-size: clamp(0.95rem, 1.5cqw, 1.35rem); }
+    .rl-diamond { width: clamp(1.35rem, 2.1cqw, 1.9rem); height: clamp(1.35rem, 2.1cqw, 1.9rem); }
+    .rl-pile { width: clamp(2.1rem, 3.2cqw, 2.9rem); height: clamp(2.1rem, 3.2cqw, 2.9rem); }
 }
 
-.rl-pile {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    z-index: 6;
-    pointer-events: none;
+@keyframes rl-drop { 0% { transform: translateY(-22px) scale(1.15); opacity: 0; } 60% { opacity: 1; } }
+@keyframes rl-pay { 0% { transform: scale(0.6); } 60% { transform: scale(1.25); } 100% { transform: scale(1); } }
+@keyframes rl-sweep { to { transform: translateY(10px) scale(0.6); opacity: 0; } }
+@keyframes rl-hit { to { filter: brightness(1.45); } }
+@keyframes rl-dolly { from { transform: translateY(-14px); opacity: 0; } }
+@keyframes rl-zero { from { transform: scale(1.25); } }
+@keyframes rl-nudge { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 50% { transform: translateX(4px); } 75% { transform: translateX(-2px); } }
+@media (prefers-reduced-motion: reduce) {
+    .rl-drop, .rl-pile-won, .rl-hit .rl-tile, .rl-dolly, .rl-zero, .rl-nudge { animation: none; }
+    .rl-pile-lost { animation-duration: 0.01s; }
 }
-.rl-pile.won { filter: drop-shadow(0 0 10px rgba(217, 177, 103, 0.9)); }
-.rl-total {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 18px;
-    border-radius: 999px;
-    background: rgba(11, 8, 6, 0.88);
-    border: 1.5px solid rgba(217, 177, 103, 0.55);
-    white-space: nowrap;
-    z-index: 3;
-}
-.rl-total span { font-size: 14px; font-weight: 800; letter-spacing: 0.1em; color: rgba(217, 177, 103, 0.8); }
-.rl-total b { font-size: 20px; font-weight: 800; color: var(--lt-gold); font-variant-numeric: tabular-nums; }
 </style>

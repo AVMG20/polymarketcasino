@@ -294,36 +294,91 @@ export interface LbTextures {
     card: Map<string, Texture>
     back: Texture
     chip: Map<number, Texture>
+    /** Bakes a few more of the not-yet-baked faces; returns true while some are left. */
+    warm: (batch: number) => boolean
+    /** Frees every baked texture (call before the renderer goes). */
+    destroy: () => void
 }
 
 export function cardKey(rank: Rank, suit: Suit) {
     return `${rank}${suit[0]}`
 }
 
-/** Bake every card and chip once; the table then only ever moves sprites. */
+/** A map that bakes a missing entry on first read. */
+class LazyMap<K, V> extends Map<K, V> {
+    constructor(private bake: (key: K) => V | undefined) {
+        super()
+    }
+
+    override get(key: K): V | undefined {
+        let value = super.get(key)
+        if (value === undefined) {
+            value = this.bake(key)
+            if (value !== undefined) this.set(key, value)
+        }
+        return value
+    }
+}
+
+/**
+ * Cards and chips bake on first use (a deal never waits on 53 faces at once),
+ * and `warm` fills in the rest a few per frame. `destroy` frees them all.
+ */
 export function buildTextures(PIXI: Pixi, renderer: Renderer): LbTextures {
     const make = (target: import('pixi.js').Container) =>
         renderer.generateTexture({ target, resolution: 2, antialias: true })
 
-    const card = new Map<string, Texture>()
+    const faces = new Map<string, { rank: Rank, suit: Suit }>()
     for (const suit of SUITS) {
-        for (const rank of RANKS) {
-            const face = buildCardFace(PIXI, rank, suit)
-            card.set(cardKey(rank, suit), make(face))
-            face.destroy({ children: true })
-        }
+        for (const rank of RANKS) faces.set(cardKey(rank, suit), { rank, suit })
     }
+    const card = new LazyMap<string, Texture>((key) => {
+        const def = faces.get(key)
+        if (!def) return undefined
+        const face = buildCardFace(PIXI, def.rank, def.suit)
+        const texture = make(face)
+        face.destroy({ children: true })
+        return texture
+    })
+    const chips = new Map(CHIP_ART.map(def => [def.value, def]))
+    const chip = new LazyMap<number, Texture>((value) => {
+        const def = chips.get(value)
+        if (!def) return undefined
+        const built = buildChip(PIXI, def)
+        const texture = make(built)
+        built.destroy({ children: true })
+        return texture
+    })
 
     const backSprite = buildCardBack(PIXI)
     const back = make(backSprite)
     backSprite.destroy({ children: true })
 
-    const chip = new Map<number, Texture>()
-    for (const def of CHIP_ART) {
-        const built = buildChip(PIXI, def)
-        chip.set(def.value, make(built))
-        built.destroy({ children: true })
+    let destroyed = false
+    return {
+        card,
+        back,
+        chip,
+        warm(batch) {
+            if (destroyed) return false
+            let left = batch
+            for (const key of faces.keys()) {
+                if (card.has(key)) continue
+                card.get(key)
+                if (--left <= 0) break
+            }
+            for (const value of chips.keys()) {
+                if (!chip.has(value)) chip.get(value)
+            }
+            return [...faces.keys()].some(key => !card.has(key))
+        },
+        destroy() {
+            destroyed = true
+            for (const texture of card.values()) texture.destroy(true)
+            for (const texture of chip.values()) texture.destroy(true)
+            back.destroy(true)
+            card.clear()
+            chip.clear()
+        }
     }
-
-    return { card, back, chip }
 }

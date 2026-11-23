@@ -25,7 +25,7 @@ export async function initSlotPixiApp(ApplicationCtor: typeof Application, size:
     })
 
     if (isDestroyed()) {
-        app.destroy(true)
+        app.destroy({ removeView: true })
         return null
     }
 

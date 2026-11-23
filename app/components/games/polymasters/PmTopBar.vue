@@ -11,6 +11,8 @@ function toggleFullscreen() {
     emit('toggle-fullscreen')
 }
 
+const multiple = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 2 })
+
 function chipClass(m: number) {
     if (m <= 0) return 'lost'
     if (m >= 50) return 'epic'
@@ -22,19 +24,6 @@ function chipClass(m: number) {
 
 <template>
   <header class="top">
-    <div class="logo">
-      <svg class="logo-plane" viewBox="0 0 64 40" aria-hidden="true">
-        <path d="M6 22 L40 18 L52 12 L56 18 L46 24 L8 27 Z" fill="#e53935" stroke="#6a0a10" stroke-width="1.5" />
-        <rect x="22" y="8" width="5" height="26" rx="2" fill="#fff6e8" stroke="#6a0a10" stroke-width="1.2" />
-        <rect x="4" y="12" width="8" height="10" rx="2" fill="#e53935" stroke="#6a0a10" stroke-width="1.2" />
-        <ellipse cx="58" cy="20" rx="2" ry="12" fill="rgba(255,255,255,.7)" />
-      </svg>
-      <div class="logo-text">
-        <span class="display gold-text">POLY</span>
-        <span class="two display">MASTERS</span>
-      </div>
-    </div>
-
     <div class="right">
       <div class="history" aria-label="Last results">
         <TransitionGroup name="chip">
@@ -43,7 +32,7 @@ function chipClass(m: number) {
               <path d="M12 3c3 4.2 5 7.2 5 9.6A5 5 0 0 1 7 12.6C7 10.2 9 7.2 12 3z" fill="currentColor" />
               <path d="M3 20c1.5 0 1.5-1 3-1s1.5 1 3 1 1.5-1 3-1 1.5 1 3 1 1.5-1 3-1 1.5 1 3 1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
             </svg>
-            <template v-else>x{{ h.mult >= 100 ? h.mult.toFixed(0) : h.mult.toFixed(2) }}</template>
+            <template v-else>×{{ multiple.format(h.mult) }}</template>
           </span>
         </TransitionGroup>
       </div>
@@ -60,9 +49,6 @@ function chipClass(m: number) {
             <path d="M9 17.5a2.5 2.5 0 1 1-2.5-2.5c.5 0 1 .1 1.5.4V5l11-2v12.5a2.5 2.5 0 1 1-2.5-2.5c.5 0 1 .1 1.5.4V7.2L9 8.8z" />
             <path v-if="!state.music" d="M3 3l18 18" stroke="#ff6b6b" stroke-width="2.5" />
           </svg>
-        </button>
-        <button class="round-btn" title="Rules" aria-label="Rules" @click="(state.showRules = true), sfx.click()">
-          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5.5" r="2.2" /><rect x="10" y="9.5" width="4" height="11" rx="1.6" /></svg>
         </button>
         <button v-if="fullscreenSupported" class="round-btn" :title="fullscreen ? 'Exit fullscreen' : 'Fullscreen'" :aria-label="fullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="toggleFullscreen">
           <svg v-if="fullscreen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
@@ -82,52 +68,24 @@ function chipClass(m: number) {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: max(12px, env(safe-area-inset-top)) 16px 0;
+  padding: 12px 12px 0;
   pointer-events: none;
 }
 .top > * {
   pointer-events: auto;
 }
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.logo-plane {
-  width: 58px;
-  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.4));
-  animation: bob 3s ease-in-out infinite;
-}
-.logo-text {
-  display: flex;
-  align-items: baseline;
-  line-height: 1;
-}
-.logo-text .display {
-  font-size: 34px;
-}
-.two {
-  background: linear-gradient(180deg, #ff8a78, #e0242c 55%, #8a0e14);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  filter: drop-shadow(0 3px 0 #fff) drop-shadow(0 5px 8px rgba(0, 0, 0, 0.4));
-}
-@keyframes bob {
-  50% {
-    transform: translateY(-4px) rotate(-3deg);
-  }
-}
 .right {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
+  min-width: 0;
 }
 .buttons {
   display: flex;
   gap: 8px;
-  order: -1;
+  flex: none;
 }
 .round-btn.off {
   filter: grayscale(0.8) brightness(0.8);
@@ -138,10 +96,11 @@ function chipClass(m: number) {
   flex-wrap: wrap;
   align-content: flex-start;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
   height: 28px;
-  max-width: min(60cqw, 640px);
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
 }
 .chip {
@@ -196,15 +155,6 @@ function chipClass(m: number) {
   transition: transform 0.3s;
 }
 @container pm (max-width: 720px) {
-  .logo-text .display {
-    font-size: 24px;
-  }
-  .logo-plane {
-    width: 40px;
-  }
-  .history {
-    max-width: 52cqw;
-  }
   .chip:nth-child(n + 5) {
     display: none;
   }
@@ -214,14 +164,6 @@ function chipClass(m: number) {
   }
   .buttons {
     gap: 6px;
-  }
-}
-@container pm (max-width: 400px) {
-  .logo-text .display {
-    font-size: 20px;
-  }
-  .logo-plane {
-    display: none;
   }
 }
 </style>

@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import SlotBalanceIcons from '~/components/slots/SlotBalanceIcons.vue'
+import SlotCurrencyIcon from '~/components/slots/SlotCurrencyIcon.vue'
 import { GiftIcon, InfoIcon, LoaderCircleIcon, MinusIcon, PlusIcon, RefreshCwIcon, RepeatIcon, SquareIcon, Volume2Icon, VolumeXIcon, XIcon, ZapIcon } from 'lucide-vue-next'
 import '@fontsource/lilita-one/400.css'
 import { findGame } from '#shared/games/registry'
@@ -607,7 +609,7 @@ async function spin(feature?: 'buyBonus') {
     if (balance.value < cost) {
         sound.play('notEnough')
         noFunds.value++
-        setMessage('Not enough coins for this bet', 'error')
+        setMessage('Balance too low for this bet', 'error')
         stopAuto()
         return
     }
@@ -747,7 +749,7 @@ function onBuy() {
     if (balance.value < buyCost.value) {
         sound.play('notEnough')
         noFunds.value++
-        setMessage('Not enough coins to buy free spins', 'error')
+        setMessage('Balance too low to buy free spins', 'error')
         return
     }
     showBuy.value = true
@@ -1209,7 +1211,7 @@ const PICADO = ['#ff2d6f', '#ffb400', '#00c2a8', '#7b3cff', '#ff6a00', '#2ec5ff'
             class="spn-meter spn-meter--balance"
             :class="{ 'spn-shake': noFunds > 0, 'spn-meter--flash': balancePulse > 0 }"
           >
-            <span class="spn-meter__label">Balance</span>
+            <span class="spn-meter__label"><SlotBalanceIcons />Balance</span>
             <span class="spn-meter__val">{{ formatNumber(balance) }}</span>
           </div>
 
@@ -1315,7 +1317,7 @@ const PICADO = ['#ff2d6f', '#ffb400', '#00c2a8', '#7b3cff', '#ff6a00', '#2ec5ff'
             :class="{ 'spn-meter--hot': winShown > 0 }"
           >
             <span class="spn-meter__label">{{ inFree ? 'Total win' : 'Win' }}</span>
-            <span class="spn-meter__val">{{ formatNumber(winShown) }}</span>
+            <span class="spn-meter__val"><SlotCurrencyIcon v-if="winShown > 0" currency="chips" class="spn-cur" />{{ formatNumber(winShown) }}</span>
           </div>
         </div>
       </section>
@@ -2107,6 +2109,24 @@ const PICADO = ['#ff2d6f', '#ffb400', '#00c2a8', '#7b3cff', '#ff6a00', '#2ec5ff'
 @keyframes spn-slam-in { 0% { transform: scale(2.4); opacity: 0; } 60% { transform: scale(0.94); opacity: 1; } 100% { transform: scale(1); } }
 
 /* ── Responsive ───────────────────────────────────────────────────────── */
+/* Short desktop screens (the game overlay): a smaller logo and a cabinet sized to the
+   viewport's height, so reels and controls fit without scrolling. */
+@media (min-width: 961px) and (max-height: 1000px) {
+  .spn-page { padding-bottom: 4px; }
+  /* 445px: the header, logo, message bar, deck and the recent-rounds row under the cabinet. */
+  .spn-wrap { max-width: min(1120px, max(780px, calc((100dvh - 445px) * 1.656 + 322px))); }
+  .spn-head { height: 104px; margin-bottom: -24px; }
+  .spn-badges { display: none; }
+  /* Recent rounds: one row that fits, never a second line under the frame. */
+  .spn-history { flex-wrap: nowrap; overflow: hidden; height: 22px; margin-top: 8px; }
+  .spn-history__pill { flex: none; }
+  /* The reels set the board's height; the side rails fit into it. */
+  .spn-track, .spn-rail { contain: size; overflow: hidden; }
+  .spn-track__stops li { min-height: 0; font-size: 9px; }
+  .spn-card { padding: 6px; }
+  .spn-card__img { width: 44px; height: 44px; }
+}
+
 @media (max-width: 960px) {
   .spn-board { grid-template-columns: minmax(0, 1fr); }
   .spn-track {
@@ -2168,5 +2188,11 @@ const PICADO = ['#ff2d6f', '#ffb400', '#00c2a8', '#7b3cff', '#ff6a00', '#2ec5ff'
 
 @media (prefers-reduced-motion: reduce) {
   .spn-head__logo, .spn-picado span, .spn-window__lights, .spn-spinbtn__ring { animation: none; }
+}
+
+/* Wins pay chips. */
+.spn-cur {
+  margin-right: 0.25em;
+  font-size: 0.85em;
 }
 </style>

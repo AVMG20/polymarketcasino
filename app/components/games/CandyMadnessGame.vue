@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import SlotBalanceIcons from '~/components/slots/SlotBalanceIcons.vue'
+import SlotCurrencyIcon from '~/components/slots/SlotCurrencyIcon.vue'
 import '~/assets/css/candy-madness.css'
 import '@fontsource/fredoka/400.css'
 import '@fontsource/fredoka/500.css'
@@ -876,7 +878,7 @@ onBeforeUnmount(() => {
         if (layer) safeDestroy(() => GSAP?.killTweensOf(layer.children))
     }
     safeDestroy(() => reelSet?.destroy?.())
-    safeDestroy(() => app?.destroy?.(true, { children: true }))
+    safeDestroy(() => app?.destroy?.({ removeView: true }, { children: true }))
     for (const tex of [...Object.values(TEX), ...Object.values(PTEX)]) safeDestroy(() => tex.destroy(true))
 })
 
@@ -1372,7 +1374,7 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
                     Free spins complete
                   </p>
                   <p class="cm-splash__big">
-                    <CoinsIcon class="cm-splash__coin" />
+                    <SlotCurrencyIcon currency="chips" class="cm-splash__coin" />
                     {{ formatNumber(bonusOutroAmount) }}
                   </p>
                   <p class="cm-splash__text">
@@ -1401,9 +1403,8 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
           <!-- Control deck -->
           <div class="cm-deck">
             <div class="cm-meter cm-meter--balance">
-              <span class="cm-meter__label">Balance</span>
+              <span class="cm-meter__label"><SlotBalanceIcons />Balance</span>
               <span class="cm-meter__value">
-                <CoinsIcon class="cm-coin" />
                 {{ formatNumber(balance) }}
               </span>
             </div>
@@ -1473,7 +1474,7 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
                 :key="winPulse"
                 class="cm-meter__win"
                 :class="{ 'is-hot': winShown > 0 }"
-              >{{ formatNumber(winShown) }}</span>
+              ><SlotCurrencyIcon v-if="winShown > 0" currency="chips" class="cm-cur" />{{ formatNumber(winShown) }}</span>
               <span
                 v-if="winEquation"
                 class="cm-meter__eq"
@@ -1745,12 +1746,15 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
 
 /* ── layout ───────────────────────────────────────────────────────── */
 .cm-main {
+  /* The board as wide as the viewport's height allows, so board and controls fit without scrolling. */
+  --cm-board-w: min(760px, max(340px, calc(100dvh - 550px)));
   display: grid;
-  grid-template-columns: 210px minmax(0, 760px) 210px;
+  grid-template-columns: 210px minmax(0, var(--cm-board-w)) 210px;
   grid-template-areas: 'features cabinet guide';
   gap: 24px;
   width: 100%;
   max-width: 1228px;
+  justify-content: center;
   align-items: start;
 }
 
@@ -2104,7 +2108,7 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
   font-variant-numeric: tabular-nums;
 }
 
-.cm-splash__coin { color: var(--cm-gold); width: 0.8em; height: 0.8em; }
+.cm-splash__coin { font-size: 0.8em; }
 
 .cm-splash__text {
   max-width: 320px;
@@ -2221,11 +2225,9 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
   color: var(--cm-ink);
 }
 
-.cm-coin {
-  width: 15px;
-  height: 15px;
-  color: var(--cm-ink);
-  flex: none;
+.cm-cur {
+  margin-right: 0.2em;
+  font-size: 0.9em;
 }
 
 
@@ -2582,10 +2584,19 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
 .cm-root input:focus-visible { outline: 3px solid var(--cm-pink); outline-offset: 4px; }
 
 @media (max-width: 1284px) {
-  .cm-main { grid-template-columns: minmax(0, 760px); grid-template-areas: 'cabinet' 'features' 'guide'; justify-content: center; }
+  .cm-main { grid-template-columns: minmax(0, var(--cm-board-w)); grid-template-areas: 'cabinet' 'features' 'guide'; justify-content: center; }
   .cm-side--left { display: grid; grid-template-columns: 1fr 1fr; padding-top: 0; }
   .cm-section-label { grid-column: 1 / -1; }
   .cm-side--right { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding-top: 0; }
+}
+/* Short desktop screens (the game overlay): a smaller logo, so board and controls fit. */
+@media (min-width: 541px) and (max-height: 1000px) {
+  .cm-main { --cm-board-w: min(760px, max(300px, calc(100dvh - 410px))); }
+  .cm-stage { padding-top: 10px; padding-bottom: 16px; }
+  .cm-logo { margin-bottom: 12px; }
+  .cm-logo__title { font-size: 40px; }
+  .cm-logo__art { width: 34px; }
+  .cm-chips { display: none; }
 }
 @media (max-width: 540px) {
   .cm-stage { padding: 20px 12px 30px; }
@@ -2602,7 +2613,6 @@ const multColor = computed(() => hexCss(spotColor(2 ** Math.max(1, Math.min(11, 
   .cm-meter { padding: 6px 4px; min-height: 60px; }
   .cm-meter__value, .cm-bet__value, .cm-bet__input { font-size: 16px; }
   .cm-meter__win { font-size: 21px; }
-  .cm-meter__value .cm-coin { display: none; }
   .cm-meter__label { font-size: 8px; letter-spacing: 0.07em; gap: 3px; }
   .cm-bet { gap: 3px; }
   .cm-bet__value, .cm-bet__input { width: 4.7ch; }

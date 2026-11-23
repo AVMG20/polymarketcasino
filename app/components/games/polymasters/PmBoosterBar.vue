@@ -30,8 +30,8 @@ const names: Record<PmBooster, [string, string]> = {
 <style scoped>
 .boosters {
   position: absolute;
-  left: 16px;
-  top: 96px;
+  left: 12px;
+  top: 60px;
   display: flex;
   flex-direction: column;
   gap: 8px;

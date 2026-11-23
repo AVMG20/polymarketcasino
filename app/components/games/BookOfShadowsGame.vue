@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import SlotBalanceIcons from '~/components/slots/SlotBalanceIcons.vue'
+import SlotCurrencyIcon from '~/components/slots/SlotCurrencyIcon.vue'
 import '@fontsource/cinzel/latin-700.css'
 import '@fontsource/cinzel/latin-900.css'
 import '@fontsource/cinzel-decorative/latin-700.css'
@@ -359,7 +361,7 @@ async function spin(buy = false) {
     const cost = buy ? buyCost.value : bet.value
     if (balance.value < cost) {
         stopAuto()
-        toast.warning('Not enough coins', { description: `This ${buy ? 'feature buy' : 'spin'} costs ${fmt(cost)}.` })
+        toast.warning('Balance too low', { description: `This ${buy ? 'feature buy' : 'spin'} costs ${fmt(cost)}.` })
         return
     }
     const before = balance.value
@@ -802,7 +804,7 @@ onBeforeUnmount(() => {
       <div class="bos-deck">
         <div class="bos-deck-left">
           <div class="bos-meter bos-meter-balance">
-            <span>Balance</span>
+            <span><SlotBalanceIcons />Balance</span>
             <strong class="bos-full">{{ fmt(balance) }}</strong>
             <strong class="bos-compact">{{ formatNumber(balance) }}</strong>
           </div>
@@ -863,7 +865,7 @@ onBeforeUnmount(() => {
           :class="{ 'bos-win-on': winMeter > 0 }"
         >
           <span>{{ feature.active ? 'Total win' : 'Win' }}</span>
-          <strong>{{ fmt(winMeter) }}</strong>
+          <strong><SlotCurrencyIcon v-if="winMeter > 0" currency="chips" class="bos-cur" />{{ fmt(winMeter) }}</strong>
           <em>{{ statusLine }}</em>
         </div>
 
@@ -1096,7 +1098,7 @@ onBeforeUnmount(() => {
 
 .bos-cabinet {
   position: relative;
-  width: min(100%, calc((100dvh - 150px) * 1.5), 1500px);
+  width: min(100%, calc((100dvh - 195px) * 1.5), 1500px);
   aspect-ratio: 1536 / 1024;
   filter: drop-shadow(0 30px 40px rgba(0, 0, 0, 0.75));
 }
@@ -2193,5 +2195,11 @@ onBeforeUnmount(() => {
   .bos-bet-input {
     width: 76px;
   }
+}
+
+/* Wins pay chips. */
+.bos-cur {
+  margin-right: 0.25em;
+  font-size: 0.85em;
 }
 </style>

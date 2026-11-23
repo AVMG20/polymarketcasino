@@ -1,6 +1,6 @@
 import gsap from 'gsap'
 import type { Application, Container, Graphics, Sprite, Text } from 'pixi.js'
-import { formatNumber } from '#shared/money'
+import { formatCoins } from '#shared/money'
 import { BJ_SIDE_BETS as LB_SIDE_BETS, type BjAction as LbAction, type BjHand as LbHand, type BjSideBet as LbSideBetKey, type BjSpot as LbBetSpot } from '#shared/tables/blackjack'
 import type { BjSeat, BjShared } from '#shared/tables/blackjack-wire'
 import { chipStack } from '#shared/tables/chips'
@@ -25,9 +25,12 @@ export const STAGE_W = 1600
 // action controls, which sit at a fixed percentage up from the bottom.
 export const STAGE_H = 980
 
-const FELT = 0x0f5132
-const FELT_EDGE = 0x0a3a24
-const RAIL = 0x3b2416
+const FELT_HI = 0x1d8a55
+const FELT = 0x116b43
+const FELT_LO = 0x083a24
+const RAIL_HI = 0x74452a
+const RAIL_LO = 0x2a170c
+const WOOD = 0x8a5a2e
 const GOLD = 0xd9b167
 
 const DEALER_POS = { x: 800, y: 196 }
@@ -46,7 +49,7 @@ const DEALER_BANK_POS = { x: 400, y: 320 }
 
 // 296 apart rather than 274: the felt has the room, and the extra 22 is what
 // keeps one seat's side bet spots off the next seat's.
-const SEAT_LAYOUT = [
+export const SEAT_LAYOUT = [
     { x: 208, y: 546 },
     { x: 504, y: 604 },
     { x: 800, y: 630 },
@@ -58,7 +61,7 @@ const SEAT_WIDTH = 272
 const HAND_Y_OFFSET = -100
 /** Between the cards and the chips, clear of a full stack of either. */
 const HAND_BADGE_Y = 0
-const BET_Y_OFFSET = 106
+export const BET_Y_OFFSET = 106
 /**
  * Split hands are drawn smaller, which frees a band above them. The stakes and
  * score badges rise into it so they are not crowding the side bet spots.
@@ -68,7 +71,7 @@ const SPLIT_LIFT = 24
 const MAX_STAKE_CHIPS = 8
 // Dropped far enough to leave a clear row between the main stake's total and
 // the plate, which is where a side bet's outcome goes.
-const PLATE_Y_OFFSET = 226
+export const PLATE_Y_OFFSET = 226
 /**
  * Side bet outcomes and insurance. Directly under the spot they belong to, and
  * below the split stakes' totals so a three-way split cannot reach them.
@@ -102,8 +105,11 @@ interface LiveCard {
     moving: gsap.core.Tween | null
 }
 
+/**
+ * The nameplates, open seats and the phase banner are DOM over the canvas
+ * (LiveTablePlate, LiveTableSit, LiveTablePhase), the same as every table.
+ */
 export interface LbSceneCallbacks {
-    onSit: (seat: number) => void
     /** A bet spot was clicked; the band's selected chip goes on it. */
     onPlace: (spot: LbBetSpot) => void
 }
@@ -189,9 +195,11 @@ const label = (PIXI: Pixi, text: string, size: number, color: number, weight: '4
     new PIXI.Text({
         text,
         style: {
-            fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+            // The casino's game font (one weight); the page loads it before the scene starts.
+            fontFamily: weight === '400' || weight === '600' ? 'Fredoka, system-ui, sans-serif' : '"Lilita One", Fredoka, system-ui, sans-serif',
             fontSize: size,
-            fontWeight: weight,
+            fontWeight: weight === '400' || weight === '600' ? weight : '400',
+            letterSpacing: weight === '400' || weight === '600' ? 0 : 1,
             fill: color
         }
     })
@@ -212,8 +220,6 @@ export class LiveBlackjackScene {
     private dealerScore: Container
     private dealerScoreText!: Text
     private timerArc: Graphics
-    private phaseText: Text
-    private countdownText!: Text
     private shoeStack!: Graphics
 
     private state: LbTableState | null = null
@@ -245,7 +251,7 @@ export class LiveBlackjackScene {
 
         this.drawTable()
         this.seatNodes = SEAT_LAYOUT.map((pos, i) => new SeatNode(
-            PIXI, this.uiLayer, this.chipLayer, this.spotLayer, i, pos, callbacks,
+            PIXI, this.uiLayer, this.chipLayer, this.spotLayer, i, pos,
             spot => this.placeOnSpot(spot)
         ))
 
@@ -258,19 +264,6 @@ export class LiveBlackjackScene {
         this.timerArc = new PIXI.Graphics()
         this.spotLayer.addChild(this.timerArc)
 
-        this.phaseText = label(PIXI, '', 26, 0xf7f3e8, '700')
-        this.phaseText.anchor.set(0.5)
-        this.phaseText.position.set(DEALER_POS.x, 348)
-        this.uiLayer.addChild(this.phaseText)
-
-        // A shrinking ring alone is hard to read across the table; the seconds
-        // are what players actually watch.
-        this.countdownText = label(PIXI, '', 42, GOLD, '800')
-        this.countdownText.anchor.set(0.5)
-        this.countdownText.position.set(DEALER_POS.x, 394)
-        this.countdownText.visible = false
-        this.uiLayer.addChild(this.countdownText)
-
         app.ticker.add(this.tick)
     }
 
@@ -278,12 +271,37 @@ export class LiveBlackjackScene {
 
     private drawTable() {
         const g = new this.PIXI.Graphics()
+        const { FillGradient } = this.PIXI
 
         g.roundRect(0, 0, STAGE_W, STAGE_H, 0).fill(0x120c08)
-        g.roundRect(24, 34, STAGE_W - 48, 920, 190).fill(RAIL)
-        g.roundRect(24, 34, STAGE_W - 48, 920, 190).stroke({ width: 3, color: 0x1c1109 })
-        g.roundRect(46, 56, STAGE_W - 92, 876, 172).fill(FELT_EDGE)
-        g.roundRect(54, 64, STAGE_W - 108, 860, 166).fill(FELT)
+        // A wooden trim, then the padded leather rail with light on its top edge.
+        g.roundRect(14, 24, STAGE_W - 28, 940, 200).fill(WOOD).stroke({ width: 4, color: 0x1a0d06 })
+        g.roundRect(24, 34, STAGE_W - 48, 920, 190).fill(new FillGradient({
+            type: 'linear',
+            start: { x: 0, y: 0 },
+            end: { x: 0, y: 1 },
+            colorStops: [{ offset: 0, color: RAIL_HI }, { offset: 0.5, color: 0x4a2a17 }, { offset: 1, color: RAIL_LO }],
+            textureSpace: 'local'
+        }))
+        g.roundRect(26, 36, STAGE_W - 52, 916, 188).stroke({ width: 3, color: 0xffdeaa, alpha: 0.18 })
+        // The stitching along the rail.
+        this.drawStitches(g, 35, 45, STAGE_W - 70, 898, 180)
+        // The felt, sunk into the rail, lit from above the dealer.
+        g.roundRect(50, 60, STAGE_W - 100, 868, 170).fill({ color: 0x000000, alpha: 0.5 })
+        g.roundRect(54, 64, STAGE_W - 108, 860, 166).fill(new FillGradient({
+            type: 'radial',
+            center: { x: 0.5, y: 0.3 },
+            innerRadius: 0,
+            outerCenter: { x: 0.5, y: 0.3 },
+            outerRadius: 0.75,
+            colorStops: [{ offset: 0, color: FELT_HI }, { offset: 0.5, color: FELT }, { offset: 1, color: FELT_LO }],
+            textureSpace: 'local'
+        }))
+        // A soft vignette where the felt meets the rail.
+        for (let i = 0; i < 6; i++) {
+            const inset = 54 + i * 7
+            g.roundRect(inset, inset + 10, STAGE_W - inset * 2, 860 - (inset - 54) * 2, 166 - i * 7).stroke({ width: 8, color: 0x000000, alpha: 0.09 - i * 0.012 })
+        }
 
         // Dealer arc and the payout legend that sits on every real table.
         // arc() draws a line in from the last point, so each one starts its
@@ -340,6 +358,33 @@ export class LiveBlackjackScene {
 
         this.shoeStack = new this.PIXI.Graphics()
         this.uiLayer.addChild(this.shoeStack)
+    }
+
+    /** Short dashes around a rounded rectangle: the rail's stitching. */
+    private drawStitches(g: Graphics, x: number, y: number, w: number, h: number, r: number) {
+        const straight = [
+            [x + r, y, x + w - r, y], [x + w, y + r, x + w, y + h - r],
+            [x + w - r, y + h, x + r, y + h], [x, y + h - r, x, y + r]
+        ] as const
+        const DASH = 14
+        const GAP = 10
+        for (const [x0, y0, x1, y1] of straight) {
+            const length = Math.hypot(x1 - x0, y1 - y0)
+            for (let d = 0; d + DASH <= length; d += DASH + GAP) {
+                const t0 = d / length
+                const t1 = (d + DASH) / length
+                g.moveTo(x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0).lineTo(x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1)
+            }
+        }
+        const corners = [[x + w - r, y + r, -Math.PI / 2], [x + w - r, y + h - r, 0], [x + r, y + h - r, Math.PI / 2], [x + r, y + r, Math.PI]] as const
+        const step = (DASH + GAP) / r
+        for (const [cx, cy, start] of corners) {
+            for (let a = start; a + DASH / r <= start + Math.PI / 2; a += step) {
+                g.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r)
+                g.arc(cx, cy, r, a, a + DASH / r)
+            }
+        }
+        g.stroke({ width: 2.5, color: 0xffd696, alpha: 0.3 })
     }
 
     /**
@@ -440,7 +485,6 @@ export class LiveBlackjackScene {
     private tick = () => {
         const state = this.state
         this.timerArc.clear()
-        this.countdownText.visible = false
         if (!state?.phaseEndsAt) return
 
         // The server sends how long the phase runs, so this no longer has to
@@ -450,14 +494,6 @@ export class LiveBlackjackScene {
         const left = Math.max(0, state.phaseEndsAt - (Date.now() + this.clockSkew))
         const frac = Math.max(0, Math.min(1, left / total))
         if (frac <= 0) return
-
-        const seconds = Math.ceil(left / 1000)
-        this.countdownText.visible = true
-        this.countdownText.text = String(seconds)
-        this.countdownText.style.fill = seconds <= 5 ? 0xef4444 : GOLD
-        // A last-seconds pulse, so a player looking at their cards still notices.
-        const pulse = seconds <= 5 ? 1 + 0.08 * Math.sin(Date.now() / 90) : 1
-        this.countdownText.scale.set(pulse)
 
         const color = frac < 0.28 ? 0xef4444 : GOLD
         for (const index of waitingSeats(state)) {
@@ -480,7 +516,6 @@ export class LiveBlackjackScene {
 
         this.drawShoe(state.game.shoe.dealt, state.game.shoe.total, state.game.shoe.untilShuffle)
 
-        this.phaseText.text = state.message
         this.dealerScore.visible = state.game.dealer.cards.length > 0
         const dealer = state.game.dealer
         this.dealerScoreText.text = dealer.blackjack ? 'BJ' : dealer.busted ? 'BUST' : scoreText(dealer.score, dealer.soft)
@@ -827,14 +862,8 @@ export class LiveBlackjackScene {
     }
 }
 
-/** Everything anchored to one seat: nameplate, chips, per-hand badges. */
+/** Everything anchored to one seat on the canvas: bet spots, chips, per-hand badges. */
 class SeatNode {
-    private plate: Container
-    private nameText: Text
-    private netText: Text
-    private streakBadge: Container
-    private streakText: Text
-    private sitPrompt: Container
     private badges: Container[] = []
     private chipSprites: Sprite[] = []
     private ring: Graphics
@@ -851,61 +880,12 @@ class SeatNode {
         private spotLayer: Container,
         private index: number,
         private pos: { readonly x: number, readonly y: number },
-        callbacks: LbSceneCallbacks,
         onSpot: (spot: LbBetSpot) => void
     ) {
         this.ring = new PIXI.Graphics()
         this.ring.circle(pos.x, pos.y + BET_Y_OFFSET, 56).stroke({ width: 4, color: GOLD, alpha: 0.9 })
         this.ring.visible = false
         spotLayer.addChild(this.ring)
-
-        this.plate = new PIXI.Container()
-        const bg = new PIXI.Graphics()
-        bg.roundRect(-116, -25, 232, 50, 12).fill({ color: 0x0b0806, alpha: 0.86 })
-        bg.roundRect(-116, -25, 232, 50, 12).stroke({ width: 1.5, color: GOLD, alpha: 0.4 })
-        this.plate.addChild(bg)
-
-        this.nameText = label(PIXI, '', 19, 0xf7f3e8, '700')
-        this.nameText.anchor.set(0.5)
-        this.nameText.position.set(0, -9)
-        this.plate.addChild(this.nameText)
-
-        this.netText = label(PIXI, '', 16, 0x94a3b8, '700')
-        this.netText.anchor.set(0.5)
-        this.netText.position.set(0, 12)
-        this.plate.addChild(this.netText)
-
-        // Sits beside the name and only appears on a run of two or more.
-        this.streakBadge = new PIXI.Container()
-        const streakBg = new PIXI.Graphics()
-        streakBg.roundRect(-19, -12, 38, 24, 12).fill(0xd97706)
-        streakBg.roundRect(-19, -12, 38, 24, 12).stroke({ width: 1.5, color: 0xfde68a, alpha: 0.9 })
-        this.streakText = label(PIXI, '', 14, 0xfffbeb, '800')
-        this.streakText.anchor.set(0.5)
-        this.streakBadge.addChild(streakBg, this.streakText)
-        this.streakBadge.position.set(0, -9)
-        this.streakBadge.visible = false
-        this.plate.addChild(this.streakBadge)
-
-        this.plate.position.set(pos.x, pos.y + PLATE_Y_OFFSET)
-        this.plate.visible = false
-        uiLayer.addChild(this.plate)
-
-        this.sitPrompt = new PIXI.Container()
-        const seatG = new PIXI.Graphics()
-        seatG.circle(0, 0, 44).fill({ color: 0x000000, alpha: 0.32 })
-        seatG.circle(0, 0, 44).stroke({ width: 2.5, color: 0xf7f3e8, alpha: 0.55 })
-        this.sitPrompt.addChild(seatG)
-        const sitText = label(PIXI, 'SIT', 18, 0xf7f3e8, '800')
-        sitText.anchor.set(0.5)
-        this.sitPrompt.addChild(sitText)
-        this.sitPrompt.position.set(pos.x, pos.y + BET_Y_OFFSET)
-        this.sitPrompt.eventMode = 'static'
-        this.sitPrompt.cursor = 'pointer'
-        this.sitPrompt.on('pointerdown', () => callbacks.onSit(index))
-        this.sitPrompt.on('pointerover', () => gsap.to(this.sitPrompt.scale, { x: 1.1, y: 1.1, duration: 0.15 }))
-        this.sitPrompt.on('pointerout', () => gsap.to(this.sitPrompt.scale, { x: 1, y: 1, duration: 0.15 }))
-        uiLayer.addChild(this.sitPrompt)
 
         for (const key of LB_SIDE_BETS) {
             const x = pos.x + SIDE_SPOT_X[key]
@@ -939,8 +919,6 @@ class SeatNode {
     }
 
     update(state: LbTableState, seat: LbSeat | null, youId: string | null, tex: LbTextures) {
-        this.sitPrompt.visible = !seat && !state.seats.some(s => s?.playerId === youId)
-        this.plate.visible = !!seat
         this.ring.visible = state.game.activeSeat === this.index
 
         // Tweens have to die with their target. Pixi nulls a destroyed object's
@@ -959,26 +937,6 @@ class SeatNode {
         }
 
         const isYou = seat.playerId === youId
-        const streaking = seat.winStreak >= 2
-        // A shorter name when the badge is showing keeps both inside the plate.
-        const maxName = streaking ? 11 : 15
-        this.nameText.text = seat.name.length > maxName ? `${seat.name.slice(0, maxName - 1)}…` : seat.name
-        this.nameText.style.fill = isYou ? GOLD : seat.connected ? 0xf7f3e8 : 0x64748b
-
-        this.streakBadge.visible = streaking
-        if (streaking) {
-            this.streakText.text = `W${seat.winStreak}`
-            // Shifted off the centred name rather than a fixed offset, so it
-            // tracks however wide that player's name renders.
-            this.nameText.x = -20
-            this.streakBadge.x = this.nameText.x + this.nameText.width / 2 + 24
-        } else {
-            this.nameText.x = 0
-        }
-
-        const net = seat.sessionNet
-        this.netText.text = net === 0 ? '—' : `${net > 0 ? '+' : '−'}${formatNumber(Math.abs(net))}`
-        this.netText.style.fill = net > 0 ? 0x4ade80 : net < 0 ? 0xf87171 : 0x94a3b8
 
         const stakeSpots: { x: number, amount: number }[] = []
         const lift = seat.game.hands.length > 1 ? SPLIT_LIFT : 0
@@ -1072,7 +1030,7 @@ class SeatNode {
         // are quoted to-one on the paytable, so the chip comes back as 1 + them.
         const value = label(
             this.PIXI,
-            won ? `${1 + result.multiplier}x (${formatNumber(result.payout)})` : 'MISS',
+            won ? `${1 + result.multiplier}x (${formatCoins(result.payout)})` : 'MISS',
             won ? 15 : 12,
             won ? 0x052e16 : 0x94a3b8,
             '800'
@@ -1114,7 +1072,7 @@ class SeatNode {
     private addHandBadge(hand: LbHand, x: number, state: LbTableState, active = false, lift = 0) {
         const done = hand.net !== undefined && state.phase === 'payout'
         const text = done
-            ? `${hand.net! > 0 ? '+' : hand.net! < 0 ? '−' : ''}${formatNumber(Math.abs(hand.net!))}`
+            ? `${hand.net! > 0 ? '+' : hand.net! < 0 ? '−' : ''}${formatCoins(Math.abs(hand.net!))}`
             : hand.status === 'busted'
                 ? 'BUST'
                 : hand.status === 'blackjack'
@@ -1123,24 +1081,28 @@ class SeatNode {
                         ? 'SURRENDER'
                         : scoreText(hand.score, hand.soft)
 
+        // A win reads like every win in the casino: white on the chip's blue, gold edge.
         const tone = done
-            ? (hand.net! > 0 ? 0x16a34a : hand.net! < 0 ? 0xb91c1c : 0x475569)
+            ? (hand.net! > 0 ? 0x1d4ed8 : hand.net! < 0 ? 0x2e2020 : 0x34304a)
             : hand.status === 'busted'
-? 0xb91c1c
+                ? 0x8a1c2c
                 : hand.status === 'blackjack'
-? 0xb08d2a
-                    : 0x0b0806
+                    ? 0xd99a00
+                    : 0x1f1109
+        const won = done && hand.net! > 0
 
         const box = new this.PIXI.Container()
-        const value = label(this.PIXI, text, 17, 0xf7f3e8, '800')
+        const value = label(this.PIXI, text, won ? 21 : 19, done && hand.net! < 0 ? 0xb8ab9c : 0xffffff, '800')
         value.anchor.set(0.5)
-        const w = Math.max(58, value.width + 22)
+        const w = Math.max(62, value.width + 26)
         const bg = new this.PIXI.Graphics()
-        bg.roundRect(-w / 2, -15, w, 30, 15).fill({ color: tone, alpha: 0.94 })
-        bg.roundRect(-w / 2, -15, w, 30, 15).stroke({
-            width: active ? 3 : 1.4,
-            color: active ? 0xffffff : GOLD,
-            alpha: active ? 0.95 : 0.5
+        if (won) bg.roundRect(-w / 2 - 6, -21, w + 12, 42, 21).fill({ color: 0xffc428, alpha: 0.35 })
+        bg.roundRect(-w / 2, -13, w, 34, 17).fill({ color: 0x000000, alpha: 0.45 })
+        bg.roundRect(-w / 2, -17, w, 34, 17).fill({ color: tone, alpha: 0.96 })
+        bg.roundRect(-w / 2, -17, w, 34, 17).stroke({
+            width: active || won ? 3 : 2,
+            color: active ? 0xffffff : won ? 0xffd36b : GOLD,
+            alpha: active || won ? 0.95 : 0.6
         })
         box.addChild(bg, value)
         box.position.set(x, this.pos.y + HAND_BADGE_Y - lift)
@@ -1150,7 +1112,7 @@ class SeatNode {
 
     private addInsuranceBadge(amount: number) {
         const box = new this.PIXI.Container()
-        const value = label(this.PIXI, `INS ${formatNumber(amount)}`, 14, 0x0b0806, '800')
+        const value = label(this.PIXI, `INS ${formatCoins(amount)}`, 14, 0x0b0806, '800')
         value.anchor.set(0.5)
         const w = value.width + 18
         const bg = new this.PIXI.Graphics()
@@ -1186,7 +1148,7 @@ class SeatNode {
         // under a small stack only crowds the nameplate row.
         if (scale < 0.5) return
 
-        const total = label(this.PIXI, formatNumber(amount), 16, 0xf7f3e8, '800')
+        const total = label(this.PIXI, formatCoins(amount), 16, 0xf7f3e8, '800')
         total.anchor.set(0.5)
         total.position.set(x, y + 34)
         const box = new this.PIXI.Container()

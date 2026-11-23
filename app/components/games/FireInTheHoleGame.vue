@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import SlotBalanceIcons from '~/components/slots/SlotBalanceIcons.vue'
+import SlotCurrencyIcon from '~/components/slots/SlotCurrencyIcon.vue'
 import type { Container, Graphics, Text, Texture } from 'pixi.js'
 import type { ReelSet } from 'pixi-reels'
 import '@fontsource/rye/latin-400.css'
@@ -1329,7 +1331,7 @@ onBeforeUnmount(() => {
     anticipationTween?.kill()
     safeDestroy(() => fx?.destroy())
     safeDestroy(() => reelSet?.destroy())
-    safeDestroy(() => pixiApp?.destroy(true, { children: true }))
+    safeDestroy(() => pixiApp?.destroy({ removeView: true }, { children: true }))
     safeDestroy(() => glowTexture?.destroy(true))
     for (const tex of Object.values(TEX)) safeDestroy(() => tex?.destroy())
     fx = null
@@ -1522,7 +1524,7 @@ onBeforeUnmount(() => {
 
       <div class="fith-deck">
         <div class="fith-meter fith-meter-balance">
-          <span class="fith-meter-label">Balance</span>
+          <span class="fith-meter-label"><SlotBalanceIcons />Balance</span>
           <span class="fith-meter-value">{{ formatNumber(balance) }}</span>
         </div>
 
@@ -1575,7 +1577,7 @@ onBeforeUnmount(() => {
           <span
             :key="winFlash"
             class="fith-meter-value"
-          >{{ formatNumber(winMeter) }}</span>
+          ><SlotCurrencyIcon v-if="winMeter > 0" currency="chips" class="fith-cur" />{{ formatNumber(winMeter) }}</span>
         </div>
 
         <div class="fith-spin-wrap">
@@ -2064,7 +2066,7 @@ onBeforeUnmount(() => {
 .fith-window {
   position: relative;
   overflow: hidden;
-  width: min(calc(100vw - 32px - 52px), max(300px, calc(100dvh - 350px)), 700px);
+  width: min(calc(100vw - 32px - 52px), max(300px, calc(100dvh - 400px)), 700px);
   aspect-ratio: 1;
   border-radius: 8px;
   background:
@@ -2691,6 +2693,11 @@ onBeforeUnmount(() => {
 
 /* Responsive */
 
+/* Very short desktop screens (the game overlay on a small laptop): the reels give way. */
+@media (min-width: 761px) and (max-height: 800px) {
+  .fith-window { width: min(calc(100vw - 32px - 52px), max(260px, calc(100dvh - 445px)), 700px); }
+}
+
 @media (max-width: 1180px) {
   .fith-cabinet {
     display: contents;
@@ -2834,5 +2841,11 @@ onBeforeUnmount(() => {
     width: 100%;
     font-size: 11px;
   }
+}
+
+/* Wins pay chips. */
+.fith-cur {
+  margin-right: 0.25em;
+  font-size: 0.85em;
 }
 </style>

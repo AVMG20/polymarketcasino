@@ -2,6 +2,7 @@
 /** A player's hub avatar, or their initials on a colour picked from their name. */
 const props = withDefaults(defineProps<{ name: string, image: string | null, size?: number }>(), { size: 28 })
 const failed = ref(false)
+watch(() => props.image, () => (failed.value = false))
 const initials = computed(() => props.name.split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?')
 const hue = computed(() => [...props.name].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 360)
 </script>

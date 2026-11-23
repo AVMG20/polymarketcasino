@@ -1,850 +1,535 @@
 <script setup lang="ts">
-// The old site's Magic Hands page (pages/games/magichands.vue) with the
-// casino's plumbing: one round through useGameRound (the bet is the hand value,
-// the server stakes a hand per placed tile) and settle() once the reveal is
-// done. Nuxt UI's UCard, UButton, UInput, UAlert and USeparator are rebuilt as
-// plain elements with the same sizes and colours.
-import { CircleHelpIcon, CircleSlashIcon, CoinsIcon, EraserIcon, HandIcon, LoaderCircleIcon, MinusIcon, PartyPopperIcon, RefreshCwIcon, ShuffleIcon, TrendingDownIcon, TrendingUpIcon, XIcon } from 'lucide-vue-next'
-import type { MagicHandsResult as MagicHandsOutcome, MhPassSlot as PassSlot } from '#shared/games/magichands'
-import { MH_MAX_HANDS as MAGIC_HANDS_MAX_HANDS, MH_MULTIPLIERS as MAGIC_HANDS_MULTIPLIERS, MH_TILE_CAP } from '#shared/games/magichands'
+import { Eraser, Shuffle } from 'lucide-vue-next'
+import type { MagicHandsResult, MhPass, MhPassSlot } from '#shared/games/magichands'
+import { MH_COLS, MH_MAX_HANDS, MH_MULTIPLIERS, MH_TILE_CAP, MH_TILES, MH_WINNERS } from '#shared/games/magichands'
 import { findGame } from '#shared/games/registry'
-
-const info = findGame('magichands')!
-useHead({ title: info.name })
-onMounted(() => useHubBridge().postTitle(info.name))
-const RTP = Math.round(info.rtp * 1000) / 10
-
-const round = useGameRound<MagicHandsOutcome>('magichands')
-const { coins: balance } = useCasinoSession()
-
-/** The old site's top-bar pass. */
-interface TopBarPass {
-    index: number
-    slots: PassSlot[]
-    hasReroll: boolean
-}
+import { costFor, formatCoins, formatCoinsExact, payFor } from '#shared/money'
+import type { WinShow } from '~/components/game/WinBurst.vue'
+import MhGlove from '~/components/games/magichands/MhGlove.vue'
 
 /**
- * The old site's round result. The casino's server sends the round in
- * multiples of the hand value and the coins in the response, so the old fields
- * are rebuilt from them once per round.
+ * Magic Hands: put hands on a 5 × 8 board, then a slot bar spins one reel per
+ * column and stamps multipliers onto its tiles (stacking), and 2-8 tiles are
+ * revealed as winners. A hand on a winner pays hand value × its multiplier.
+ * One round through useGameRound (the bet is one hand; the server stakes a
+ * hand per placed tile); settle() once the reveal is done.
  */
-interface MagicHandsResult {
-    handCount: number
-    handValue: number
-    totalStake: number
-    placements: number[]
-    passes: TopBarPass[]
-    multiplierTiles: Record<number, number>
-    winnerTiles: number[]
-    wins: { tile: number, multiplier: number, amount: number }[]
-    payout: number
-    won: boolean
-    tileCap: number
-}
+const info = findGame('magichands')!
+const round = useGameRound<MagicHandsResult>('magichands')
+const bankroll = useBankroll()
+const sound = useTableSound()
 
-const COLS = 5
-const ROWS = 8
-const TILES = COLS * ROWS
-const MAX_HANDS = MAGIC_HANDS_MAX_HANDS
-const tiles = Array.from({ length: TILES }, (_, i) => i)
+const tiles = Array.from({ length: MH_TILES }, (_, i) => i)
 
-// Reel geometry for the slot-machine top bar.
-const TOP_CELL = 56
-const REEL_LEN = 28
-const FINAL_INDEX = 24
-const SPIN_MS = 850
-const STAGGER = 110
-
-// Multiplier colour by magnitude — a game-style rarity ladder that deliberately
-// avoids green (win) and red (loss). Covers stacked values too.
-//   2,5 → common (slate) · 10,15 → uncommon (blue) · 25 → rare (purple)
-//   50 → epic (pink) · 100+ → legendary (gold) · 500+ → mythic (bright gold glow)
-function tierColors(v: number): { bg: string, border: string, text: string, glow: string } {
-    if (v >= 500) return { bg: 'bg-amber-400/25', border: 'border-amber-300', text: 'text-amber-200', glow: 'shadow-[0_0_24px_-2px_var(--warning)]' }
-    if (v >= 100) return { bg: 'bg-amber-500/20', border: 'border-amber-400', text: 'text-amber-300', glow: 'shadow-[0_0_16px_-3px_var(--warning)]' }
-    if (v >= 50) return { bg: 'bg-fuchsia-500/15', border: 'border-fuchsia-400', text: 'text-fuchsia-300', glow: '' }
-    if (v >= 25) return { bg: 'bg-violet-500/15', border: 'border-violet-400', text: 'text-violet-300', glow: '' }
-    if (v >= 10) return { bg: 'bg-sky-500/15', border: 'border-sky-400', text: 'text-sky-300', glow: '' }
-    return { bg: 'bg-slate-500/15', border: 'border-slate-400', text: 'text-slate-300', glow: '' }
-}
-function tierClass(v: number): string {
-    const t = tierColors(v)
-    return `${t.bg} ${t.border} ${t.text} ${t.glow}`.trim()
-}
-
-// --- bet config -------------------------------------------------------------
-// The casino's bet bounds (the old site started at 5 with a 1-coin minimum).
-const handValue = ref(info.minBet)
-const handValueText = useAmountInput(handValue)
+// ─── bet and hands ───────────────────────────────────────────────────────────
+const hand = ref(info.minBet)
 const placements = ref<number[]>([])
 const placedSet = computed(() => new Set(placements.value))
-const totalStake = computed(() => placements.value.length * handValue.value)
+const totalStake = computed(() => costFor(hand.value, placements.value.length))
+const overMax = computed(() => totalStake.value > info.maxBet)
 
-// --- round state ------------------------------------------------------------
-type ReelSym = { kind: 'pending' | 'nothing' | 'reroll' | 'mult', value?: number }
-type Reel = { items: ReelSym[], offset: number, transition: boolean }
-
-function placeholderReels(): Reel[] {
-    return Array.from({ length: COLS }, () => ({ items: [{ kind: 'pending' }], offset: 0, transition: false }))
-}
+// ─── round state ─────────────────────────────────────────────────────────────
+type Sym = { kind: 'pending' | 'nothing' | 'reroll' | 'mult', value?: number }
+type Reel = { items: Sym[], moving: boolean }
+const CELL = 3.5 // rem, one reel symbol
+const REEL_LEN = 22
+const FINAL = 18
+const SPIN_MS = 700
+const STAGGER = 90
 
 const phase = ref<'idle' | 'fetching' | 'topbar' | 'winners' | 'done'>('idle')
-const subPhase = ref<'' | 'spinning' | 'applying' | 'reroll'>('')
-const topReels = ref<Reel[]>(placeholderReels())
-const topLocked = ref<(PassSlot | null)[]>(Array(COLS).fill(null))
-const activeApplyCol = ref(-1)
-const passLabel = ref('')
+const sub = ref<'' | 'spinning' | 'applying' | 'reroll'>('')
+const reels = ref<Reel[]>(idleReels())
+const locked = ref<(MhPassSlot | null)[]>(Array(MH_COLS).fill(null))
+const applyCol = ref(-1)
+const passNo = ref(0)
+const passCount = ref(0)
 const tileMult = ref<Record<number, number>>({})
-const stampedTile = ref<number | null>(null)
-const revealedWinners = ref<Set<number>>(new Set())
-const result = ref<MagicHandsResult | null>(null)
-const showPayout = ref(false)
-const showHelp = ref(false)
+const stamped = ref<{ tile: number, id: number } | null>(null)
+const revealed = ref<Set<number>>(new Set())
+const result = ref<{ outcome: MagicHandsResult, stake: number, payout: number, hand: number } | null>(null)
+const win = ref<WinShow | null>(null)
 const errorMsg = ref('')
+const history = ref<{ id: string, label: string, won: boolean }[]>([])
+const nudge = ref(0)
 
-const history = ref<{ won: boolean, payout: number, stake: number, net: number }[]>([])
+const busy = computed(() => ['fetching', 'topbar', 'winners'].includes(phase.value))
+const canEdit = computed(() => !busy.value)
+const canPlay = computed(() => canEdit.value && placements.value.length > 0 && !overMax.value && bankroll.total.value >= totalStake.value)
+const winningTiles = computed(() => new Map((result.value?.outcome.wins ?? []).map(w => [w.tile, w.multiplier])))
 
-const isBusy = computed(() => ['fetching', 'topbar', 'winners'].includes(phase.value))
-const canEdit = computed(() => phase.value === 'idle' || phase.value === 'done')
-const canPlay = computed(() =>
-    canEdit.value
-    && placements.value.length >= 1
-    && balance.value >= totalStake.value
-    && totalStake.value > 0
-)
+function idleReels(): Reel[] {
+    return Array.from({ length: MH_COLS }, () => ({ items: [{ kind: 'pending' }], moving: false }))
+}
 
-// --- helpers ----------------------------------------------------------------
 let timers: ReturnType<typeof setTimeout>[] = []
+let fast = false
 function sleep(ms: number) {
-    return new Promise<void>((r) => {
-        timers.push(setTimeout(r, ms))
-    })
+    return new Promise<void>(resolve => timers.push(setTimeout(resolve, fast ? Math.min(ms, 30) : ms)))
 }
 function clearTimers() {
     timers.forEach(clearTimeout)
     timers = []
 }
 
-function shuffle<T>(arr: T[]): T[] {
-    const a = [...arr]
-    for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1))
-        ;[a[i], a[j]] = [a[j]!, a[i]!]
-    }
-    return a
+/** Rarity by size: blue, purple, pink, gold, and a glowing gold past 500×. */
+function rarity(v: number): string {
+    if (v >= 500) return 'r-mythic'
+    if (v >= 100) return 'r-gold'
+    if (v >= 50) return 'r-pink'
+    if (v >= 20) return 'r-purple'
+    if (v >= 10) return 'r-blue'
+    return 'r-slate'
 }
 
-function multValue(i: number): number | undefined {
-    return tileMult.value[i]
-}
-
-// Tile background reflects the board (multipliers / winners). The bright green
-// celebration is reserved for the player's OWN winning hand; other winning tiles
-// just get a muted green border so they read as "a winner, not your win".
-function tileClass(i: number): string {
-    const mv = multValue(i)
-    const isWin = revealedWinners.value.has(i)
-    const placed = placedSet.value.has(i)
-
-    // Your own winning hand — the only bright, celebratory state.
-    if (isWin && placed) {
-        return mv !== undefined
-            ? `${tierColors(mv).bg} ${tierColors(mv).text} border-success ring-2 ring-success scale-[1.05] z-10 shadow-[0_0_18px_-2px_var(--success)]`
-            : 'bg-success/25 border-success text-success ring-2 ring-success scale-[1.05] z-10 shadow-[0_0_16px_-3px_var(--success)]'
-    }
-    // A winning tile you have no hand on — keep its fill but use a muted green border.
-    if (isWin) {
-        return mv !== undefined
-            ? `${tierColors(mv).bg} ${tierColors(mv).text} border-success/40`
-            : 'bg-success/5 border-success/40 text-success/60'
-    }
-    // A multiplier tile that didn't win.
-    if (mv !== undefined) return tierClass(mv)
-    return 'bg-muted border-border text-muted-foreground'
-}
-
-// Hand icon colour: primary when placed, success once its tile is a revealed winner,
-// danger once the round is over and it lost.
-function handColor(i: number): string {
-    if (revealedWinners.value.has(i)) return 'text-success'
-    if (phase.value === 'done') return 'text-error'
-    return 'text-primary'
-}
-
-function topCellClass(c: number): string {
-    if (activeApplyCol.value === c) return 'border-primary ring-2 ring-primary/50'
-    const slot = topLocked.value[c]
-    if (!slot) return 'border-border'
-    if (slot.type === 'multiplier') return tierClass(slot.value ?? 0)
-    if (slot.type === 'reroll') return 'bg-info/15 border-info text-info'
-    if (slot.type === 'nothing') return 'border-border text-muted-foreground'
-    return 'border-border'
-}
-
-function randomSym(): ReelSym {
-    const r = Math.random()
-    if (r < 0.30) return { kind: 'nothing' }
-    if (r < 0.40) return { kind: 'reroll' }
-    return { kind: 'mult', value: MAGIC_HANDS_MULTIPLIERS[Math.floor(Math.random() * MAGIC_HANDS_MULTIPLIERS.length)] }
-}
-function symFor(slot: PassSlot): ReelSym {
-    if (slot.type === 'multiplier') return { kind: 'mult', value: slot.value ?? 0 }
-    if (slot.type === 'reroll') return { kind: 'reroll' }
-    return { kind: 'nothing' }
-}
+const multFormat = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 0 })
+const mult = (v: number) => `×${multFormat.format(v)}`
 
 function resetBoard() {
     clearTimers()
-    topReels.value = placeholderReels()
-    topLocked.value = Array(COLS).fill(null)
-    activeApplyCol.value = -1
-    passLabel.value = ''
+    reels.value = idleReels()
+    locked.value = Array(MH_COLS).fill(null)
+    applyCol.value = -1
+    passNo.value = 0
     tileMult.value = {}
-    stampedTile.value = null
-    revealedWinners.value = new Set()
+    stamped.value = null
+    revealed.value = new Set()
     result.value = null
-    showPayout.value = false
-    subPhase.value = ''
+    win.value = null
+    sub.value = ''
     phase.value = 'idle'
 }
 
-// --- placement actions ------------------------------------------------------
-function toggleTile(i: number) {
+// ─── placing hands ───────────────────────────────────────────────────────────
+function toggle(tile: number) {
     if (!canEdit.value) return
     if (phase.value === 'done') resetBoard()
     errorMsg.value = ''
-    const idx = placements.value.indexOf(i)
-    if (idx >= 0) {
-        placements.value.splice(idx, 1)
-    } else if (placements.value.length < MAX_HANDS) {
-        placements.value.push(i)
+    const at = placements.value.indexOf(tile)
+    if (at >= 0) {
+        placements.value.splice(at, 1)
+    } else if (placements.value.length < MH_MAX_HANDS) {
+        placements.value.push(tile)
+        sound.play('chip')
+    } else {
+        nudge.value++
     }
 }
 
-function clearPlacements() {
+function clearHands() {
     if (!canEdit.value) return
     if (phase.value === 'done') resetBoard()
     placements.value = []
 }
 
-function autoPlace() {
+/** Random hands (the player's own pick, so Math.random). */
+function autoPlace(count: number) {
     if (!canEdit.value) return
     if (phase.value === 'done') resetBoard()
-    placements.value = shuffle(tiles).slice(0, 10)
+    const pool = [...tiles]
+    for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[pool[i], pool[j]] = [pool[j]!, pool[i]!]
+    }
+    placements.value = pool.slice(0, Math.min(count, MH_MAX_HANDS))
+    sound.play('chip')
 }
 
-// --- round flow -------------------------------------------------------------
+// ─── a round ─────────────────────────────────────────────────────────────────
 async function play() {
     if (!canPlay.value) {
-        if (placements.value.length === 0) errorMsg.value = 'Place at least one hand before playing'
+        if (canEdit.value && !placements.value.length) nudge.value++
         return
     }
-
     resetBoard()
     phase.value = 'fetching'
     errorMsg.value = ''
-    const hand = handValue.value
-    // The bet is one hand; the server stakes a hand per placed tile.
-    const data = await round.play({ bet: hand, options: { placements: [...placements.value] } })
+    fast = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const value = hand.value
+    const data = await round.play({ bet: value, options: { placements: [...placements.value] } })
     if (!data) {
-        clearTimers()
         phase.value = 'idle'
         errorMsg.value = round.error.value || 'Something went wrong'
         return
     }
-    const res = data.result
-    const legacy: MagicHandsResult = {
-        handCount: res.placements.length,
-        handValue: hand,
-        totalStake: data.stake,
-        placements: res.placements,
-        passes: res.passes.map((pass, i) => ({ index: i + 1, slots: pass.slots, hasReroll: pass.reroll })),
-        multiplierTiles: res.multipliers,
-        winnerTiles: res.winners,
-        wins: res.wins.map(w => ({ ...w, amount: hand * w.multiplier })),
-        payout: data.payout,
-        won: data.payout > data.stake,
-        tileCap: MH_TILE_CAP
-    }
-    result.value = legacy
-    try {
-        await runReveal({ gameData: legacy, balance: data.balance })
-    } catch (e: unknown) {
-        clearTimers()
-        round.settle()
-        phase.value = 'idle'
-        errorMsg.value = e instanceof Error ? e.message : 'Something went wrong'
-    }
-}
+    result.value = { outcome: data.result, stake: data.stake, payout: data.payout, hand: value }
+    await reveal(data.result)
 
-async function spinTopBar(pass: TopBarPass) {
-    subPhase.value = 'spinning'
-    topLocked.value = Array(COLS).fill(null)
-    // Build a fresh reel per column with the real result fixed at FINAL_INDEX.
-    topReels.value = pass.slots.map((slot) => {
-        const items = Array.from({ length: REEL_LEN }, (_, i) => (i === FINAL_INDEX ? symFor(slot) : randomSym()))
-        return { items, offset: 0, transition: false }
-    })
-    await nextTick()
-    await sleep(40)
-    for (let c = 0; c < COLS; c++) {
-        topReels.value[c]!.transition = true
-        topReels.value[c]!.offset = -(FINAL_INDEX * TOP_CELL)
-    }
-    await sleep(SPIN_MS + STAGGER * (COLS - 1) + 220)
-    topLocked.value = pass.slots.map(s => s)
-}
-
-async function applyPass(pass: TopBarPass) {
-    subPhase.value = 'applying'
-    for (let c = 0; c < COLS; c++) {
-        activeApplyCol.value = c
-        const slot = pass.slots[c]!
-        await sleep(150)
-        if (slot.type === 'multiplier') {
-            for (const tile of slot.tiles) {
-                const cur = tileMult.value[tile] ?? 1
-                tileMult.value = { ...tileMult.value, [tile]: Math.min(cur * (slot.value ?? 1), result.value!.tileCap) }
-                stampedTile.value = tile
-                await sleep(230)
-            }
-        } else if (slot.type === 'reroll') {
-            await sleep(160)
-        }
-        await sleep(90)
-    }
-    activeApplyCol.value = -1
-    stampedTile.value = null
-}
-
-async function runReveal(data: { gameData: MagicHandsResult, balance: number }) {
-    const res = data.gameData
-
-    // 1. Top bar — spin, process, and re-spin on each reroll pass.
-    phase.value = 'topbar'
-    await sleep(250)
-    for (let p = 0; p < res.passes.length; p++) {
-        const pass = res.passes[p]!
-        passLabel.value = res.passes.length > 1 ? `Spin ${p + 1}` : ''
-        await spinTopBar(pass)
-        await sleep(250)
-        await applyPass(pass)
-        if (pass.hasReroll && p < res.passes.length - 1) {
-            subPhase.value = 'reroll'
-            await sleep(950)
-        }
-    }
-    passLabel.value = ''
-    subPhase.value = ''
-
-    // 2. Reveal the winning tiles one by one — save the player's hits for the climax.
-    phase.value = 'winners'
-    await sleep(450)
-    const placed = new Set(res.placements)
-    const blanks = shuffle(res.winnerTiles.filter(t => !placed.has(t)))
-    const hits = res.winnerTiles.filter(t => placed.has(t))
-    for (const t of blanks) {
-        revealedWinners.value.add(t)
-        await sleep(160)
-    }
-    await sleep(250)
-    for (const t of hits) {
-        revealedWinners.value.add(t)
-        await sleep(380)
-    }
-
-    // 3. Settle.
-    await sleep(500)
     phase.value = 'done'
+    const multiple = data.stake > 0 ? Math.floor((data.payout / data.stake) * 100) / 100 : 0
+    win.value = { id: data.roundId, payout: data.payout, multiplier: multiple }
+    history.value = [{ id: data.roundId, label: data.payout > 0 ? `×${new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 2 }).format(multiple)}` : '×0', won: data.payout > data.stake }, ...history.value].slice(0, 20)
+    sound.play(data.payout > 0 ? 'win' : 'lose')
     // The balance (and any star) lands now the reveal is done.
     round.settle()
-    history.value.unshift({
-        won: res.won,
-        payout: res.payout,
-        stake: res.totalStake,
-        net: res.payout - res.totalStake
-    })
-    if (history.value.length > 10) history.value.pop()
 }
 
-// --- payout summary ---------------------------------------------------------
-const winningHands = computed(() => result.value?.wins ?? [])
-const bestHand = computed(() =>
-    winningHands.value.reduce((mx, w) => Math.max(mx, w.multiplier), 0)
-)
-const profit = computed(() => (result.value ? result.value.payout - result.value.totalStake : 0))
+function symFor(slot: MhPassSlot): Sym {
+    if (slot.type === 'multiplier') return { kind: 'mult', value: slot.value ?? 0 }
+    if (slot.type === 'reroll') return { kind: 'reroll' }
+    return { kind: 'nothing' }
+}
 
-function onKeydown(e: KeyboardEvent) {
-    if (e.code === 'Space' && e.target === document.body) {
-        e.preventDefault()
-        play()
+/** Filler for the reels while they spin (cosmetic, so Math.random). */
+function fillerSym(): Sym {
+    const r = Math.random()
+    if (r < 0.3) return { kind: 'nothing' }
+    if (r < 0.42) return { kind: 'reroll' }
+    return { kind: 'mult', value: MH_MULTIPLIERS[Math.floor(Math.random() * MH_MULTIPLIERS.length)] }
+}
+
+async function spinReels(pass: MhPass) {
+    sub.value = 'spinning'
+    locked.value = Array(MH_COLS).fill(null)
+    reels.value = pass.slots.map(slot => ({ items: Array.from({ length: REEL_LEN }, (_, i) => (i === FINAL ? symFor(slot) : fillerSym())), moving: false }))
+    await nextTick()
+    await sleep(30)
+    for (const reel of reels.value) reel.moving = true
+    for (let c = 0; c < MH_COLS; c++) {
+        timers.push(setTimeout(() => {
+            locked.value[c] = pass.slots[c]!
+            sound.play('tick')
+        }, fast ? 0 : SPIN_MS + STAGGER * c))
+    }
+    await sleep(SPIN_MS + STAGGER * (MH_COLS - 1) + 160)
+}
+
+async function applyPass(pass: MhPass, cap: number) {
+    sub.value = 'applying'
+    for (let c = 0; c < MH_COLS; c++) {
+        const slot = pass.slots[c]!
+        if (slot.type !== 'multiplier') continue
+        applyCol.value = c
+        await sleep(90)
+        for (const tile of slot.tiles) {
+            tileMult.value = { ...tileMult.value, [tile]: Math.min((tileMult.value[tile] ?? 1) * (slot.value ?? 1), cap) }
+            stamped.value = { tile, id: (stamped.value?.id ?? 0) + 1 }
+            sound.play('flip')
+            await sleep(120)
+        }
+        await sleep(50)
+    }
+    applyCol.value = -1
+}
+
+async function reveal(outcome: MagicHandsResult) {
+    phase.value = 'topbar'
+    passCount.value = outcome.passes.length
+    for (let p = 0; p < outcome.passes.length; p++) {
+        const pass = outcome.passes[p]!
+        passNo.value = p + 1
+        await spinReels(pass)
+        await applyPass(pass, MH_TILE_CAP)
+        if (pass.reroll && p < outcome.passes.length - 1) {
+            sub.value = 'reroll'
+            sound.play('turn')
+            await sleep(800)
+        }
+    }
+    sub.value = ''
+
+    // Winners: the empty ones quickly, then the player's own hits one by one.
+    phase.value = 'winners'
+    await sleep(250)
+    const placed = new Set(outcome.placements)
+    const blanks = outcome.winners.filter(t => !placed.has(t))
+    const hits = outcome.winners.filter(t => placed.has(t))
+    for (const t of blanks) {
+        revealed.value = new Set([...revealed.value, t])
+        sound.play('tick')
+        await sleep(100)
+    }
+    for (const t of hits) {
+        await sleep(200)
+        revealed.value = new Set([...revealed.value, t])
+        sound.play('chip')
+        await sleep(240)
+    }
+    await sleep(250)
+}
+
+const status = computed(() => {
+    if (phase.value === 'fetching') return 'Shuffling…'
+    if (phase.value === 'topbar') return sub.value === 'reroll' ? 'Reroll!' : passCount.value > 1 ? `Spin ${passNo.value}` : 'Spinning…'
+    if (phase.value === 'winners') return 'Revealing…'
+    return placements.value.length ? `${placements.value.length} hand${placements.value.length === 1 ? '' : 's'} on the board` : 'Tap tiles to place hands'
+})
+
+function onKey(event: KeyboardEvent) {
+    if (event.code === 'Space' && event.target === document.body) {
+        event.preventDefault()
+        void play()
     }
 }
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => {
-    window.removeEventListener('keydown', onKeydown)
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => {
+    window.removeEventListener('keydown', onKey)
     clearTimers()
 })
+
+const presets = [5, 10, 20, MH_MAX_HANDS].map(n => ({ n, label: n === MH_MAX_HANDS ? 'All' : String(n) }))
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl space-y-6 p-6 pb-24 lg:pb-6">
-    <!-- Header -->
-    <div>
-      <h1 class="text-2xl font-bold flex items-center gap-2">
-        <HandIcon class="size-6 text-warning" />
-        Magic Hands
-      </h1>
-      <p class="mt-0.5 text-sm text-muted-foreground">
-        {{ RTP }}% RTP · place hands, chase stacking gold multipliers
-      </p>
-    </div>
+  <GameFrame slug="magichands">
+    <div class="@container">
+      <div class="flex flex-col gap-3 @3xl:grid @3xl:grid-cols-[minmax(0,1fr)_20rem] @3xl:grid-rows-[auto_1fr] @3xl:items-start">
+        <GameWinBurst :show="win" class="rounded-[1.5rem] @3xl:row-span-2">
+          <GameFelt tone="plum" class="h-full">
+            <div class="flex flex-col gap-2 p-3 sm:p-4">
+              <GameRoundHistory :items="history" />
 
-    <div class="grid lg:grid-cols-3 gap-6">
-      <!-- Controls -->
-      <div class="divide-y divide-border rounded-2xl bg-card ring ring-border">
-        <div class="p-4 sm:px-6">
-          <div class="flex items-center justify-between">
-            <h2 class="font-semibold">
-              Controls
-            </h2>
-            <button
-              type="button"
-              class="rounded-md p-1 text-foreground transition-colors hover:bg-muted"
-              aria-label="How Magic Hands works"
-              @click="showHelp = true"
-            >
-              <CircleHelpIcon class="size-4" />
-            </button>
-          </div>
-        </div>
-
-        <div class="space-y-4 p-4 sm:p-6">
-          <!-- Hand value -->
-          <div>
-            <label class="mb-1.5 block text-xs font-medium tracking-wide text-muted-foreground uppercase">Hand Value</label>
-            <div class="flex items-center gap-2">
-              <div class="relative flex-1 font-mono">
-                <CoinsIcon class="pointer-events-none absolute top-1/2 left-2.5 size-5 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  v-model="handValueText"
-                  placeholder="e.g. 10k"
-                  autocomplete="off"
-                  :disabled="isBusy"
-                  class="w-full rounded-md border-0 bg-background py-2 pr-3 pl-10 text-sm text-foreground ring ring-input outline-none ring-inset placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-75"
-                  :class="{ 'pr-24': amountPreview(handValueText) }"
-                >
-                <span
-                  v-if="amountPreview(handValueText)"
-                  class="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-xs text-muted-foreground tabular-nums"
-                >{{ amountPreview(handValueText) }}</span>
-              </div>
-              <div class="flex gap-1">
-                <button
-                  type="button"
-                  class="rounded-md bg-muted px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-75"
-                  :disabled="isBusy"
-                  @click="handValue = Math.max(info.minBet, Math.floor(handValue / 2))"
-                >
-                  ½
-                </button>
-                <button
-                  type="button"
-                  class="rounded-md bg-muted px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-75"
-                  :disabled="isBusy"
-                  @click="handValue = handValue * 2"
-                >
-                  2×
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Placement controls -->
-          <div class="grid grid-cols-2 gap-1.5">
-            <button
-              type="button"
-              class="inline-flex items-center justify-center gap-1.5 rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-75"
-              :disabled="!canEdit"
-              @click="autoPlace"
-            >
-              <ShuffleIcon class="size-4 shrink-0" />
-              Auto 10
-            </button>
-            <button
-              type="button"
-              class="inline-flex items-center justify-center gap-1.5 rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-75"
-              :disabled="!canEdit || placements.length === 0"
-              @click="clearPlacements"
-            >
-              <EraserIcon class="size-4 shrink-0" />
-              Clear
-            </button>
-          </div>
-
-          <!-- Stats -->
-          <div class="space-y-2 rounded-lg border border-border bg-muted p-3">
-            <div class="flex items-center justify-between text-sm">
-              <span class="text-muted-foreground">Hands placed</span>
-              <span
-                class="font-bold tabular-nums"
-                :class="placements.length > 0 ? 'text-primary' : 'text-muted-foreground'"
-              >
-                {{ placements.length }} / {{ MAX_HANDS }}
-              </span>
-            </div>
-            <div class="h-px w-full bg-border" />
-            <div class="flex items-center justify-between text-sm">
-              <span class="text-muted-foreground">Total cost</span>
-              <span class="font-bold tabular-nums">${{ formatNumber(totalStake, false) }}</span>
-            </div>
-          </div>
-
-          <!-- Multiplier legend -->
-          <div class="rounded-lg border border-border bg-muted p-3">
-            <p class="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-              Multipliers · stack &amp; cap {{ MH_TILE_CAP }}×
-            </p>
-            <div class="grid grid-cols-5 gap-1.5">
-              <span
-                v-for="m in MAGIC_HANDS_MULTIPLIERS"
-                :key="m"
-                class="text-center text-xs font-bold font-mono rounded border py-1"
-                :class="tierClass(m)"
-              >{{ m }}×</span>
-            </div>
-          </div>
-
-          <!-- Error -->
-          <Transition name="fade-up">
-            <div v-if="errorMsg" role="alert" class="flex items-start gap-2.5 rounded-lg bg-error/10 p-4 text-sm text-error">
-              <p class="flex-1">
-                {{ errorMsg }}
-              </p>
-              <button type="button" class="-m-1 rounded-md p-1 text-foreground hover:bg-muted" aria-label="Dismiss" @click="errorMsg = ''">
-                <XIcon class="size-4" />
-              </button>
-            </div>
-          </Transition>
-
-          <!-- Balance -->
-          <div class="flex items-center justify-between rounded-lg border border-border bg-muted p-3">
-            <span class="text-xs font-medium tracking-wide text-muted-foreground uppercase">Balance</span>
-            <span class="font-bold text-sm">
-              <CoinBalance
-                :value="balance"
-                :compact="false"
-              />
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Game Area -->
-      <div class="flex flex-col gap-4 lg:col-span-2">
-        <div class="rounded-2xl bg-card ring ring-border">
-          <div class="relative flex flex-col overflow-hidden p-4 sm:p-6">
-            <div class="w-full max-w-md mx-auto">
-              <!-- Top bar (slot-machine reels) -->
-              <div class="relative">
-                <div class="grid grid-cols-5 gap-2 mb-3">
+              <div class="mx-auto flex w-full max-w-[min(30rem,calc((100svh-16rem)*0.6))] min-w-[min(100%,17rem)] flex-col gap-2.5">
+                <!-- The slot bar: one reel per column. -->
+                <div class="mh-bar relative grid grid-cols-5 gap-1.5 rounded-2xl p-1.5">
                   <div
-                    v-for="(reel, c) in topReels"
-                    :key="c"
-                    class="relative rounded-lg border overflow-hidden transition-all duration-200 font-black font-mono"
-                    :style="{ height: `${TOP_CELL}px` }"
-                    :class="topCellClass(c)"
+                    v-for="(reel, c) in reels" :key="c"
+                    class="mh-window relative overflow-hidden rounded-xl"
+                    :class="[locked[c] ? `mh-landed-${locked[c]!.type}` : '', applyCol === c ? 'mh-applying' : '', locked[c]?.type === 'multiplier' ? rarity(locked[c]!.value ?? 0) : '']"
+                    :style="{ height: `${CELL}rem` }"
                   >
                     <div
-                      class="flex flex-col"
+                      class="flex flex-col will-change-transform"
                       :style="{
-                        transform: `translateY(${reel.offset}px)`,
-                        transition: reel.transition ? `transform ${SPIN_MS}ms cubic-bezier(0.12, 0.8, 0.12, 1) ${c * STAGGER}ms` : 'none'
+                        transform: reel.moving ? `translateY(-${FINAL * CELL}rem)` : 'translateY(0)',
+                        transition: reel.moving ? `transform ${SPIN_MS + c * STAGGER}ms cubic-bezier(0.15, 0.75, 0.25, 1.06)` : 'none'
                       }"
                     >
-                      <div
-                        v-for="(sym, si) in reel.items"
-                        :key="si"
-                        class="shrink-0 flex items-center justify-center"
-                        :style="{ height: `${TOP_CELL}px` }"
-                        :class="sym.kind === 'mult' ? tierClass(sym.value ?? 0).split(' ').filter(x => x.startsWith('text-')).join(' ') : ''"
-                      >
-                        <CircleHelpIcon v-if="sym.kind === 'pending'" class="size-5 text-muted-foreground/40" />
-                        <RefreshCwIcon v-else-if="sym.kind === 'reroll'" class="size-5 text-info" />
-                        <MinusIcon v-else-if="sym.kind === 'nothing'" class="size-5 text-muted-foreground" />
-                        <span
-                          v-else
-                          class="text-sm sm:text-base"
-                        >{{ sym.value }}×</span>
+                      <div v-for="(sym, si) in reel.items" :key="si" class="grid shrink-0 place-items-center" :style="{ height: `${CELL}rem` }">
+                        <span v-if="sym.kind === 'pending'" class="mh-q">?</span>
+                        <svg v-else-if="sym.kind === 'reroll'" viewBox="0 0 24 24" class="size-7 text-[#7dd3fc]" aria-label="Reroll">
+                          <path d="M20 12a8 8 0 0 1-14.3 4.9M4 12a8 8 0 0 1 14.3-4.9" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+                          <path d="M18.5 3v4.5H14M5.5 21v-4.5H10" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <span v-else-if="sym.kind === 'nothing'" class="h-1.5 w-6 rounded-full bg-white/20" />
+                        <span v-else class="mh-reel-mult g-num" :class="rarity(sym.value ?? 0)">{{ mult(sym.value ?? 0) }}</span>
                       </div>
                     </div>
                   </div>
-                </div>
-
-                <!-- Reroll flash -->
-                <Transition name="pop">
-                  <div
-                    v-if="subPhase === 'reroll'"
-                    class="absolute inset-0 flex items-center justify-center pointer-events-none"
-                  >
-                    <span class="px-4 py-1.5 rounded-full bg-info text-background font-black text-sm uppercase tracking-wider shadow-lg animate-pulse">
-                      <RefreshCwIcon class="size-4 -mt-0.5 mr-1 inline animate-spin" />Reroll — spin again!
-                    </span>
-                  </div>
-                </Transition>
-              </div>
-
-              <!-- Grid -->
-              <div class="grid grid-cols-5 gap-2">
-                <button
-                  v-for="i in tiles"
-                  :key="i"
-                  type="button"
-                  :disabled="!canEdit"
-                  class="relative aspect-square rounded-lg border flex items-center justify-center transition-all duration-200 select-none"
-                  :class="[tileClass(i), canEdit ? 'cursor-pointer hover:border-primary/60' : 'cursor-default', stampedTile === i ? 'animate-pulse' : '']"
-                  @click="toggleTile(i)"
-                >
-                  <!-- multiplier value -->
-                  <span
-                    v-if="multValue(i) !== undefined"
-                    :key="`m-${i}-${multValue(i)}`"
-                    class="font-black text-xs sm:text-base tabular-nums leading-none pop-in"
-                  >{{ multValue(i) }}×</span>
-
-                  <!-- winner coin (winner tile, no multiplier) -->
-                  <Transition name="pop">
-                    <CoinsIcon v-if="revealedWinners.has(i) && multValue(i) === undefined" class="size-5 sm:size-6" />
+                  <Transition name="mh-pop">
+                    <div v-if="sub === 'reroll'" class="pointer-events-none absolute inset-0 grid place-items-center">
+                      <span class="mh-reroll g-title rounded-full px-4 py-1 text-xl uppercase">Reroll!</span>
+                    </div>
                   </Transition>
+                </div>
 
-                  <!-- hand marker -->
-                  <HandIcon v-if="placedSet.has(i)" class="absolute top-0.5 right-0.5 size-4 sm:size-5 transition-colors duration-200" :class="handColor(i)" />
-                </button>
-              </div>
-
-              <!-- Status line -->
-              <div class="mt-4 text-center text-sm font-mono h-9 flex items-center justify-center">
-                <span
-                  v-if="phase === 'idle'"
-                  class="text-muted-foreground"
-                >
-                  <template v-if="placements.length === 0">Click tiles to place your hands</template>
-                  <template v-else>{{ placements.length }} hand{{ placements.length > 1 ? 's' : '' }} · ${{ formatNumber(totalStake, false) }} — press Play</template>
-                </span>
-                <span
-                  v-else-if="phase === 'fetching'"
-                  class="animate-pulse text-muted-foreground"
-                >Dealing…</span>
-                <span
-                  v-else-if="phase === 'topbar' && subPhase === 'spinning'"
-                  class="text-primary"
-                >Spinning the top bar… {{ passLabel }}</span>
-                <span
-                  v-else-if="phase === 'topbar' && subPhase === 'applying'"
-                  class="text-warning"
-                >Stamping multipliers…</span>
-                <span
-                  v-else-if="phase === 'topbar' && subPhase === 'reroll'"
-                  class="text-info"
-                >Reroll! Another top bar incoming…</span>
-                <span
-                  v-else-if="phase === 'winners'"
-                  class="text-success"
-                >Picking winning tiles…</span>
-                <span
-                  v-else-if="phase === 'done' && result"
-                  class="inline-flex items-center gap-1.5"
-                >
-                  <span
-                    class="text-lg font-bold tabular-nums"
-                    :class="result.won ? 'text-success' : 'text-muted-foreground'"
-                  >
-                    ${{ formatNumber(result.payout, false) }}
-                  </span>
-                  <button
-                    type="button"
-                    class="rounded-md p-1 text-foreground transition-colors hover:bg-muted"
-                    aria-label="Round details"
-                    @click="showPayout = true"
-                  >
-                    <CircleHelpIcon class="size-4" />
-                  </button>
-                </span>
-              </div>
-            </div>
-
-            <!-- Result overlay — sits over the board, click anywhere outside (or Play) to dismiss -->
-            <Transition name="result-pop">
-              <div
-                v-if="showPayout && result"
-                class="absolute inset-0 z-30 flex cursor-pointer items-center justify-center bg-background/85 p-4 backdrop-blur-sm"
-                @click="showPayout = false"
-              >
-                <div
-                  class="w-full max-w-xs cursor-default space-y-3 rounded-2xl border border-border bg-muted p-5 text-center shadow-2xl"
-                  @click.stop
-                >
+                <!-- The board. -->
+                <div :key="nudge" class="relative grid grid-cols-5 gap-1.5" :class="nudge ? 'mh-nudge' : ''">
                   <div
-                    class="mx-auto size-14 rounded-full flex items-center justify-center"
-                    :class="result.won ? 'bg-success/15 text-success' : 'bg-background text-muted-foreground'"
-                  >
-                    <PartyPopperIcon v-if="result.won" class="size-7" />
-                    <CircleSlashIcon v-else class="size-7" />
-                  </div>
-
-                  <div>
-                    <p class="text-xs font-medium tracking-widest text-muted-foreground uppercase">
-                      {{ result.won ? 'You won' : 'Round over' }}
-                    </p>
-                    <p
-                      class="text-3xl font-black tabular-nums mt-1"
-                      :class="result.won ? 'text-success' : 'text-foreground'"
-                    >
-                      ${{ formatNumber(result.payout, false) }}
-                    </p>
-                    <p
-                      class="text-sm font-mono mt-1"
-                      :class="profit >= 0 ? 'text-success' : 'text-error'"
-                    >
-                      {{ profit >= 0 ? '+' : '' }}{{ formatNumber(profit, false) }} net
-                    </p>
-                  </div>
-
-                  <div class="grid grid-cols-2 gap-2 text-sm">
-                    <div class="rounded-lg border border-border bg-background p-2">
-                      <p class="text-xs text-muted-foreground">
-                        Winning hands
-                      </p>
-                      <p class="font-bold tabular-nums">
-                        {{ winningHands.length }} / {{ result.handCount }}
-                      </p>
-                    </div>
-                    <div class="rounded-lg border border-border bg-background p-2">
-                      <p class="text-xs text-muted-foreground">
-                        Best winning hand
-                      </p>
-                      <p
-                        class="font-bold tabular-nums"
-                        :class="bestHand > 1 ? 'text-warning' : ''"
-                      >
-                        {{ bestHand > 0 ? `${bestHand}×` : '—' }}
-                      </p>
-                    </div>
-                  </div>
-
+                    v-if="applyCol >= 0"
+                    class="mh-beam pointer-events-none absolute inset-y-0 z-10 rounded-xl"
+                    :style="{ left: `calc(${applyCol} * (100% + 0.375rem) / 5)`, width: 'calc((100% - 1.5rem) / 5)' }"
+                  />
                   <button
+                    v-for="i in tiles" :key="i"
                     type="button"
-                    class="inline-flex w-full items-center justify-center rounded-md bg-primary px-3 py-2 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/75"
-                    @click="showPayout = false"
+                    class="mh-tile relative grid aspect-square place-items-center rounded-xl"
+                    :class="[
+                      tileMult[i] !== undefined ? `mh-mult ${rarity(tileMult[i]!)}` : '',
+                      {
+                        'mh-placed': placedSet.has(i),
+                        'mh-winner': revealed.has(i),
+                        'mh-hit': revealed.has(i) && placedSet.has(i),
+                        'mh-dud': phase === 'done' && placedSet.has(i) && !revealed.has(i),
+                        'mh-editable': canEdit
+                      }
+                    ]"
+                    :disabled="!canEdit"
+                    :aria-pressed="placedSet.has(i)"
+                    :aria-label="`Tile ${i + 1}${placedSet.has(i) ? ', hand on it' : ''}${tileMult[i] ? `, ${mult(tileMult[i]!)}` : ''}${revealed.has(i) ? ', winner' : ''}`"
+                    @click="toggle(i)"
                   >
-                    Continue
+                    <span v-if="stamped?.tile === i" :key="stamped.id" class="mh-stamp pointer-events-none absolute inset-0 rounded-xl" />
+                    <span v-if="revealed.has(i) && !placedSet.has(i) && tileMult[i] === undefined" class="mh-star" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8z" fill="currentColor" /></svg>
+                    </span>
+                    <span v-if="tileMult[i] !== undefined" :key="`m${tileMult[i]}`" class="mh-mult-num g-num" :class="placedSet.has(i) ? 'with-hand' : ''">{{ mult(tileMult[i]!) }}</span>
+                    <MhGlove
+                      v-if="placedSet.has(i)"
+                      class="mh-glove-on"
+                      :class="tileMult[i] !== undefined ? 'small' : ''"
+                      :tone="revealed.has(i) ? 'won' : phase === 'done' ? 'lost' : 'live'"
+                    />
+                    <span v-if="revealed.has(i) && placedSet.has(i) && result" class="mh-paid g-num">+{{ formatCoins(payFor(result.hand, winningTiles.get(i) ?? 1)) }}</span>
                   </button>
-                  <p class="text-xs text-muted-foreground/70">
-                    Click outside or press Play
+                </div>
+
+                <div class="flex h-8 items-center justify-center">
+                  <p v-if="phase === 'done' && result && result.payout <= 0" class="mh-zero g-title text-base text-[#ffc2cc] sm:text-lg">
+                    ×0 <span class="text-sm text-white/55">no hand on a winner</span>
                   </p>
+                  <p v-else-if="phase === 'done' && result" class="g-title text-sm text-white/70 sm:text-base">
+                    {{ result.outcome.wins.length }}/{{ result.outcome.placements.length }} hands won
+                  </p>
+                  <p v-else class="g-title inline-flex items-center gap-1.5 rounded-full bg-black/30 px-3 py-0.5 text-sm text-white/85 sm:text-base">{{ status }}</p>
                 </div>
               </div>
-            </Transition>
-          </div>
-        </div>
-
-        <!-- History strip -->
-        <div class="rounded-2xl bg-card p-3 ring ring-border">
-          <div class="flex items-center gap-2">
-            <span class="shrink-0 text-xs font-medium tracking-wide text-muted-foreground uppercase">Last 10</span>
-            <div class="flex gap-1.5 flex-wrap min-h-[26px] items-center">
-              <TransitionGroup name="pill-slide">
-                <span
-                  v-for="(h, idx) in history"
-                  :key="`${idx}-${h.payout}`"
-                  class="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-mono font-bold"
-                  :class="h.won ? 'bg-success/20 text-success' : 'bg-muted text-muted-foreground'"
-                >
-                  <TrendingUpIcon v-if="h.won" class="size-3" />
-                  <TrendingDownIcon v-else class="size-3" />
-                  {{ h.net >= 0 ? '+' : '' }}{{ formatNumber(h.net, false) }}
-                </span>
-              </TransitionGroup>
-              <span
-                v-if="history.length === 0"
-                class="font-mono text-xs text-muted-foreground/50"
-              >No rounds yet</span>
             </div>
-          </div>
-        </div>
+          </GameFelt>
+        </GameWinBurst>
 
-        <!-- Play Button — hidden on mobile, replaced by sticky bar below -->
-        <div class="hidden rounded-2xl bg-card p-4 ring ring-border sm:p-6 lg:block">
-          <div class="flex items-center gap-4">
+        <div class="g-ui g-panel flex min-w-0 flex-col gap-3 rounded-[1.5rem] p-3 sm:p-4">
+          <GameBetInput v-model="hand" :min="info.minBet" :max="info.maxBet" :disabled="busy" label="Per hand" />
+
+          <div class="grid grid-cols-5 gap-1.5">
             <button
+              v-for="p in presets" :key="p.n"
               type="button"
-              :disabled="isBusy || !canPlay"
-              class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 font-black tracking-widest text-primary-foreground uppercase transition-transform hover:bg-primary/75 disabled:cursor-not-allowed disabled:opacity-75 h-16 flex-1 text-lg active:scale-[0.98]"
-              @click="play"
+              class="g-btn h-12 rounded-2xl text-lg"
+              :class="placements.length === p.n ? 'g-purple' : 'g-dark'"
+              :disabled="busy"
+              :title="`${p.n} random hands`"
+              @click="autoPlace(p.n)"
             >
-              <LoaderCircleIcon v-if="isBusy" class="size-6 shrink-0 animate-spin" />
-              {{ isBusy ? 'Playing…' : `Play · $${formatNumber(totalStake, false)}` }}
+              <Shuffle v-if="p.n === 5" class="size-4" :stroke-width="3" />{{ p.label }}
             </button>
-            <div class="hidden flex-col items-end px-4 font-mono text-sm whitespace-nowrap text-muted-foreground sm:flex">
-              <span>Press <kbd class="rounded border border-border bg-muted px-2 py-1 font-sans text-xs font-bold">SPACE</kbd></span>
+            <button type="button" class="g-btn g-dark h-12 rounded-2xl" :disabled="busy || !placements.length" title="Lift every hand" aria-label="Clear hands" @click="clearHands">
+              <Eraser class="size-5" :stroke-width="2.75" />
+            </button>
+          </div>
+
+          <div class="grid grid-cols-3 gap-2 text-center">
+            <div class="g-well min-w-0 rounded-2xl px-1 py-2">
+              <p class="text-[11px] font-semibold tracking-wide text-[var(--g-muted)] uppercase">Hands</p>
+              <p class="g-num truncate text-2xl">{{ placements.length }}<span class="text-sm text-[var(--g-muted)]">/{{ MH_MAX_HANDS }}</span></p>
+            </div>
+            <div class="g-well min-w-0 rounded-2xl px-1 py-2">
+              <p class="text-[11px] font-semibold tracking-wide text-[var(--g-muted)] uppercase">Cost</p>
+              <p class="g-num flex items-center justify-center gap-1 truncate text-2xl" :class="overMax || bankroll.total.value < totalStake ? 'text-[var(--g-red)]' : ''" :title="`${formatCoinsExact(totalStake)}`">
+                <GameStakeIcons :amount="totalStake" class="text-base" />{{ formatCoins(totalStake) }}
+              </p>
+            </div>
+            <div class="g-well min-w-0 rounded-2xl px-1 py-2" :title="`${MH_WINNERS[0]}-${MH_WINNERS[1]} winning tiles; multipliers stack up to ${MH_TILE_CAP}× a tile`">
+              <p class="text-[11px] font-semibold tracking-wide text-[var(--g-muted)] uppercase">Per hand</p>
+              <p class="g-num truncate text-2xl text-[var(--g-gold)]">×{{ formatCoins(MH_TILE_CAP) }}</p>
             </div>
           </div>
+
+          <div class="flex flex-wrap justify-center gap-1" aria-label="Multipliers">
+            <span v-for="m in MH_MULTIPLIERS" :key="m" class="mh-legend g-num rounded-lg px-1.5 py-0.5 text-xs" :class="rarity(m)">{{ mult(m) }}</span>
+          </div>
+
+          <p v-if="overMax" class="rounded-xl bg-destructive/15 p-2.5 text-sm text-[#ff8da0]">At most {{ formatCoins(info.maxBet) }} a round</p>
+          <p v-if="errorMsg" role="alert" class="rounded-xl bg-destructive/15 p-3 text-sm text-[#ff8da0]">{{ errorMsg }}</p>
+        </div>
+
+        <!-- Play sticks to the bottom of the screen on a phone, under the board. -->
+        <div class="g-ui g-panel sticky bottom-2 z-20 rounded-[1.5rem] p-2 sm:p-3 @3xl:static @3xl:col-start-2">
+          <button type="button" class="g-btn g-gold h-14 w-full rounded-2xl text-2xl uppercase" :disabled="!canPlay" @click="play">
+            <template v-if="busy">{{ status }}</template>
+            <template v-else>
+              Play
+              <span class="inline-flex items-center gap-1 text-lg normal-case opacity-80"><GameStakeIcons :amount="totalStake" />{{ formatCoins(totalStake) }}</span>
+            </template>
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- Mobile sticky play bar -->
-    <div
-      class="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-background/95 backdrop-blur-sm lg:hidden"
-      style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom))"
-    >
-      <div class="p-3 max-w-6xl mx-auto">
-        <button
-          type="button"
-          :disabled="isBusy || !canPlay"
-          class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 font-black tracking-widest text-primary-foreground uppercase transition-colors hover:bg-primary/75 disabled:cursor-not-allowed disabled:opacity-75 h-14 text-base"
-          @click="play"
-        >
-          <LoaderCircleIcon v-if="isBusy" class="size-6 shrink-0 animate-spin" />
-          {{ isBusy ? 'Playing…' : `Play · $${formatNumber(totalStake, false)}` }}
-        </button>
-      </div>
-    </div>
-
-    <!-- Help -->
-    <GameHelpModal v-model:open="showHelp" title="How Magic Hands works" :ui="{ content: 'sm:max-w-md' }">
-      <li>Pick a <strong class="text-foreground">hand value</strong> and click tiles to place hands (up to the whole board). Cost = hands × value.</li>
-      <li>On Play the <strong class="text-foreground">top bar</strong> spins like a slot. Each of the 5 slots lands on nothing, a <strong class="text-warning">multiplier</strong>, or a <strong class="text-info">reroll</strong>.</li>
-      <li>Each multiplier stamps its value onto <strong class="text-foreground">1–4 tiles</strong> in that column.</li>
-      <li>A <strong class="text-info">reroll</strong> spins a whole new top bar after the current one finishes. Multipliers landing on the same tile <strong class="text-foreground">stack</strong> (e.g. 50× then 10× = 500×) — capped at {{ MH_TILE_CAP }}× per tile.</li>
-      <li>Then <strong class="text-success">2–8 tiles</strong> are revealed as winners. A hand on a winning tile pays <strong class="text-foreground">hand value × that tile's multiplier</strong> (a plain winner returns your 1×).</li>
-      <li>Max win {{ MH_TILE_CAP }}× total stake — and the odds are identical no matter how many hands you place.</li>
-    </GameHelpModal>
-  </div>
+    <template #rules>
+      <p>Pick a value per hand and tap tiles to place hands (up to the whole board). A round costs hands × value.</p>
+      <p>On Play the slot bar spins one reel per column. A reel lands on nothing, a <strong>multiplier</strong> (stamped onto 1-4 tiles of its column) or a <strong>reroll</strong> (the bar spins again afterwards). Multipliers on the same tile stack, up to {{ MH_TILE_CAP }}× a tile.</p>
+      <p>Then {{ MH_WINNERS[0] }}-{{ MH_WINNERS[1] }} tiles are revealed as winners. A hand on a winner pays value × that tile's multiplier (1× without one). The odds are the same however many hands you place. Space plays.</p>
+    </template>
+  </GameFrame>
 </template>
 
 <style scoped>
-.fade-up-enter-active, .fade-up-leave-active { transition: all 0.2s ease; }
-.fade-up-enter-from, .fade-up-leave-to { opacity: 0; transform: translateY(5px); }
-
-.pill-slide-enter-active { transition: all 0.25s ease; }
-.pill-slide-enter-from { opacity: 0; transform: translateX(-8px); }
-
-.pop-enter-active { transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
-.pop-enter-from { opacity: 0; transform: scale(0.3); }
-
-.result-pop-enter-active, .result-pop-leave-active { transition: opacity 0.2s ease; }
-.result-pop-enter-from, .result-pop-leave-to { opacity: 0; }
-.result-pop-enter-active > div, .result-pop-leave-active > div { transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1); }
-.result-pop-enter-from > div, .result-pop-leave-to > div { transform: scale(0.85); }
-
-.pop-in { animation: pop-in 0.32s cubic-bezier(0.34, 1.56, 0.64, 1); }
-@keyframes pop-in {
-  0% { opacity: 0; transform: scale(0.3); }
-  100% { opacity: 1; transform: scale(1); }
+/* ─── the slot bar ─────────────────────────────────────────────────────────── */
+.mh-bar {
+    background: linear-gradient(180deg, #ffe27a, #d9a531 45%, #9a6512);
+    box-shadow: 0 4px 0 #5e3a06, inset 0 2px 0 rgb(255 255 255 / 0.5), 0 8px 18px rgb(0 0 0 / 0.35);
 }
+.mh-window {
+    background: linear-gradient(180deg, #120a1e, #24143a 50%, #120a1e);
+    box-shadow: inset 0 3px 6px rgb(0 0 0 / 0.7), inset 0 -2px 0 rgb(255 255 255 / 0.08);
+    transition: box-shadow 0.2s;
+}
+.mh-window::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgb(0 0 0 / 0.55), transparent 28%, transparent 72%, rgb(0 0 0 / 0.55)); }
+.mh-q { font-family: var(--font-game); font-size: 1.4rem; color: rgb(255 255 255 / 0.25); }
+.mh-reel-mult { font-size: 1.15rem; }
+.mh-landed-multiplier { box-shadow: inset 0 0 0 2px currentColor, inset 0 0 16px rgb(255 255 255 / 0.15); }
+.mh-landed-reroll { box-shadow: inset 0 0 0 2px #7dd3fc, inset 0 0 16px rgb(125 211 252 / 0.3); }
+.mh-applying { box-shadow: inset 0 0 0 3px #fff, 0 0 16px rgb(255 255 255 / 0.65); }
+.mh-reroll { background: #7dd3fc; color: #0c2a3e; box-shadow: 0 3px 0 #1d6fa0, 0 0 22px rgb(125 211 252 / 0.7); }
 
-input[type=number]::-webkit-inner-spin-button,
-input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+/* ─── the board ────────────────────────────────────────────────────────────── */
+.mh-tile {
+    background: linear-gradient(180deg, #4a2b78, #351b5a);
+    box-shadow: inset 0 2px 0 rgb(255 255 255 / 0.12), 0 3px 0 #1c0d33;
+    container-type: inline-size;
+    transition: transform 0.12s, box-shadow 0.15s, background 0.2s;
+    -webkit-tap-highlight-color: transparent;
+}
+.mh-tile::before { content: ''; position: absolute; inset: 28%; border-radius: 50%; background: radial-gradient(circle, rgb(255 255 255 / 0.07), transparent 70%); }
+.mh-editable { cursor: pointer; }
+.mh-editable:hover { transform: translateY(-1px); background: linear-gradient(180deg, #5a3590, #40216b); }
+.mh-editable:active { transform: translateY(2px); box-shadow: inset 0 2px 0 rgb(255 255 255 / 0.12), 0 1px 0 #1c0d33; }
+.mh-tile:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+.mh-placed { background: linear-gradient(180deg, #6b3fb0, #4b2785); }
+.mh-glove-on { width: 62%; animation: mh-glove-in 0.28s cubic-bezier(0.3, 0.7, 0.4, 1.6); }
+.mh-glove-on.small { position: absolute; right: 4%; bottom: 4%; width: 38%; }
+.mh-mult-num { position: relative; font-size: clamp(0.75rem, 28cqw, 1.35rem); line-height: 1; animation: mh-pop 0.3s cubic-bezier(0.3, 0.7, 0.4, 1.6); }
+.mh-mult-num.with-hand { translate: -8% -14%; }
+.mh-stamp { animation: mh-stamp 0.45s ease-out both; }
+/* Rarity colours (never green or red: those mean win and loss). */
+.r-slate { color: #cbd5e1; }
+.r-blue { color: #7cc4ff; }
+.r-purple { color: #c9a2ff; }
+.r-pink { color: #ff8ad8; }
+.r-gold { color: #ffd84a; }
+.r-mythic { color: #fff3a8; text-shadow: 0 0 10px rgb(255 216 74 / 0.9); }
+.mh-mult.r-slate { background: linear-gradient(180deg, #56607a, #3a4256); }
+.mh-mult.r-blue { background: linear-gradient(180deg, #2f5fa8, #1d3f78); }
+.mh-mult.r-purple { background: linear-gradient(180deg, #7445c4, #4f2a92); }
+.mh-mult.r-pink { background: linear-gradient(180deg, #b23e93, #7c2366); }
+.mh-mult.r-gold { background: linear-gradient(180deg, #a8730f, #6e4706); box-shadow: inset 0 0 0 2px #ffd84a, 0 3px 0 #3d2700; }
+.mh-mult.r-mythic { background: linear-gradient(180deg, #e0a91d, #8a5a06); box-shadow: inset 0 0 0 2px #fff3a8, 0 0 16px rgb(255 216 74 / 0.7), 0 3px 0 #3d2700; }
+.mh-winner { background: linear-gradient(180deg, #3a7a4e, #1f4d2f); box-shadow: inset 0 0 0 2px rgb(140 255 170 / 0.45), 0 3px 0 #0e2a18; }
+.mh-winner.mh-mult { box-shadow: inset 0 0 0 2px rgb(140 255 170 / 0.7), 0 3px 0 #0e2a18; }
+.mh-tile.mh-hit {
+    z-index: 5;
+    background: linear-gradient(180deg, #5ef07a, #22a845);
+    box-shadow: inset 0 0 0 3px #fff, 0 0 0 3px #ffd84a, 0 0 24px 4px rgb(255 216 74 / 0.75), 0 3px 0 #0e5a22;
+    animation: mh-hit 0.5s cubic-bezier(0.3, 0.7, 0.4, 1.6);
+}
+.mh-hit.mh-mult .mh-mult-num { color: #fff; text-shadow: 0 2px 0 rgb(0 0 0 / 0.4); }
+.mh-dud { background: linear-gradient(180deg, #3a2554, #2a1840); }
+.mh-star { width: 48%; color: #8cffaa; filter: drop-shadow(0 2px 0 rgb(0 0 0 / 0.35)); animation: mh-pop 0.3s cubic-bezier(0.3, 0.7, 0.4, 1.6); }
+.mh-paid {
+    position: absolute;
+    left: 50%;
+    top: -0.4rem;
+    translate: -50% 0;
+    z-index: 6;
+    padding: 0 0.35rem;
+    border-radius: 999px;
+    background: #ffd84a;
+    color: #4a2a00;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    box-shadow: 0 2px 0 #9a5a00;
+    animation: mh-paid 0.45s cubic-bezier(0.3, 0.7, 0.4, 1.6) both;
+}
+.mh-beam { background: linear-gradient(180deg, rgb(255 255 255 / 0.28), rgb(255 255 255 / 0.04)); box-shadow: 0 0 18px rgb(255 255 255 / 0.25); }
+
+.mh-legend { background: rgb(0 0 0 / 0.3); }
+
+.mh-zero { animation: mh-zero 0.3s cubic-bezier(0.3, 0.7, 0.4, 1.5); }
+.mh-nudge { animation: mh-nudge 0.35s ease-out; }
+.mh-pop-enter-active { transition: transform 0.3s cubic-bezier(0.3, 0.7, 0.4, 1.6), opacity 0.15s; }
+.mh-pop-leave-active { transition: opacity 0.2s; }
+.mh-pop-enter-from { transform: scale(0.3); opacity: 0; }
+.mh-pop-leave-to { opacity: 0; }
+
+@keyframes mh-glove-in { from { transform: translateY(-8px) scale(0.6); opacity: 0; } }
+@keyframes mh-pop { from { transform: scale(0.3); opacity: 0; } }
+@keyframes mh-stamp { 0% { box-shadow: inset 0 0 0 4px #fff, 0 0 26px 6px rgb(255 255 255 / 0.85); transform: scale(1.18); } 100% { box-shadow: inset 0 0 0 0 transparent; transform: scale(1); } }
+@keyframes mh-hit { 0% { transform: scale(0.85); } 60% { transform: scale(1.14); } 100% { transform: scale(1.04); } }
+@keyframes mh-paid { from { transform: translateY(8px) scale(0.5); opacity: 0; } }
+@keyframes mh-zero { from { transform: scale(1.25); } }
+@keyframes mh-nudge { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 50% { transform: translateX(4px); } 75% { transform: translateX(-2px); } }
+@media (prefers-reduced-motion: reduce) {
+    .mh-glove-on, .mh-mult-num, .mh-stamp, .mh-hit, .mh-star, .mh-paid, .mh-zero, .mh-nudge { animation: none; }
+}
 </style>

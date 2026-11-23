@@ -935,7 +935,7 @@ export class SpinataScene {
         if (this.fx) for (const t of Object.values(this.fx)) safeDestroy(() => t.destroy(true))
         this.fx = null
         safeDestroy(() => this.backing?.texture.destroy(true))
-        safeDestroy(() => this.app?.destroy(true, { children: true }))
+        safeDestroy(() => this.app?.destroy({ removeView: true }, { children: true }))
         this.app = null
         this.reelSet = null
     }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Lightbulb, LightbulbOff } from 'lucide-vue-next'
-import { formatNumber } from '#shared/money'
+import { formatCoins } from '#shared/money'
 import type { Card } from '#shared/tables/cards'
 import { faceOf } from '#shared/tables/cards'
 import {
@@ -10,9 +10,10 @@ import {
 import { cardBack, cardFace } from '~/utils/live-table/art'
 
 const sound = useTableSound()
-const table = useLiveTable<TcpSeat, TcpShared, TcpAction>('three-card-poker')
+const table = useLiveTable<TcpSeat, TcpShared, TcpAction>('three-card-poker', undefined, seat => seat.ante + seat.pairPlus + seat.play)
 const { state, mySeat, phase, connected } = table
-const { coins } = useCasinoSession()
+/** What the player can stake: coins first, then chips (the name stays for the checks below). */
+const coins = useBankroll().total
 const chip = ref(100)
 
 // ─── felt geometry, the old table's 1720-wide stage ─────────────────────────
@@ -96,13 +97,13 @@ function legState(seat: TcpSeat, spot: 'ante' | 'pairPlus' | 'play'): 'won' | 'l
 function badgeFor(seat: TcpSeat): { text: string, tone: string } | null {
     const result = seat.result
     if (showdown.value && result) {
-        if (result.ante === 'fold') return { text: result.net >= 0 ? `FOLD +${formatNumber(result.net)}` : 'FOLD', tone: 'lose' }
+        if (result.ante === 'fold') return { text: result.net >= 0 ? `FOLD +${formatCoins(result.net)}` : 'FOLD', tone: 'lose' }
         if (result.net === 0) return { text: 'PUSH', tone: 'push' }
-        const amount = `${result.net > 0 ? '+' : '−'}${formatNumber(Math.abs(result.net))}`
+        const amount = `${result.net > 0 ? '+' : '−'}${formatCoins(Math.abs(result.net))}`
         if (!result.dealerQualified) return { text: `NO QUALIFY ${amount}`, tone: 'win' }
         return { text: `${result.net > 0 ? 'WIN' : 'LOSE'} ${amount}`, tone: result.net > 0 ? 'win' : 'lose' }
     }
-    if (seat.decision === 'play') return { text: 'PLAY', tone: 'win' }
+    if (seat.decision === 'play') return { text: 'PLAY', tone: 'gold' }
     if (seat.decision === 'fold') return { text: 'FOLD', tone: 'lose' }
     return null
 }
@@ -113,8 +114,10 @@ function place(spot: TcpSpot) {
     sound.play('chip')
 }
 
+// One decision per snapshot: a double tap would be refused by the server.
+const lock = useActionLock(() => `${phase.value}|${JSON.stringify(me.value)}`)
 function decide(play: boolean) {
-    table.act({ t: 'decide', play })
+    if (!lock.run(() => table.act({ t: 'decide', play }))) return
     if (play) sound.play('chip')
 }
 
@@ -147,7 +150,7 @@ const hint = computed(() => {
 })
 
 const phaseLabel = computed(() => {
-    if (showdown.value && state.value?.message) return state.value.message.toUpperCase()
+    if (showdown.value) return 'SHOWDOWN'
     return ({ betting: 'PLACE YOUR BETS', dealing: 'DEALING', decision: 'PLAY OR FOLD' } as Record<string, string>)[phase.value] ?? (state.value?.message ?? 'Waiting').toUpperCase()
 })
 const myTone = computed(() => {
@@ -208,21 +211,24 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
     slug="three-card-poker"
     :connected="connected"
     :message="state?.message ?? 'Connecting'"
-    :seconds="table.secondsLeft.value"
-    :progress="table.phaseProgress.value"
-    :next-round-in="table.nextRoundIn.value"
+    :clock="table.clock.value"
     :watching="state?.watching ?? 0"
     :seated="!!mySeat"
     :leaving="!!mySeat?.leaving"
     :open-seat="openSeat"
     :feed="table.feed.value"
     :scoreboard="state?.scoreboard ?? []"
-    @chat="table.chat"
+    tone="teal"
+    :can-sit="table.canSit.value"
+    :players="seats.filter(Boolean).length"
+    :win="table.win.value"
+    :send-chat="table.chat"
     @leave="table.leave"
     @sit="table.sit"
+    @build="table.build"
   >
     <template #felt>
-      <LiveTableStage>
+      <LiveTableStage tone="teal">
         <LiveTableCorner title="Bonus paytables">
           <div class="tcp-paytable-title">Pair Plus</div>
           <LiveTablePaytable :rows="pairPlusRows" :head="['Hand', 'Pays']" />
@@ -257,24 +263,21 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
             </span>
           </span>
         </TransitionGroup>
-        <div v-if="dealer?.hand" class="tcp-strength lt-mono" :class="myTone" :style="pos(DEALER_POS.x, 310)">
+        <div v-if="dealer?.hand" class="tcp-strength" :class="myTone" :style="pos(DEALER_POS.x, 310)">
           {{ dealer.hand.label }}<span v-if="dealer.qualified === false" class="tcp-nq"> · does not qualify</span>
         </div>
 
-        <div class="lt-rules" style="top: 350px">DEALER QUALIFIES WITH QUEEN HIGH OR BETTER</div>
-        <div class="lt-phase" style="top: 392px">
-          <span class="label" :class="myTone">{{ phaseLabel }}</span>
-          <template v-if="table.nextRoundIn.value !== null">
-            <span class="next">NEW ROUND IN</span>
-            <span class="count">{{ table.nextRoundIn.value }}</span>
-          </template>
-          <span v-else-if="table.secondsLeft.value !== null && phase !== 'dealing'" class="count" :class="{ urgent: table.secondsLeft.value <= 5 }">{{ table.secondsLeft.value }}</span>
-        </div>
+        <div class="lt-rules" style="top: 340px">DEALER QUALIFIES WITH QUEEN HIGH OR BETTER</div>
+        <LiveTablePhase
+          :label="phaseLabel"
+          :tone="myTone"
+          :top="364"
+          :clock="table.clock.value"
+          :timed="phase !== 'dealing'"
+        />
 
         <template v-for="(p, i) in SEAT_POS" :key="i">
-          <div v-if="!seats[i]" class="lt-sit" :class="{ taken: !!mySeat || !connected }" :style="pos(p.x, p.y + SPOT_DY)" @click="!mySeat && connected && table.sit(i)">
-            <span class="lbl">SIT</span>
-          </div>
+          <LiveTableSit v-if="!seats[i]" :x="p.x" :y="p.y + SPOT_DY" :mode="!!mySeat || !connected ? 'taken' : table.canSit.value ? 'open' : 'locked'" @sit="table.canSit.value ? table.sit(i) : table.build()" />
           <template v-else>
             <TransitionGroup name="lt-deal" tag="div" class="lt-hand tcp-hand" :class="{ dim: seats[i]!.game.decision === 'fold' }" :style="handStyle(p.x, p.y + HAND_DY)">
               <span v-for="(card, c) in seats[i]!.game.cards" :key="card.id" class="block" :style="{ transitionDelay: dealDelay(i, c) }">
@@ -284,8 +287,8 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
                 </span>
               </span>
             </TransitionGroup>
-            <div v-if="seats[i]!.game.hand" class="tcp-strength lt-mono" :style="pos(p.x, p.y + 38)">{{ seats[i]!.game.hand!.label }}</div>
-            <div v-if="badgeFor(seats[i]!.game)" class="lt-badge pop" :class="badgeFor(seats[i]!.game)!.tone" :style="pos(p.x, p.y - 150)">{{ badgeFor(seats[i]!.game)!.text }}</div>
+            <div v-if="seats[i]!.game.hand" class="tcp-strength" :style="pos(p.x, p.y + 38)">{{ seats[i]!.game.hand!.label }}</div>
+            <div v-if="badgeFor(seats[i]!.game)" class="lt-badge pop inline-flex items-center gap-1.5" :class="badgeFor(seats[i]!.game)!.tone" :style="pos(p.x, p.y - 150)">{{ badgeFor(seats[i]!.game)!.text }}<CasinoChipIcon v-if="badgeFor(seats[i]!.game)!.tone === 'win' && seats[i]!.game.result" class="size-6" /></div>
 
             <div class="lt-cap" :style="pos(p.x - SPOT_DX, p.y + SPOT_DY - 52)">Pair Plus</div>
             <div class="lt-cap" :style="pos(p.x, p.y + SPOT_DY - 52)">Ante</div>
@@ -301,7 +304,7 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
               <LiveTableChipPile class="lt-spot-chips" :amount="onSpot(seats[i]!.game, spot)" :size="60" :max="4" />
             </div>
             <div v-for="(spot, s) in (['pairPlus', 'ante', 'play'] as const)" v-show="onSpot(seats[i]!.game, spot) > 0" :key="`${spot}-amt`" class="lt-amt" :style="pos(p.x + (s - 1) * SPOT_DX, p.y + SPOT_DY + 58)">
-              {{ formatNumber(onSpot(seats[i]!.game, spot)) }}
+              {{ formatCoins(onSpot(seats[i]!.game, spot)) }}
             </div>
             <LiveTablePlate :seat="seats[i]!" :x="p.x" :y="p.y + 230" :mine="seats[i]!.playerId === table.me.value" :turn="phase === 'decision' && !!seats[i]!.game.ante && !seats[i]!.game.decision" :ready="phase === 'betting' && seats[i]!.votedStart" />
           </template>
@@ -312,18 +315,17 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
     </template>
 
     <template #controls>
-      <p v-if="!connected" class="lt-hint-text">Connecting…</p>
-      <p v-else-if="!mySeat" class="lt-hint-text">Click an open <b>SIT</b> spot to join the table.</p>
+      <template v-if="!connected || !mySeat" />
       <template v-else-if="betting">
         <div class="lt-touch-spots grid-cols-2">
-          <button type="button" class="lt-touch-spot" @click="place('pairPlus')">Pair Plus<small>up to {{ PAIR_PLUS_PAYS.straightFlush }}:1</small><span v-if="me!.pendingPairPlus" class="amt">{{ formatNumber(me!.pendingPairPlus) }}</span></button>
-          <button type="button" class="lt-touch-spot !border-[var(--lt-gold)]" @click="place('ante')">Ante<small>1:1 + bonus</small><span v-if="me!.pendingAnte" class="amt">{{ formatNumber(me!.pendingAnte) }}</span></button>
+          <button type="button" class="lt-touch-spot" @click="place('pairPlus')">Pair Plus<small>up to {{ PAIR_PLUS_PAYS.straightFlush }}:1</small><span v-if="me!.pendingPairPlus" class="amt">{{ formatCoins(me!.pendingPairPlus) }}</span></button>
+          <button type="button" class="lt-touch-spot !border-[var(--lt-gold)]" @click="place('ante')">Ante<small>1:1 + bonus</small><span v-if="me!.pendingAnte" class="amt">{{ formatCoins(me!.pendingAnte) }}</span></button>
         </div>
         <div class="flex items-stretch gap-2">
           <div class="lt-panel shrink-0">
             <span class="lt-panel-label">Ante</span>
-            <span class="lt-panel-value lt-mono">{{ formatNumber(me!.pendingAnte) }}</span>
-            <span v-if="me!.pendingPairPlus" class="text-[10px] text-white/55">+{{ formatNumber(me!.pendingPairPlus) }} pair plus</span>
+            <span class="lt-panel-value">{{ formatCoins(me!.pendingAnte) }}</span>
+            <span v-if="me!.pendingPairPlus" class="text-[10px] text-white/55">+{{ formatCoins(me!.pendingPairPlus) }} pair plus</span>
           </div>
           <LiveTableRack v-model="chip" :available="available" class="min-w-0 flex-1" />
         </div>
@@ -344,19 +346,19 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
       </template>
 
       <template v-else-if="deciding">
-        <p class="lt-hint-text">You have <b>{{ me!.hand?.label }}</b>. Play for {{ formatNumber(me!.ante) }} more, or fold your ante.</p>
-        <div class="grid grid-cols-2 gap-2 sm:mx-auto sm:w-full sm:max-w-md">
-          <button type="button" class="lb-tile lb-tile-green min-h-12" :class="{ 'lb-hint': hint === true }" :disabled="me!.ante > coins" @click="decide(true)">PLAY {{ formatNumber(me!.ante) }}</button>
-          <button type="button" class="lb-tile lb-tile-red min-h-12" :class="{ 'lb-hint': hint === false }" @click="decide(false)">FOLD</button>
+        <p class="lt-hint-text">You have <b>{{ me!.hand?.label }}</b></p>
+        <div class="lt-actions">
+          <button type="button" class="lb-tile lb-tile-red" :class="{ 'lb-hint': hint === false }" :disabled="lock.locked.value" @click="decide(false)">FOLD<small>lose the ante</small></button>
+          <button type="button" class="lb-tile lb-tile-green" :class="{ 'lb-hint': hint === true }" :disabled="lock.locked.value || me!.ante > coins" @click="decide(true)">PLAY<small>{{ formatCoins(me!.ante) }} more</small></button>
         </div>
       </template>
 
       <div v-else-if="showdown && me?.result" class="flex flex-col items-center gap-1">
-        <span class="tcp-result" :class="badgeFor(me)?.tone">{{ badgeFor(me)?.text }}</span>
+        <span class="lt-result" :class="badgeFor(me)?.tone">{{ badgeFor(me)?.text }}<CasinoChipIcon v-if="badgeFor(me)?.tone === 'win'" /></span>
         <span class="text-xs text-white/60">
           <template v-if="me.hand">{{ me.hand.label }}</template>
-          <template v-if="me.result.anteBonus"> · ante bonus +{{ formatNumber(me.result.anteBonus) }}</template>
-          <template v-if="me.result.pairPlus"> · pair plus pays {{ formatNumber(me.result.pairPlus) }}</template>
+          <template v-if="me.result.anteBonus"> · ante bonus +{{ formatCoins(me.result.anteBonus) }}</template>
+          <template v-if="me.result.pairPlus"> · pair plus pays {{ formatCoins(me.result.pairPlus) }}</template>
         </span>
       </div>
 
@@ -367,7 +369,7 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
     </template>
 
     <template #footer>
-      <button v-if="mySeat" type="button" class="flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 font-semibold transition" :class="hints ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60' : 'bg-white/5 text-white/60 hover:bg-white/10'" @click="toggleHints">
+      <button v-if="mySeat" type="button" class="flex min-h-11 items-center gap-1.5 rounded-lg px-2.5 font-semibold transition" :class="hints ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60' : 'bg-white/5 text-white/60 hover:bg-white/10'" @click="toggleHints">
         <Lightbulb v-if="hints" class="size-3.5" /><LightbulbOff v-else class="size-3.5" /> Hints {{ hints ? 'on' : 'off' }}
       </button>
     </template>
@@ -408,38 +410,28 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
 .tcp-strength {
     position: absolute;
     transform: translate(-50%, -50%);
-    border-radius: 10px;
-    padding: 1px 10px;
-    background: rgba(11, 8, 6, 0.7);
-    font-size: 17px;
-    font-weight: 800;
-    color: var(--lt-gold);
+    border-radius: 999px;
+    padding: 2px 14px;
+    background: rgb(20 10 5 / 0.8);
+    box-shadow: 0 3px 0 rgb(0 0 0 / 0.4);
+    font-family: var(--font-game);
+    font-size: 20px;
+    letter-spacing: 0.03em;
+    color: #ffe9b0;
     white-space: nowrap;
     pointer-events: none;
     z-index: 3;
 }
-.tcp-strength.win { color: var(--lt-win); }
-.tcp-strength.lose { color: #f87171; }
+.tcp-strength.win { color: #fff; text-shadow: 0 0 12px rgb(255 196 40 / 0.9); }
+.tcp-strength.lose { color: rgb(255 247 234 / 0.6); }
 .tcp-nq { color: #fca5a5; }
 .tcp-paytable-title {
     margin: 0 0 6px;
-    font-size: 14px;
-    font-weight: 800;
+    font-family: var(--font-game);
+    font-size: 16px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--lt-gold);
     opacity: 0.85;
 }
-.tcp-result {
-    border-radius: 14px;
-    padding: 6px 18px;
-    font-size: 16px;
-    font-weight: 800;
-    letter-spacing: 0.03em;
-    background: rgba(11, 8, 6, 0.94);
-    border: 2px solid rgba(217, 177, 103, 0.9);
-}
-.tcp-result.win { background: var(--lt-win); border-color: #fff; color: #052e16; }
-.tcp-result.lose { background: rgba(127, 29, 29, 0.94); border-color: rgba(248, 113, 113, 0.8); color: #fecaca; }
-.tcp-result.push { background: rgba(30, 41, 59, 0.94); border-color: rgba(148, 163, 184, 0.7); }
 </style>

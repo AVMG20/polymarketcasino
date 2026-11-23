@@ -1,24 +1,31 @@
 <script setup lang="ts">
 import { Lightbulb, LightbulbOff } from 'lucide-vue-next'
-import { formatNumber } from '#shared/money'
+import { formatCoins } from '#shared/money'
 import {
-    basicStrategy, BJ_SIDE_BETS, canDouble, canSplit, canSurrender, insuranceCost,
+    basicStrategy, BJ_SIDE_BETS, canDouble, handStake, canSplit, canSurrender, insuranceCost,
     PERFECT_PAIRS_LABELS, PERFECT_PAIRS_PAYS, TWENTY_ONE_PLUS_THREE_LABELS, TWENTY_ONE_PLUS_THREE_PAYS,
     type BjAction, type BjHand, type BjSpot, type PerfectPairsTier, type TwentyOnePlusThreeTier
 } from '#shared/tables/blackjack'
 import type { BjGameEvent, BjSeat, BjShared, BjTableAction } from '#shared/tables/blackjack-wire'
-import { buildTextures } from '~/utils/live-blackjack/art'
-import { LiveBlackjackScene, STAGE_H, STAGE_W } from '~/utils/live-blackjack/scene'
+import { buildTextures, type LbTextures } from '~/utils/live-blackjack/art'
+import { BET_Y_OFFSET, LiveBlackjackScene, PLATE_Y_OFFSET, SEAT_LAYOUT, STAGE_H, STAGE_W } from '~/utils/live-blackjack/scene'
 import { safeDestroy } from '~/utils/slot-pixi'
 
 const sound = useTableSound()
+let sideWinSounded = false
 const table = useLiveTable<BjSeat, BjShared, BjTableAction>('blackjack', (payload) => {
     const event = payload as BjGameEvent
     if (event.type === 'action') scene?.flashAction(event.seat, event.action)
-    if (event.type === 'side' && event.seat === mySeat.value?.index) sound.play('win')
-})
+    if (event.type === 'side' && event.seat === mySeat.value?.index) {
+        // The round-end win sound would play a second time for the same win.
+        sideWinSounded = true
+        sound.play('win')
+    }
+}, seat => seat.hands.reduce((sum, hand) => sum + handStake(hand), 0) + seat.insurance
+    + (seat.sideResults ? seat.sideResults.reduce((sum, side) => sum + side.stake, 0) : BJ_SIDE_BETS.reduce((sum, key) => sum + seat.pendingSide[key], 0)))
 const { state, mySeat, phase, connected } = table
-const { coins } = useCasinoSession()
+/** What the player can stake: coins first, then chips (the name stays for the checks below). */
+const coins = useBankroll().total
 const chip = ref(100)
 
 const seats = computed(() => state.value?.seats ?? [])
@@ -66,9 +73,15 @@ function place(spot: BjSpot) {
     sound.play('chip')
 }
 
+// One decision per snapshot: a double tap must not hit twice or re-split.
+const lock = useActionLock(() => `${phase.value}|${game.value?.activeSeat}|${game.value?.activeHand}|${JSON.stringify(me.value?.hands)}|${me.value?.insuranceDecided}`)
 function play(action: BjAction) {
-    table.act({ t: 'play', action })
+    if (!lock.run(() => table.act({ t: 'play', action }))) return
     if (action === 'double' || action === 'split') sound.play('chip')
+}
+function insure(take: boolean) {
+    if (!lock.run(() => table.act({ t: 'insurance', take }))) return
+    if (take) sound.play('chip')
 }
 
 const votes = computed(() => {
@@ -127,12 +140,18 @@ const roundResults = computed(() => seats.value
     }))
     .sort((a, b) => b.net - a.net))
 const showRoundResults = computed(() => phase.value === 'payout' && roundResults.value.length > 0)
+const phaseTone = computed(() => {
+    const net = phase.value === 'payout' ? mySeat.value?.lastNet : null
+    return net ? (net > 0 ? 'win' : 'lose') : ''
+})
 
 // ─── the Pixi table ──────────────────────────────────────────────────────────
 const canvasWrap = ref<HTMLDivElement | null>(null)
 let app: import('pixi.js').Application | null = null
 let scene: LiveBlackjackScene | null = null
 let destroyed = false
+let textures: LbTextures | null = null
+let warmFrame = 0
 
 watch(state, (snapshot) => {
     if (snapshot) scene?.update(snapshot, table.me.value)
@@ -151,8 +170,10 @@ onMounted(async () => {
         // Never below native resolution on dpr 1, capped at 2 on Retina.
         resolution: Math.min(Math.max(window.devicePixelRatio || 1, 1), 2)
     })
+    // The canvas labels use the casino's game font: have it before they are drawn.
+    await Promise.all(['40px "Lilita One"', '40px Fredoka'].map(font => document.fonts.load(font))).catch(() => {})
     if (destroyed) {
-        safeDestroy(() => instance.destroy(true))
+        safeDestroy(() => instance.destroy({ removeView: true }))
         return
     }
     app = instance
@@ -161,9 +182,14 @@ onMounted(async () => {
     app.canvas.style.display = 'block'
     canvasWrap.value?.appendChild(app.canvas)
 
-    const textures = buildTextures(PIXI, app.renderer)
+    textures = buildTextures(PIXI, app.renderer)
+    // Faces bake on first use; the rest fill in a few per frame, off the open.
+    const warm = () => {
+        if (destroyed || !textures) return
+        if (textures.warm(4)) warmFrame = requestAnimationFrame(warm)
+    }
+    warmFrame = requestAnimationFrame(warm)
     scene = new LiveBlackjackScene(PIXI, app, textures, {
-        onSit: seat => !mySeat.value && table.sit(seat),
         onPlace: spot => place(spot)
     })
     if (state.value) scene.update(state.value, table.me.value)
@@ -171,11 +197,16 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
     destroyed = true
+    cancelAnimationFrame(warmFrame)
     scene?.destroy()
     scene = null
     const instance = app
     app = null
-    if (instance) safeDestroy(() => instance.destroy(true, { children: true, texture: true }))
+    // removeView, not `true`: `true` also releases Pixi's global pools under any other live canvas.
+    if (instance) safeDestroy(() => instance.destroy({ removeView: true }, { children: true, texture: true }))
+    const baked = textures
+    textures = null
+    if (baked) safeDestroy(() => baked.destroy())
 })
 
 // ─── sound, off the same snapshots the table draws ──────────────────────────
@@ -189,6 +220,9 @@ watch(myTurn, turn => turn && sound.play('turn'))
 watch(() => mySeat.value?.roundsPlayed, (played, before) => {
     if (!played || played === before) return
     const net = mySeat.value?.lastNet ?? 0
+    const alreadySounded = sideWinSounded
+    sideWinSounded = false
+    if (net > 0 && alreadySounded) return
     if (net) sound.play(net > 0 ? 'win' : 'lose')
 })
 </script>
@@ -198,9 +232,7 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
     slug="blackjack"
     :connected="connected"
     :message="state?.message ?? 'Connecting'"
-    :seconds="table.secondsLeft.value"
-    :progress="table.phaseProgress.value"
-    :next-round-in="table.nextRoundIn.value"
+    :clock="table.clock.value"
     :watching="state?.watching ?? 0"
     :seated="!!mySeat"
     :leaving="!!mySeat?.leaving"
@@ -208,13 +240,41 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
     :aspect="STAGE_W / STAGE_H"
     :feed="table.feed.value"
     :scoreboard="state?.scoreboard ?? []"
-    @chat="table.chat"
+    tone="green"
+    :can-sit="table.canSit.value"
+    :players="seats.filter(Boolean).length"
+    :win="table.win.value"
+    :send-chat="table.chat"
     @leave="table.leave"
     @sit="table.sit"
+    @build="table.build"
   >
     <template #felt>
       <div class="relative">
         <div ref="canvasWrap" class="w-full" :style="{ aspectRatio: `${STAGE_W} / ${STAGE_H}` }" />
+
+        <!-- Seats, open chairs and the phase banner: the same DOM pieces as every table, over the canvas. -->
+        <LiveTableStage class="lt-overlay" :width="STAGE_W" :height="STAGE_H" :felt="false">
+          <LiveTablePhase
+            :label="(state?.message ?? 'Connecting').toUpperCase()"
+            :tone="phaseTone"
+            :top="334"
+            :clock="table.clock.value"
+            :timed="phase !== 'dealing'"
+          />
+          <template v-for="(p, i) in SEAT_LAYOUT" :key="i">
+            <LiveTableSit v-if="!seats[i]" :x="p.x" :y="p.y + BET_Y_OFFSET" :mode="!!mySeat || !connected ? 'taken' : table.canSit.value ? 'open' : 'locked'" @sit="table.canSit.value ? table.sit(i) : table.build()" />
+            <LiveTablePlate
+              v-else
+              :seat="seats[i]!"
+              :x="p.x"
+              :y="p.y + PLATE_Y_OFFSET + 20"
+              :mine="seats[i]!.playerId === table.me.value"
+              :turn="(phase === 'playing' && game?.activeSeat === i) || (phase === 'insurance' && !!seats[i]!.game.hands.length && !seats[i]!.game.insuranceDecided)"
+              :ready="phase === 'betting' && seats[i]!.votedStart"
+            />
+          </template>
+        </LiveTableStage>
 
         <!-- Side-bet reference: top corner, dimmed and collapsed to its header. -->
         <div class="bj-corner absolute top-[4%] right-[5%] hidden max-w-[48%] rounded-xl bg-black/80 ring-1 ring-amber-400/25 backdrop-blur-sm md:block" :class="{ open: showSideBets }">
@@ -262,8 +322,8 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
                     <span v-for="win in entry.sideWins" :key="win.key" class="rounded-sm bg-emerald-500/20 px-1 text-[9px] font-bold text-emerald-300">{{ win.label }}</span>
                   </div>
                 </div>
-                <span class="shrink-0 font-mono text-sm font-bold tabular-nums" :class="entry.net > 0 ? 'text-green-400' : entry.net < 0 ? 'text-red-400' : 'text-white/50'">
-                  {{ entry.net > 0 ? '+' : entry.net < 0 ? '−' : '' }}{{ formatNumber(Math.abs(entry.net)) }}
+                <span class="inline-flex shrink-0 items-center gap-1 font-mono text-sm font-bold tabular-nums" :class="entry.net > 0 ? 'text-white [text-shadow:0_0_10px_rgb(255_196_40/0.9)]' : 'text-white/45'">
+                  <CasinoChipIcon v-if="entry.net > 0" class="size-3.5" />{{ entry.net > 0 ? '+' : entry.net < 0 ? '−' : '' }}{{ formatCoins(Math.abs(entry.net)) }}
                 </span>
               </li>
             </ul>
@@ -273,29 +333,28 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
     </template>
 
     <template #controls>
-      <p v-if="!connected" class="lt-hint-text">Connecting…</p>
-      <p v-else-if="!mySeat" class="lt-hint-text">Click an open <b>SIT</b> spot to join the table.</p>
+      <template v-if="!connected || !mySeat" />
 
       <template v-else-if="betting">
         <div class="lt-touch-spots grid-cols-3">
           <button type="button" class="lt-touch-spot" :disabled="!me!.pendingBet" @click="place('perfectPairs')">
             PP<small>up to {{ PERFECT_PAIRS_PAYS.perfect }}:1</small>
-            <span v-if="me!.pendingSide.perfectPairs" class="amt">{{ formatNumber(me!.pendingSide.perfectPairs) }}</span>
+            <span v-if="me!.pendingSide.perfectPairs" class="amt">{{ formatCoins(me!.pendingSide.perfectPairs) }}</span>
           </button>
           <button type="button" class="lt-touch-spot !border-[var(--lt-gold)]" @click="place('main')">
             Bet<small>3:2 · 1:1</small>
-            <span v-if="me!.pendingBet" class="amt">{{ formatNumber(me!.pendingBet) }}</span>
+            <span v-if="me!.pendingBet" class="amt">{{ formatCoins(me!.pendingBet) }}</span>
           </button>
           <button type="button" class="lt-touch-spot" :disabled="!me!.pendingBet" @click="place('twentyOnePlusThree')">
             21+3<small>up to {{ TWENTY_ONE_PLUS_THREE_PAYS.suitedTrips }}:1</small>
-            <span v-if="me!.pendingSide.twentyOnePlusThree" class="amt">{{ formatNumber(me!.pendingSide.twentyOnePlusThree) }}</span>
+            <span v-if="me!.pendingSide.twentyOnePlusThree" class="amt">{{ formatCoins(me!.pendingSide.twentyOnePlusThree) }}</span>
           </button>
         </div>
         <div class="flex items-stretch gap-2">
           <div class="lt-panel shrink-0">
             <span class="lt-panel-label">Your bet</span>
-            <span class="lt-panel-value lt-mono">{{ formatNumber(me!.pendingBet) }}</span>
-            <span v-if="sideTotal" class="text-[10px] text-white/55">+{{ formatNumber(sideTotal) }} side</span>
+            <span class="lt-panel-value">{{ formatCoins(me!.pendingBet) }}</span>
+            <span v-if="sideTotal" class="text-[10px] text-white/55">+{{ formatCoins(sideTotal) }} side</span>
           </div>
           <LiveTableRack v-model="chip" :available="available" class="min-w-0 flex-1" />
         </div>
@@ -315,20 +374,26 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
         />
       </template>
 
-      <div v-else-if="offerInsurance" class="rounded-xl bg-amber-500/15 p-2.5 text-center ring-2 ring-amber-400/70">
-        <p class="mb-2 text-sm font-bold text-amber-200">Dealer shows an ace. Insure for {{ formatNumber(insuranceCost(me!.hands[0]!.bet)) }}?</p>
-        <div class="mx-auto flex max-w-96 gap-2">
-          <button type="button" class="lb-tile lb-tile-amber flex-1" :disabled="insuranceCost(me!.hands[0]!.bet) > coins" @click="table.act({ t: 'insurance', take: true }); sound.play('chip')">INSURANCE</button>
-          <button type="button" class="lb-tile lb-tile-slate flex-1" @click="table.act({ t: 'insurance', take: false })">NO THANKS</button>
+      <template v-else-if="offerInsurance">
+        <p class="lt-hint-text">Dealer shows an <b>ace</b>. Insure for {{ formatCoins(insuranceCost(me!.hands[0]!.bet)) }}?</p>
+        <div class="lt-actions">
+          <button type="button" class="lb-tile lb-tile-slate" :disabled="lock.locked.value" @click="insure(false)">NO THANKS</button>
+          <button type="button" class="lb-tile lb-tile-amber" :disabled="lock.locked.value || insuranceCost(me!.hands[0]!.bet) > coins" @click="insure(true)">INSURE<small>pays 2:1</small></button>
         </div>
+      </template>
+
+      <div v-else-if="myTurn && activeHand" class="lt-actions bj-actions">
+        <button type="button" class="lb-tile lb-tile-green" :class="{ 'lb-hint': hint === 'hit' }" :disabled="lock.locked.value" @click="play('hit')">HIT</button>
+        <button type="button" class="lb-tile lb-tile-blue" :class="{ 'lb-hint': hint === 'stand' }" :disabled="lock.locked.value" @click="play('stand')">STAND</button>
+        <button type="button" class="lb-tile lb-tile-amber" :class="{ 'lb-hint': hint === 'double' }" :disabled="lock.locked.value || !canDouble(activeHand) || activeHand.bet > coins" @click="play('double')">DOUBLE<small>{{ formatCoins(activeHand.bet) }}</small></button>
+        <button type="button" class="lb-tile lb-tile-violet" :class="{ 'lb-hint': hint === 'split' }" :disabled="lock.locked.value || !canSplit(activeHand, me!.hands) || activeHand.bet > coins" @click="play('split')">SPLIT</button>
+        <button type="button" class="lb-tile lb-tile-slate col-span-2" :class="{ 'lb-hint': hint === 'surrender' }" :disabled="lock.locked.value || !canSurrender(activeHand, me!.hands)" @click="play('surrender')">SURRENDER<small>half back</small></button>
       </div>
 
-      <div v-else-if="myTurn && activeHand" class="grid grid-cols-2 gap-2 sm:flex">
-        <button type="button" class="lb-tile lb-tile-green min-h-12 sm:flex-1" :class="{ 'lb-hint': hint === 'hit' }" @click="play('hit')">HIT</button>
-        <button type="button" class="lb-tile lb-tile-blue min-h-12 sm:flex-1" :class="{ 'lb-hint': hint === 'stand' }" @click="play('stand')">STAND</button>
-        <button type="button" class="lb-tile lb-tile-amber min-h-12 sm:flex-1" :class="{ 'lb-hint': hint === 'double' }" :disabled="!canDouble(activeHand) || activeHand.bet > coins" @click="play('double')">DOUBLE</button>
-        <button type="button" class="lb-tile lb-tile-yellow min-h-12 sm:flex-1" :class="{ 'lb-hint': hint === 'split' }" :disabled="!canSplit(activeHand, me!.hands) || activeHand.bet > coins" @click="play('split')">SPLIT</button>
-        <button type="button" class="lb-tile lb-tile-red col-span-2 min-h-12 sm:flex-1" :class="{ 'lb-hint': hint === 'surrender' }" :disabled="!canSurrender(activeHand, me!.hands)" @click="play('surrender')">SURRENDER</button>
+      <div v-else-if="phase === 'payout' && me?.hands.length && mySeat.lastNet !== null" class="flex justify-center">
+        <span class="lt-result" :class="phaseTone || 'push'">
+          {{ mySeat.lastNet > 0 ? `WIN +${formatCoins(mySeat.lastNet)}` : mySeat.lastNet < 0 ? `LOSE −${formatCoins(-mySeat.lastNet)}` : 'PUSH' }}<CasinoChipIcon v-if="mySeat.lastNet > 0" />
+        </span>
       </div>
 
       <p v-else class="lt-hint-text">
@@ -340,7 +405,7 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
     </template>
 
     <template #footer>
-      <button v-if="mySeat" type="button" class="flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 font-semibold transition" :class="hints ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60' : 'bg-white/5 text-white/60 hover:bg-white/10'" @click="toggleHints">
+      <button v-if="mySeat" type="button" class="flex min-h-11 items-center gap-1.5 rounded-lg px-2.5 font-semibold transition" :class="hints ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60' : 'bg-white/5 text-white/60 hover:bg-white/10'" @click="toggleHints">
         <Lightbulb v-if="hints" class="size-3.5" /><LightbulbOff v-else class="size-3.5" /> Hints {{ hints ? 'on' : 'off' }}
       </button>
       <div v-if="shoe" class="flex min-w-40 items-center gap-2">
@@ -348,7 +413,7 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
         <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
           <div class="h-full bg-amber-400/70 transition-[width] duration-500" :style="{ width: `${Math.round((cardsLeft / shoe.total) * 100)}%` }" />
         </div>
-        <span class="font-mono text-white/60 tabular-nums">{{ (cardsLeft / 52).toFixed(1) }}/{{ shoe.decks }} decks</span>
+        <span class="font-mono text-white/60 tabular-nums">{{ (cardsLeft / 52).toLocaleString('nl-NL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }}/{{ shoe.decks }} decks</span>
       </div>
     </template>
 
@@ -362,6 +427,10 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
 </template>
 
 <style scoped>
+.bj-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 640px) {
+    .bj-actions .lb-tile { max-width: 150px; }
+}
 .bj-corner {
     opacity: 0.6;
     transition: opacity 0.15s ease;

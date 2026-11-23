@@ -405,7 +405,7 @@ onUnmounted(() => {
     }
     safeDestroy(() => fx?.destroy())
     safeDestroy(() => reelSet?.destroy())
-    safeDestroy(() => app?.destroy(true, { children: true }))
+    safeDestroy(() => app?.destroy({ removeView: true }, { children: true }))
     for (const t of ownedTextures.splice(0)) safeDestroy(() => t.destroy(true))
     fx = null
     reelSet = null
@@ -955,7 +955,7 @@ async function spin(feature: Feature | null = null) {
     sound.startMusic()
     const cost = trashPandaStake(bet.value, feature ? { feature } : {})
     if (balance.value < cost) {
-        say('Not enough coins for this bet', 'warn')
+        say('Balance too low for this bet', 'warn')
         sound.play('error')
         stopAutoplay()
         return
@@ -1987,6 +1987,18 @@ const skyline = (() => {
   .tph-badge + .tph-badge::before { margin: 0 7px; }
   .tph-badge--max { display: none; }
   .tph-ticker { font-size: 10.5px; letter-spacing: 0.06em; }
+}
+
+/* Short desktop screens (the game overlay): a compact marquee, so the cabinet fits. */
+@media (min-width: 481px) and (max-height: 1000px) {
+  .tph-page { padding-top: 16px; padding-bottom: 16px; }
+  /* The reels as big as the viewport's height allows; the control bar keeps the cabinet's width. */
+  .tph-window { max-width: max(320px, calc((100dvh - 400px) * 1.25 + 12px)); margin-inline: auto; }
+  .tph-marquee { padding-bottom: 6px; gap: 2px; }
+  .tph-marquee__eyebrow { display: none; }
+  .tph-logo__boss { width: 56px; }
+  .tph-logo__word { font-size: 40px; }
+  .tph-logo__stamp { font-size: 22px; }
 }
 
 @media (max-width: 480px) {
