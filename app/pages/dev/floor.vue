@@ -78,7 +78,7 @@ function onInteract(t: FloorTarget) {
 
 function builtSlug(): string {
     const built = scene.value.plots.filter(p => p.status === 'built')
-    return built[Math.floor(Math.random() * built.length)]?.id ?? 'dice'
+    return built[Math.floor(Math.random() * built.length)]?.id ?? 'plinko'
 }
 
 function celebrate(big: boolean) {
@@ -146,8 +146,8 @@ function togglePlaying() {
         <button class="rounded-lg bg-secondary px-2 py-2" @click="floor?.walkTo({ kind: 'builder' })">
           Walk to desk
         </button>
-        <button class="rounded-lg bg-secondary px-2 py-2" @click="floor?.walkTo({ kind: 'game', id: 'dice' })">
-          Walk to dice
+        <button class="rounded-lg bg-secondary px-2 py-2" @click="floor?.walkTo({ kind: 'game', id: 'plinko' })">
+          Walk to Pegfall
         </button>
         <button class="rounded-lg bg-secondary px-2 py-2" @click="ZONES[zonesOwned] && floor?.walkTo({ kind: 'zone', id: ZONES[zonesOwned]!.id })">
           Walk to sale

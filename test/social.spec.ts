@@ -20,7 +20,7 @@ function casino(build: { zones?: string[], games?: Record<string, number>, upgra
     const id = seedPlayer(5_000, 5_000, { chips: build.chips ?? 0 })
     db.update(casinoProfiles).set({
         zones: build.zones ?? ['backroom'],
-        games: build.games ?? { dice: 1, spinata: 1 },
+        games: build.games ?? { plinko: 1, spinata: 1 },
         upgrades: { cage: 0, marketing: 0, decor: 0, ...build.upgrades },
         golden: build.golden ?? []
     }).where(eq(casinoProfiles.playerId, id)).run()
@@ -42,12 +42,12 @@ beforeEach(() => {
 
 describe('casino value', () => {
     it('is the chips everything finished cost at catalog prices', () => {
-        expect(casinoValue({ zones: ['backroom'], games: { dice: 1, spinata: 1 }, upgrades: { cage: 0, marketing: 0, decor: 0 } })).toBe(0)
-        const value = casinoValue({ zones: ['backroom', 'main'], games: { dice: 3, spinata: 1, limbo: 2, roulette: 1 }, upgrades: { cage: 2, marketing: 0, decor: 1 } })
-        expect(value).toBe(chipsOf('zone', 'main') + chipsOf('game', 'dice', 3) + chipsOf('game', 'limbo', 2) + chipsOf('game', 'roulette')
+        expect(casinoValue({ zones: ['backroom'], games: { plinko: 1, spinata: 1 }, upgrades: { cage: 0, marketing: 0, decor: 0 } })).toBe(0)
+        const value = casinoValue({ zones: ['backroom', 'main'], games: { plinko: 3, spinata: 1, limbo: 2, roulette: 1 }, upgrades: { cage: 2, marketing: 0, decor: 1 } })
+        expect(value).toBe(chipsOf('zone', 'main') + chipsOf('game', 'plinko', 3) + chipsOf('game', 'limbo', 2) + chipsOf('game', 'roulette')
             + chipsOf('upgrade', 'cage', 2) + chipsOf('upgrade', 'decor'))
         // Starters' first level is free.
-        expect(chipsOf('game', 'dice', 1)).toBe(0)
+        expect(chipsOf('game', 'plinko', 1)).toBe(0)
         expect(value).toBeGreaterThan(0)
     })
 
@@ -64,9 +64,9 @@ describe('casino value', () => {
 
 describe('leaderboard', () => {
     it('ranks casinos by value, most valuable first, with the player pinned', () => {
-        const small = casino({ games: { dice: 1, spinata: 1, limbo: 1 } })
-        const big = casino({ zones: ['backroom', 'main', 'pit'], games: { dice: 2, spinata: 1, roulette: 3, blackjack: 1 }, upgrades: { decor: 2 } })
-        const mid = casino({ zones: ['backroom', 'main'], games: { dice: 1, spinata: 1, roulette: 1 } })
+        const small = casino({ games: { plinko: 1, spinata: 1, limbo: 1 } })
+        const big = casino({ zones: ['backroom', 'main', 'pit'], games: { plinko: 2, spinata: 1, roulette: 3, blackjack: 1 }, upgrades: { decor: 2 } })
+        const mid = casino({ zones: ['backroom', 'main'], games: { plinko: 1, spinata: 1, roulette: 1 } })
         const fresh = casino()
 
         const board = getLeaderboard(fresh)
@@ -76,7 +76,7 @@ describe('leaderboard', () => {
         expect(board.me?.owner.id).toBe(fresh)
         expect(board.me?.rank).toBe(4)
         const top = board.entries[0]!
-        expect(top.value).toBe(casinoValue({ zones: ['backroom', 'main', 'pit'], games: { dice: 2, roulette: 3, blackjack: 1 }, upgrades: { cage: 0, marketing: 0, decor: 2 } }))
+        expect(top.value).toBe(casinoValue({ zones: ['backroom', 'main', 'pit'], games: { plinko: 2, roulette: 3, blackjack: 1 }, upgrades: { cage: 0, marketing: 0, decor: 2 } }))
         expect(top.tier).toBe('pit')
         expect(top.zones).toEqual(['backroom', 'main', 'pit'])
         expect(top.games).toBe(4)
@@ -86,7 +86,7 @@ describe('leaderboard', () => {
     })
 
     it('lists the top 50 and still gives a player outside it their rank', () => {
-        const ids = Array.from({ length: LEADERBOARD_SIZE + 5 }, (_, i) => casino({ games: { dice: 1, spinata: 1, limbo: 1 + (i % 5) } }))
+        const ids = Array.from({ length: LEADERBOARD_SIZE + 5 }, (_, i) => casino({ games: { plinko: 1, spinata: 1, limbo: 1 + (i % 5) } }))
         const last = casino()
         const board = getLeaderboard(last)
         expect(board.entries).toHaveLength(LEADERBOARD_SIZE)
@@ -99,7 +99,7 @@ describe('leaderboard', () => {
     it('counts a construction that finished but was not applied yet', () => {
         const now = Date.now()
         const id = casino()
-        const other = casino({ games: { dice: 1, spinata: 1, limbo: 1 } })
+        const other = casino({ games: { plinko: 1, spinata: 1, limbo: 1 } })
         db.insert(casinoConstructions).values({ playerId: id, kind: 'game', target: 'wheel', level: 1, startedAt: new Date(now - HOUR), readyAt: new Date(now - 1) }).run()
         db.insert(casinoConstructions).values({ playerId: id, kind: 'game', target: 'limbo', level: 1, startedAt: new Date(now - HOUR), readyAt: new Date(now + HOUR) }).run()
         const board = getLeaderboard(id, now)
@@ -133,7 +133,7 @@ describe('visiting', () => {
         const now = Date.now()
         const owner = casino({
             zones: ['backroom', 'main'],
-            games: { dice: 3, spinata: 1, roulette: 2, limbo: 0 },
+            games: { plinko: 3, spinata: 1, roulette: 2, limbo: 0 },
             upgrades: { decor: 2, cage: 1, marketing: 1 },
             golden: ['roulette'],
             chips: 987_654.3210
@@ -145,7 +145,7 @@ describe('visiting', () => {
         const visit = getCasinoVisit(visitor, owner, now)
         expect(visit.owner).toEqual({ id: owner, name: 'Test player', image: null, avatar: { hat: 'none', outfit: 'classic', accessory: 'none' } })
         expect(visit.zones).toEqual(['backroom', 'main'])
-        expect(visit.games).toEqual({ dice: 3, spinata: 1, roulette: 2 })
+        expect(visit.games).toEqual({ plinko: 3, spinata: 1, roulette: 2 })
         expect(visit.golden).toEqual(['roulette'])
         expect(visit.decor).toBe(2)
         expect(visit.campaign).toBe('flyers')
@@ -224,10 +224,10 @@ describe('playing in a visited casino', () => {
     /** A dev player (no hub) whose casino has only the backroom starters, with coins to bet. */
     const visitor = () => {
         const id = seedPlayer(10_000, 10_000, { origin: 'dev' })
-        db.update(casinoProfiles).set({ zones: ['backroom'], games: { dice: 1, spinata: 1 } }).where(eq(casinoProfiles.playerId, id)).run()
+        db.update(casinoProfiles).set({ zones: ['backroom'], games: { plinko: 1, spinata: 1 } }).where(eq(casinoProfiles.playerId, id)).run()
         return id
     }
-    const host = () => casino({ zones: ['backroom', 'main', 'pit', 'lounge', 'highlimit', 'penthouse'], games: { dice: 1, spinata: 1, limbo: 2, blackjack: 1, mines: 1 } })
+    const host = () => casino({ zones: ['backroom', 'main', 'pit', 'lounge', 'highlimit', 'penthouse'], games: { plinko: 1, spinata: 1, limbo: 2, blackjack: 1, mines: 1 } })
 
     it('plays a game the host built with the player\'s own coins', async () => {
         const me = visitor()
@@ -248,8 +248,8 @@ describe('playing in a visited casino', () => {
         await expect(playRound(me, 'limbo', { bet: 100, options: { target: 2 }, host: owner })).rejects.toThrow(/Build Limbo/)
         await expect(playRound(me, 'limbo', { bet: 100, options: { target: 2 }, host: 'no-such-player' })).rejects.toThrow(/Build Limbo/)
         const casinoless = seedPlayer(0, 0, { casino: 'none' })
-        await expect(playRound(me, 'dice', { bet: 100, options: { chance: 50 }, host: casinoless })).resolves.toBeTruthy()
-        expect(hostHasGame(casinoless, 'dice')).toBe(false)
+        await expect(playRound(me, 'plinko', { bet: 100, options: { rows: 8, risk: 'low', balls: 1 }, host: casinoless })).resolves.toBeTruthy()
+        expect(hostHasGame(casinoless, 'plinko')).toBe(false)
         for (const bad of [42, '', 'a/b', ['x'], { id: owner }]) {
             await expect(playRound(me, 'limbo', { bet: 100, options: { target: 2 }, host: bad })).rejects.toThrow(/host/)
         }

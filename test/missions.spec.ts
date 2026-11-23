@@ -63,9 +63,9 @@ describe('mission rules', () => {
     })
 
     it('sizes rewards from the full guest income, with a floor for young casinos', () => {
-        const young = { games: { dice: 1, spinata: 1 } }
+        const young = { games: { plinko: 1, spinata: 1 } }
         expect(missionReward(young, 0.5)).toBe(MISSION_FLOOR_PER_HOUR * 0.5)
-        const big = { games: { dice: 5, spinata: 5, roulette: 5, blackjack: 5, baccarat: 5, aethergates: 5 } }
+        const big = { games: { plinko: 5, spinata: 5, roulette: 5, blackjack: 5, baccarat: 5, aethergates: 5 } }
         expect(missionReward(big, 1)).toBeGreaterThan(MISSION_FLOOR_PER_HOUR)
         expect(missionReward(big, 1) % 10).toBe(0)
     })
@@ -98,7 +98,7 @@ describe('daily missions', () => {
         const day = amsterdamDay()
         getTycoonState(id)
         setMissions(id, day, [['rounds', 20], ['collects', 2], ['build', 1]])
-        for (let i = 0; i < 3; i++) await playRound(id, 'dice', { bet: 10, options: { chance: 50 } })
+        for (let i = 0; i < 3; i++) await playRound(id, 'plinko', { bet: 10, options: { rows: 8, risk: 'low', balls: 1 } })
         expect(progressOf(id, day, 'rounds')).toBe(3)
 
         await collectCage(id)
@@ -197,11 +197,11 @@ describe('while you were away', () => {
         const t0 = Date.now()
         await collectCage(id, t0)
         giveChips(id, 50_000)
-        await startBuild(id, { kind: 'game', id: 'dice' }, t0)
+        await startBuild(id, { kind: 'game', id: 'plinko' }, t0)
         await startCampaign(id, 'flyers', t0)
         const away = getTycoonState(id, t0 + 3 * HOUR, { welcome: true }).welcome!
         expect(away.awayMs).toBe(3 * HOUR)
-        expect(away.finished).toEqual([{ kind: 'game', id: 'dice', level: 2 }])
+        expect(away.finished).toEqual([{ kind: 'game', id: 'plinko', level: 2 }])
         expect(away.campaignEnded).toBe('flyers')
         expect(away.earned).toBeGreaterThan(0)
         expect(away.lost).toBe(0)

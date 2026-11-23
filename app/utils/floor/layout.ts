@@ -94,14 +94,14 @@ const PLOT_ORIGINS: Record<string, Tile> = {
     // Backroom
     wheel: { x: 14, y: 14 },
     spinata: { x: 19, y: 14 },
-    dice: { x: 15, y: 16 },
+    plinko: { x: 15, y: 16 },
     limbo: { x: 19, y: 16 },
     // Main floor
     trashpanda: { x: 7, y: 14 },
     roulette: { x: 8, y: 17 },
     candymadness: { x: 6, y: 20 },
     fireinthehole: { x: 11, y: 20 },
-    plinko: { x: 11, y: 17 },
+    dice: { x: 11, y: 17 },
     // Table pit
     'blackjack': { x: 15, y: 6 },
     'three-card-poker': { x: 19, y: 6 },
@@ -232,7 +232,7 @@ export const CHANDELIERS: { zone: ZoneId, at: Tile }[] = [
 /**
  * Where a skin's big floor emblem sits, in tiles from the zone's back corner,
  * and its size (tiles). A zone not listed centres it. The backroom's middle is
- * under the dice table and the cashier cage: its emblem lies on the open floor
+ * under the Pegfall board and the cashier cage: its emblem lies on the open floor
  * between the builder's desk and the cage, by the entrance.
  */
 export const EMBLEMS: Partial<Record<ZoneId, { x: number, y: number, r: number }>> = {

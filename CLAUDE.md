@@ -105,7 +105,7 @@ Multiplayer tables over WebSockets (`nitro.experimental.websocket`), one in-memo
 ## My Casino
 
 The home page is the player's own casino floor (`docs/casino-economy.md`, "My Casino"). It starts with
-the backroom (Dice, Spiñata); everything else is built with **chips**, and a game must be built to play it
+the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a game must be built to play it
 (403) or to sit at its live table (watching stays open).
 
 - Economy v2, "claim coins, win chips": coins come only from the cashier cage (guest income,

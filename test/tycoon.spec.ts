@@ -88,7 +88,7 @@ function blankState(over: Partial<import('../shared/tycoon').TycoonState> = {}):
         serverNow: 0,
         chips: 0,
         zones: ['backroom'],
-        games: { dice: 1, spinata: 1 },
+        games: { plinko: 1, spinata: 1 },
         upgrades: { cage: 0, marketing: 0, decor: 0, crew: 0 },
         constructions: [],
         builders: 1,
@@ -153,17 +153,19 @@ describe('catalog and rules', () => {
     it('prices the next step and says why a build cannot start', () => {
         const state = blankState()
         expect(T.nextCost(state, 'game', 'limbo')).toEqual(T.findTycoonGame('limbo')!.levels[0])
-        expect(T.nextCost(state, 'game', 'dice')).toEqual(T.findTycoonGame('dice')!.levels[1])
+        expect(T.nextCost(state, 'game', 'plinko')).toEqual(T.findTycoonGame('plinko')!.levels[1])
+        expect(T.nextCost(state, 'game', 'dice')).toEqual(T.findTycoonGame('dice')!.levels[0])
         expect(T.nextCost(state, 'zone', 'backroom')).toBeNull()
         expect(T.nextCost(state, 'game', 'nope')).toBeNull()
-        expect(T.nextCost({ ...state, games: { dice: 5 } }, 'game', 'dice')).toBeNull()
+        expect(T.nextCost({ ...state, games: { plinko: 5 } }, 'game', 'plinko')).toBeNull()
 
         expect(T.buildBlocker(state, 'game', 'limbo')).toBeNull()
         expect(T.buildBlocker(state, 'game', 'roulette')).toBe('Open the Main Floor first')
         expect(T.buildBlocker(state, 'zone', 'pit')).toBe('Open the Main Floor first')
         expect(T.buildBlocker(state, 'zone', 'backroom')).toMatch(/already own/)
         expect(T.buildBlocker(state, 'game', 'nope')).toBe('Unknown game')
-        expect(T.buildBlocker({ ...state, games: { dice: 5 } }, 'game', 'dice')).toMatch(/top level/)
+        expect(T.buildBlocker({ ...state, games: { plinko: 5 } }, 'game', 'plinko')).toMatch(/top level/)
+        expect(T.buildBlocker(state, 'game', 'dice')).toBe('Open the Main Floor first')
         const busy = { ...state, constructions: [{ kind: 'game' as const, id: 'limbo', level: 1, startedAt: 0, readyAt: 1 }] }
         expect(T.buildBlocker(busy, 'game', 'limbo')).toBe('Already under construction')
         expect(T.buildBlocker(busy, 'game', 'wheel')).toBe('Your builder is busy')
@@ -223,7 +225,7 @@ describe('casino profile', () => {
             serverNow: now,
             chips: 0,
             zones: ['backroom'],
-            games: { dice: 1, spinata: 1 },
+            games: { plinko: 1, spinata: 1 },
             upgrades: { cage: 0, marketing: 0, decor: 0 },
             constructions: [],
             builders: 1,
@@ -363,8 +365,8 @@ describe('casino profile', () => {
 describe('visitors and ad campaigns', () => {
     it('seats come from built games, demand from games, decor, marketing and campaigns', () => {
         const start = blankState()
-        expect(T.floorSeats(start)).toBe(T.seatsOf('dice', 1) + T.seatsOf('spinata', 1))
-        expect(T.seatsOf('dice', 3)).toBe(T.seatsOf('dice', 1) + 2)
+        expect(T.floorSeats(start)).toBe(T.seatsOf('plinko', 1) + T.seatsOf('spinata', 1))
+        expect(T.seatsOf('plinko', 3)).toBe(T.seatsOf('plinko', 1) + 2)
         expect(T.seatsOf('nope', 1)).toBe(0)
         // A new casino is not full: a campaign has something to fill.
         expect(T.visitorDemand(start, 0)).toBeLessThan(T.floorSeats(start))
@@ -401,7 +403,7 @@ describe('visitors and ad campaigns', () => {
     })
 
     it('prices a stacked campaign 1.5× per run still queued, and back to 1× once it runs out', () => {
-        const state = blankState({ games: { dice: 3, spinata: 3, limbo: 2 }, upgrades: { cage: 0, marketing: 4, decor: 0, crew: 0 } })
+        const state = blankState({ games: { plinko: 3, spinata: 3, limbo: 2 }, upgrades: { cage: 0, marketing: 4, decor: 0, crew: 0 } })
         const ms = T.findCampaign('billboard')!.ms
         const base = T.campaignCost(state, 'billboard', 0)
         expect(Math.abs(base - T.fullIncomePerHour(state) * T.findCampaign('billboard')!.costHours)).toBeLessThanOrEqual(50)
@@ -479,17 +481,28 @@ describe('visitors and ad campaigns', () => {
 })
 
 describe('rounds and My Casino', () => {
+    /** A new casino (the starters) with Dice built too: fixed odds to bet on. */
+    const diceBettor = (coins: number) => {
+        const id = newPlayer(coins)
+        const { games } = getTycoonState(id)
+        db.update(casinoProfiles).set({ games: { ...games, dice: 1 } }).where(eq(casinoProfiles.playerId, id)).run()
+        return id
+    }
+
     it('refuses a game the player has not built, without charging', async () => {
         const id = newPlayer(10_000)
         await expect(playRound(id, 'limbo', { bet: 100, options: { target: 2 } })).rejects.toMatchObject({ statusCode: 403, statusMessage: 'Build Limbo in your casino first' })
         expect(coinsOf(id).coins).toBe(10_000)
+        await expect(playRound(id, 'dice', { bet: 100, options: { chance: 50 } })).rejects.toMatchObject({ statusCode: 403, statusMessage: 'Build Dice in your casino first' })
+        expect(coinsOf(id).coins).toBe(10_000)
         // The starters play from the start.
-        const round = await playRound(id, 'dice', { bet: 100, options: { chance: 50 } })
+        const round = await playRound(id, 'plinko', { bet: 100, options: { rows: 8, risk: 'low', balls: 1 } })
         expect(round.stake).toBe(100)
+        expect((await playRound(id, 'spinata', { bet: 100 })).stake).toBe(100)
     })
 
     it("pays a coin round's whole payout in chips, in the same transaction", async () => {
-        const id = newPlayer(10_000)
+        const id = diceBettor(10_000)
         let chips = 0
         for (let i = 0; i < 10; i++) {
             const round = await playRound(id, 'dice', { bet: 1_000, options: { chance: 50 } })
@@ -507,7 +520,7 @@ describe('rounds and My Casino', () => {
     })
 
     it('stakes chips once the coins are gone, and pays the payout in chips', async () => {
-        const id = newPlayer(0)
+        const id = diceBettor(0)
         getTycoonState(id)
         giveChips(id, 5_000)
         let chips = 5_000
@@ -527,7 +540,7 @@ describe('rounds and My Casino', () => {
     })
 
     it('splits a stake: coins first, then chips for the rest', async () => {
-        const id = newPlayer(60)
+        const id = diceBettor(60)
         getTycoonState(id)
         giveChips(id, 1_000)
         const mixed = await playRound(id, 'dice', { bet: 100, options: { chance: 50 } })
@@ -536,7 +549,7 @@ describe('rounds and My Casino', () => {
         expect(chipRows(id)[0]).toMatchObject({ type: 'debit', amount: 40, reason: 'bet:dice' })
 
         // Coins that cover the stake exactly leave the chips alone.
-        const exact = newPlayer(100)
+        const exact = diceBettor(100)
         getTycoonState(exact)
         giveChips(exact, 1_000)
         const round = await playRound(exact, 'dice', { bet: 100, options: { chance: 50 } })
@@ -545,7 +558,7 @@ describe('rounds and My Casino', () => {
     })
 
     it('reports the stars a winning round lifts (stars follow chips, not coins)', async () => {
-        const id = newPlayer(1_000_000)
+        const id = diceBettor(1_000_000)
         for (let i = 0; i < 100; i++) {
             const round = await playRound(id, 'dice', { bet: 1_000, options: { chance: 95 } })
             if (round.chips >= CASINO_STARS[0]!.threshold) {
@@ -561,7 +574,7 @@ describe('rounds and My Casino', () => {
     })
 
     it('refuses a stake coins and chips together cannot cover, without charging', async () => {
-        const id = newPlayer(60)
+        const id = diceBettor(60)
         getTycoonState(id)
         giveChips(id, 39)
         await expect(playRound(id, 'dice', { bet: 100, options: { chance: 50 } })).rejects.toMatchObject({ statusCode: 400, statusMessage: 'Not enough coins or chips' })
@@ -575,7 +588,7 @@ describe('rounds and My Casino', () => {
     })
 
     it('never lets a burst of bets spend more than coins and chips together', async () => {
-        const id = newPlayer(450)
+        const id = diceBettor(450)
         getTycoonState(id)
         giveChips(id, 550)
         const burst = await Promise.allSettled(Array.from({ length: 30 }, () => playRound(id, 'dice', { bet: 100, options: { chance: 1 } })))
@@ -590,7 +603,7 @@ describe('rounds and My Casino', () => {
     })
 
     it("splits the stats page's wagered per currency", async () => {
-        const id = newPlayer(150)
+        const id = diceBettor(150)
         getTycoonState(id)
         giveChips(id, 1_000)
         const coinRound = await playRound(id, 'dice', { bet: 100, options: { chance: 50 } })
@@ -661,8 +674,8 @@ describe('gem purchases', () => {
         expect(rushed.state.rushUntil).toBeGreaterThan(Date.now() + T.RUSH_MS - 5_000)
 
         await expect(buyWithGems(id, { item: 'golden', target: 'limbo' })).rejects.toMatchObject({ statusCode: 400 })
-        expect((await buyWithGems(id, { item: 'golden', target: 'dice' })).state.golden).toEqual(['dice'])
-        await expect(buyWithGems(id, { item: 'golden', target: 'dice' })).rejects.toMatchObject({ statusCode: 400 })
+        expect((await buyWithGems(id, { item: 'golden', target: 'plinko' })).state.golden).toEqual(['plinko'])
+        await expect(buyWithGems(id, { item: 'golden', target: 'plinko' })).rejects.toMatchObject({ statusCode: 400 })
 
         await startBuild(id, { kind: 'zone', id: 'main' })
         await expect(buyWithGems(id, { item: 'skip', target: 'zone:pit' })).rejects.toMatchObject({ statusCode: 400 })

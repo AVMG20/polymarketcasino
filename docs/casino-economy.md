@@ -117,7 +117,7 @@ Thresholds live in `shared/stars.ts`; balance scripts in `scripts/` import them.
 
 ## My Casino
 
-Every player owns a casino floor (`/`, "My Casino"). It starts with the backroom holding Dice and
+Every player owns a casino floor (`/`, "My Casino"). It starts with the backroom holding Pegfall and
 Spiñata, and the rest is built with **chips**: zones, games (levels 1-5) and four casino upgrades (Cashier
 Cage, Marketing, Decor at levels 1-5, and the one-level Construction Crew; the House Cut upgrade left with v2
 and its levels are ignored). Rules and numbers
@@ -280,24 +280,26 @@ session: 20 rounds, two collects and a build fit in it). Day each milestone was 
 
 | profile | 8 builds | main | pit | lounge | crew | high limit | penthouse | 50% | 90% | max |
 |---|---|---|---|---|---|---|---|---|---|---|
-| casual | 0 | 0.5 | 2.9 | 5.5 | 9.3 | 16.3 | 22.3 | 11.3 | 22.9 | 26.3 |
-| regular | 0 | 0.5 | 0.8 | 2.3 | 5.8 | 11.3 | 15.3 | 7.3 | 15.8 | 18.8 |
-| whale | 0 | 0.4 | 1.3 | 3.5 | 4.3 | 6.4 | 9.4 | 3.4 | 9.9 | 12.4 |
+| casual | 0 | 0.5 | 2.9 | 5.5 | 8.5 | 15.9 | 21.3 | 11.3 | 21.9 | 25.3 |
+| regular | 0 | 0.5 | 0.8 | 2.3 | 6.3 | 11.3 | 15.3 | 6.8 | 15.8 | 18.3 |
+| whale | 0 | 0.4 | 1.3 | 3.3 | 4.4 | 6.4 | 9.4 | 3.4 | 9.9 | 12.4 |
 
-Day each star was first held (same run; 10 comes 6-10 days after max):
+Day each star was first held (same run; 10 comes 4-10 days after max):
 
 | profile | 1-3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---|---|---|---|---|---|---|---|
-| casual | 0.3 | 1.9 | 2.3 | 4.9 | 15.9 | 21.3 | 28.9 | 35.9 |
-| regular | 0.3 | 0.3 | 0.3 | 0.3 | 10.8 | 14.5 | 20.3 | 24.9 |
-| whale | 0.3 | 1.3 | 1.3 | 1.3 | 6.3 | 9.4 | 13.7 | 17.5 |
+| casual | 0.3 | 1.9 | 2.3 | 4.9 | 14.9 | 20.3 | 27.9 | 34.9 |
+| regular | 0.3 | 0.3 | 0.3 | 0.3 | 10.5 | 14.5 | 19.8 | 24.9 |
+| whale | 0.3 | 1.3 | 1.3 | 1.3 | 6.3 | 9.3 | 13.6 | 16.9 |
 
 The first session lands 7-11 builds over seeds 1, 2, 3, 7 and 11 (a casual player's 15 minutes: 7-9, the
 Main Floor among them; regular 10, whale 10-11), all under half an hour: the starter cage is full (7,500
-coins), the first day's missions add about 3,750 and the first steps are cheap and quick (Dice and Spiñata
+coins), the first day's missions add about 3,750 and the first steps are cheap and quick (Pegfall and Spiñata
 level 2 at 380 chips and two minutes, Marketing 1 at 900). Then it slows: the median build takes 25-65
 minutes in week one, two to eight hours in week two, three to nine hours in week three and eight to nine at
-the end. Over seeds 1, 2, 3, 7 and 11 casual maxes on day 26.3-27.3, regular 18.3-18.9, whale 12.4-12.9.
+the end. Over seeds 1, 2, 3, 7 and 11 casual maxes on day 25.3-27.3, regular 18.3-19.3, whale 12.3-12.4
+(Pegfall took Dice's place as a starter, with Dice's three seats, and Dice moved to the Main Floor: the
+same pace within the seeds' noise; eight more seeds put casual at 26.3-27.3).
 The late game was made about 10% dearer and slower earlier (the Lounge, High Limit and Penthouse zones and
 games, upgrade levels 4-5, game levels 4-5 at ×3.8 and ×5.5 the build, builds up to 9 hours); before it,
 with the cheaper campaigns already in, casual maxed on day 23.9-25.3.

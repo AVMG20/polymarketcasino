@@ -1,6 +1,6 @@
 /**
  * My Casino: the tycoon layer. The player owns a casino floor, starts with a
- * backroom holding Dice and Spiñata, and builds the rest with **chips**.
+ * backroom holding Pegfall (plinko) and Spiñata, and builds the rest with **chips**.
  *
  * Economy v2, "claim coins, win chips" (binding, see docs/casino-economy.md):
  * - **Coins are claimed, never won**: the cashier cage
@@ -339,7 +339,7 @@ function guests(base: number): number[] {
 
 export const TYCOON_GAMES: readonly TycoonGameDef[] = [
     // Backroom
-    { slug: 'dice', zone: 'backroom', archetype: 'dice', accent: '#22c55e', starter: true, levels: gameLevels(40, MIN, true), guestsPerHour: guests(4) },
+    { slug: 'plinko', zone: 'backroom', archetype: 'plinko', accent: '#06b6d4', starter: true, levels: gameLevels(40, MIN, true), guestsPerHour: guests(4) },
     { slug: 'spinata', zone: 'backroom', archetype: 'slot', accent: '#f43f5e', starter: true, levels: gameLevels(40, MIN, true), guestsPerHour: guests(4) },
     { slug: 'limbo', zone: 'backroom', archetype: 'rocket', accent: '#38bdf8', levels: gameLevels(80, 10 * SEC), guestsPerHour: guests(2) },
     { slug: 'wheel', zone: 'backroom', archetype: 'wheel', accent: '#facc15', levels: gameLevels(200, 45 * SEC), guestsPerHour: guests(2) },
@@ -348,7 +348,7 @@ export const TYCOON_GAMES: readonly TycoonGameDef[] = [
     { slug: 'trashpanda', zone: 'main', archetype: 'slot', accent: '#84cc16', levels: gameLevels(270, 8 * MIN), guestsPerHour: guests(2) },
     { slug: 'fireinthehole', zone: 'main', archetype: 'slot', accent: '#f97316', levels: gameLevels(290, 10 * MIN), guestsPerHour: guests(2) },
     { slug: 'candymadness', zone: 'main', archetype: 'slot', accent: '#ec4899', levels: gameLevels(310, 12 * MIN), guestsPerHour: guests(2) },
-    { slug: 'plinko', zone: 'main', archetype: 'plinko', accent: '#06b6d4', levels: gameLevels(330, 14 * MIN), guestsPerHour: guests(1.5) },
+    { slug: 'dice', zone: 'main', archetype: 'dice', accent: '#22c55e', levels: gameLevels(330, 14 * MIN), guestsPerHour: guests(1.5) },
     // Table pit
     { slug: 'blackjack', zone: 'pit', archetype: 'cards', accent: '#10b981', levels: gameLevels(450, 30 * MIN), guestsPerHour: guests(2.5) },
     { slug: 'three-card-poker', zone: 'pit', archetype: 'cards', accent: '#6366f1', levels: gameLevels(470, 35 * MIN), guestsPerHour: guests(2.5) },
@@ -494,7 +494,7 @@ export const CAMPAIGNS: readonly CampaignDef[] = [
 export const MIN_CAMPAIGN_CHIPS = 20 * CHIP_SCALE
 
 /** Seats per archetype at level 1; every level adds one. */
-const SEATS: Readonly<Record<Archetype, number>> = { slot: 2, dice: 3, rocket: 2, wheel: 3, flight: 2, hands: 2, roulette: 4, cards: 5, plinko: 2, mines: 3, hilo: 3 }
+const SEATS: Readonly<Record<Archetype, number>> = { slot: 2, dice: 3, rocket: 2, wheel: 3, flight: 2, hands: 2, roulette: 4, cards: 5, plinko: 3, mines: 3, hilo: 3 }
 /** Full-floor income against the catalog's per-game numbers. */
 const INCOME_SCALE = 1.8
 /** Demand per built game and per extra level; decor and Marketing add a share. */
