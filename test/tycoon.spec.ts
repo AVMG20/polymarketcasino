@@ -120,6 +120,20 @@ describe('catalog and rules', () => {
         for (const upgrade of T.UPGRADES) expect(upgrade.requiresZone).toHaveLength(upgrade.levels.length)
     })
 
+    it('never lowers guest income with a new game', () => {
+        // Built in catalog order, with every earlier game at level 1 or 3: each new one adds income.
+        for (const earlier of [1, 3]) {
+            let games: Record<string, number> = {}
+            for (const game of T.TYCOON_GAMES) {
+                const zones = T.ZONES.slice(0, T.ZONES.findIndex(zone => zone.id === game.zone) + 1).map(zone => zone.id)
+                const state = blankState({ zones, games })
+                const after = blankState({ zones, games: { ...games, [game.slug]: 1 } })
+                if (Object.keys(games).length) expect(T.baseGuestsPerHour(after), game.slug).toBeGreaterThan(T.baseGuestsPerHour(state))
+                games = { ...games, [game.slug]: game.starter ? 1 : earlier }
+            }
+        }
+    })
+
     it('keeps guest income (coins) and the cage bounded', () => {
         const maxed = blankState({
             zones: T.ZONES.map(zone => zone.id),

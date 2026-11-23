@@ -45,8 +45,12 @@ export const MISSIONS: readonly MissionDef[] = [
 export const MISSIONS_PER_DAY = 3
 /** The bonus for clearing all three, in hours of full guest income. */
 export const BONUS_HOURS = 0.75
-/** A young casino earns little: rewards are at least this many coins per reward hour. */
-export const MISSION_FLOOR_PER_HOUR = 800
+/**
+ * A young casino earns little: rewards are at least this many coins per
+ * reward hour (about a casino with the Main Floor open), so the first day's
+ * missions add half again to the starter cage.
+ */
+export const MISSION_FLOOR_PER_HOUR = 1_500
 /** A win this many times the stake (or more) counts for `big-win`. */
 export const BIG_WIN_MULTIPLE = 5
 

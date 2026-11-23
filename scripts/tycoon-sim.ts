@@ -22,7 +22,8 @@
 // day's first session with rewards from the casino's full guest income, plus
 // the bonus for all three. The casual player clears two a day, the regular
 // and the whale all three and the bonus; the coins are claimed at the day's
-// last session and bet like the cage's.
+// last session (the first day: as its first session ends) and bet like the
+// cage's.
 //
 // Targets (docs/casino-economy.md): the first builds land in seconds in the
 // first session; casual (no gems) maxes in ~4 weeks, regular (converts its
@@ -400,8 +401,13 @@ function simulate(profile: Profile): Result {
                 advance(state, now, tally)
                 clock = now
 
-                // The day's mission coins, claimed in its last session.
-                if (now === t0 && index === profile.sessions.length - 1 && missionCoins > 0) {
+                // The day's mission coins, claimed in its last session. On the first
+                // day they are claimed as the first session ends: a new player's
+                // missions (20 rounds, collect twice, start a build) fit in it.
+                const claimNow = day === 0
+                    ? index === 0 && now + STEP_MS >= end
+                    : index === profile.sessions.length - 1 && now === t0
+                if (claimNow && missionCoins > 0) {
                     coins += missionCoins
                     tally.missions += missionCoins
                     missionCoins = 0

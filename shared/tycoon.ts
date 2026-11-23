@@ -341,8 +341,8 @@ export const TYCOON_GAMES: readonly TycoonGameDef[] = [
     // Backroom
     { slug: 'dice', zone: 'backroom', archetype: 'dice', accent: '#22c55e', starter: true, levels: gameLevels(40, MIN, true), guestsPerHour: guests(4) },
     { slug: 'spinata', zone: 'backroom', archetype: 'slot', accent: '#f43f5e', starter: true, levels: gameLevels(40, MIN, true), guestsPerHour: guests(4) },
-    { slug: 'limbo', zone: 'backroom', archetype: 'rocket', accent: '#38bdf8', levels: gameLevels(80, 10 * SEC), guestsPerHour: guests(1.5) },
-    { slug: 'wheel', zone: 'backroom', archetype: 'wheel', accent: '#facc15', levels: gameLevels(200, 45 * SEC), guestsPerHour: guests(1.5) },
+    { slug: 'limbo', zone: 'backroom', archetype: 'rocket', accent: '#38bdf8', levels: gameLevels(80, 10 * SEC), guestsPerHour: guests(2) },
+    { slug: 'wheel', zone: 'backroom', archetype: 'wheel', accent: '#facc15', levels: gameLevels(200, 45 * SEC), guestsPerHour: guests(2) },
     // Main floor
     { slug: 'roulette', zone: 'main', archetype: 'roulette', accent: '#ef4444', levels: gameLevels(250, 5 * MIN), guestsPerHour: guests(2) },
     { slug: 'trashpanda', zone: 'main', archetype: 'slot', accent: '#84cc16', levels: gameLevels(270, 8 * MIN), guestsPerHour: guests(2) },
@@ -363,8 +363,8 @@ export const TYCOON_GAMES: readonly TycoonGameDef[] = [
     { slug: 'casino-holdem', zone: 'highlimit', archetype: 'cards', accent: '#1d4ed8', levels: gameLevels(1_060, 100 * MIN), guestsPerHour: guests(3.5) },
     { slug: 'aethergates', zone: 'highlimit', archetype: 'slot', accent: '#eab308', levels: gameLevels(1_090, 135 * MIN), guestsPerHour: guests(3.5) },
     // Penthouse
-    { slug: 'mines', zone: 'penthouse', archetype: 'mines', accent: '#10b981', levels: gameLevels(1_150, 115 * MIN), guestsPerHour: guests(3) },
-    { slug: 'hilo', zone: 'penthouse', archetype: 'hilo', accent: '#8b5cf6', levels: gameLevels(1_200, 135 * MIN), guestsPerHour: guests(3) }
+    { slug: 'mines', zone: 'penthouse', archetype: 'mines', accent: '#10b981', levels: gameLevels(1_150, 115 * MIN), guestsPerHour: guests(2.5) },
+    { slug: 'hilo', zone: 'penthouse', archetype: 'hilo', accent: '#8b5cf6', levels: gameLevels(1_200, 135 * MIN), guestsPerHour: guests(2.5) }
 ]
 
 export const UPGRADES: readonly UpgradeDef[] = [
@@ -455,8 +455,8 @@ export function builderCount(upgrades: Partial<Record<UpgradeId, number>>, gemBu
 
 // ── Visitors ─────────────────────────────────────────────────────────────
 //
-// Every built game has seats; visitors come for the games (more and higher
-// levels draw more), the decor and the casino's name (Marketing), and an ad
+// Every built game has seats; visitors come for the games (each draws by its
+// seats, so a card table pulls more than a slot; higher levels draw more), the decor and the casino's name (Marketing), and an ad
 // campaign multiplies that for a while. Visitors on the floor = the smaller
 // of demand and seats; the rest queue at the door. Guest income is what the
 // floor earns with every seat taken, times the share of seats in use: so a
@@ -477,7 +477,9 @@ export interface CampaignDef {
     requiresMarketing: number
     /**
      * Price in hours of the floor's full income (at least MIN_CAMPAIGN_CHIPS).
-     * About 0.23 of an hour per hour run: a campaign that fills the floor pays
+     * About 0.23 of an hour per hour run (the TV Ad 0.17: a day-long run loses
+     * the night to a full cage unless the cage is collected all day long, so
+     * it is the most active player's pick): a campaign that fills the floor pays
      * back while under ~78% of the seats are taken (more the emptier the
      * floor, and only as far as the cage has room between collects).
      */
@@ -487,7 +489,7 @@ export interface CampaignDef {
 export const CAMPAIGNS: readonly CampaignDef[] = [
     { id: 'flyers', name: 'Flyers', description: 'Hand out flyers on the street.', ms: 2 * HOUR, boost: 1.5, requiresMarketing: 0, costHours: 0.45 },
     { id: 'billboard', name: 'Billboard', description: 'Your name on a billboard downtown.', ms: 8 * HOUR, boost: 1.8, requiresMarketing: 2, costHours: 1.8 },
-    { id: 'tv', name: 'TV Ad', description: 'A prime-time ad on every screen.', ms: 24 * HOUR, boost: 2.4, requiresMarketing: 4, costHours: 5 }
+    { id: 'tv', name: 'TV Ad', description: 'A prime-time ad on every screen.', ms: 24 * HOUR, boost: 2.4, requiresMarketing: 4, costHours: 4 }
 ]
 export const MIN_CAMPAIGN_CHIPS = 20 * CHIP_SCALE
 
@@ -497,7 +499,8 @@ const SEATS: Readonly<Record<Archetype, number>> = { slot: 2, dice: 3, rocket: 2
 const INCOME_SCALE = 1.8
 /** Demand per built game and per extra level; decor and Marketing add a share. */
 const DEMAND_BASE = 2
-const DEMAND_PER_GAME = 0.9
+/** Each built game draws visitors by its seats at level 1 (a five-seat card table pulls more than a two-seat slot). */
+const DEMAND_PER_SEAT = 0.32
 const DEMAND_PER_LEVEL = 0.5
 const DECOR_DEMAND = 0.06
 const MARKETING_DEMAND = 0.05
@@ -552,11 +555,12 @@ export function campaignBoost(id: CampaignId, marketing: number): number {
 export function visitorDemand(state: VisitorView, now: number): number {
     const built = builtGames(state)
     const levels = built.reduce((sum, { level }) => sum + level - 1, 0)
+    const pull = built.reduce((sum, { def }) => sum + SEATS[def.archetype], 0)
     const decor = 1 + DECOR_DEMAND * levelIndex(state.upgrades.decor ?? 0, MAX_LEVEL)
     const brand = 1 + MARKETING_DEMAND * levelIndex(state.upgrades.marketing ?? 0, MAX_LEVEL)
     const campaign = activeCampaign(state, now)
     const boost = campaign ? campaignBoost(campaign.id, state.upgrades.marketing ?? 0) : 1
-    return (DEMAND_BASE + DEMAND_PER_GAME * built.length + DEMAND_PER_LEVEL * levels) * decor * brand * boost
+    return (DEMAND_BASE + DEMAND_PER_SEAT * pull + DEMAND_PER_LEVEL * levels) * decor * brand * boost
 }
 
 /** Share of seats in use at `now`, 0..1. */

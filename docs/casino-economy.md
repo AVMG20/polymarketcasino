@@ -87,18 +87,20 @@ them. Coins never count.
 | 5 | `hold-20k` | Whale watch | 20,000 |
 | 6 | `hold-40k` | Velvet rope | 40,000 |
 | 7 | `hold-75k` | Penthouse | 75,000 |
-| 8 | `hold-150k` | House money | 150,000 |
+| 8 | `hold-120k` | House money | 120,000 |
 | 9 | `hold-300k` | Casino royalty | 300,000 |
 | 10 | `hold-1m` | First million | 1,000,000 |
 
 The thresholds are sized on the simulation's chip balances (`bun scripts/tycoon-sim.ts`, which plays on
 for three weeks after max): stars 1-3 come in the first session, 4-6 in the first week while saving
 between builds (the Lounge, the Crew), 7 while saving for the High Limit Room (day ~11 regular, ~15
-casual), 8-9 around max (the Penthouse costs 132,000; a maxed casino wins 100-200k chips a day) and 10
-about a week of play after max (casual: max + ~9 days, regular + ~7, whale + ~4). A regular who converts
-the 50 starting gems holds ~48,000 chips for a moment on day 0 (star 6) and spends them on builds. The
-thresholds changed with the catalog (they were 10k … 100M from the coin era); the hub takes the new keys
-from the next manifest and retires the old ones.
+casual), 8 while saving for the Penthouse (it costs 132,000: day ~21 casual, ~14.5 regular), 9 around
+max (a maxed casino wins 100-200k chips a day) and 10 about a week of play after max (casual: max + ~8-10
+days, regular + ~6-7, whale + ~4-5). A regular who converts the 50 starting gems holds ~48,000 chips for a
+moment on day 0 (star 6) and spends them on builds. Star 8 was 150k until the polish pass: nothing in the
+catalog costs that much, so it only came at max and left casual players 13 days without a star (day 15 to
+28); at 120k it lands a week earlier. The thresholds changed with the catalog (they were 10k … 100M from
+the coin era); the hub takes the new keys from the next manifest and retires the old ones.
 
 - Chips only move inside a `coinTransaction` / `commitCoins` unit (`server/utils/chips.ts` throws
   otherwise), which watches every chip move. After every committed unit whose chip level moved:
@@ -133,28 +135,32 @@ kinds of player (pace, stars, what each campaign netted) and is how the numbers 
 
 ### Coins in: the cashier cage
 
-Every built game has seats (2-5 by kind, +1 per level). Visitors come for the games (more games and levels
-draw more), the decor (+6% per level) and the casino's name (Marketing, +5% per level); an **ad campaign**
+Every built game has seats (2-5 by kind, +1 per level). Visitors come for the games (each game draws by its
+seats, so a five-seat card table pulls more than a two-seat slot and a new game never empties the floor;
+higher levels draw more), the decor (+6% per level) and the casino's name (Marketing, +5% per level); an **ad campaign**
 multiplies that for a while. Visitors on the floor = the smaller of demand and seats, the rest queue at the
 door. The cage fills with **coins**: the floor's full income (every game's guest income by level, ×1.8)
 times the share of seats in use, ×2 during a gem rush, up to the cage's capacity (7,500 coins at Cashier
 Cage 0, 36,000 at 5, about six to eight hours of income at each stage, so collecting more often pays). The
 player walks to the cage and collects (`POST /api/tycoon/collect`, whole coins, a `'cage'` coin ledger row;
 parallel collects pay once). Income is split exactly where a rush or campaign ends. A new casino starts
-with a full cage (7,500 coins). A fresh casino earns about 430 coins an hour; a maxed one about 127,000 a
+with a full cage (7,500 coins). A fresh casino earns about 400 coins an hour; a maxed one about 128,000 a
 day without a campaign and at most about 179,000 with every seat full (the cap; the cage's capacity caps
 what one collect can hold).
 
 **Ad campaigns** (`POST /api/tycoon/campaign`, paid in chips, one at a time, the same one again extends
 it): Flyers 2 h ×1.5 visitors, Billboard 8 h ×1.8 (Marketing 2), TV Ad 24 h ×2.4 (Marketing 4); every
-Marketing level makes the boost 15% stronger. A campaign costs 0.45 / 1.8 / 5 hours of the floor's full
-income (at least 120 chips), about 0.23 of an hour per hour it runs. Without one a floor runs 46-71% full
-(a maxed one 71%), and a campaign that fills it pays back while under ~78% of the seats are taken, as far
-as the cage has room between collects. Collected every two hours, its coins won back at RTP 0.97 return
-+15-50% of the price early, +50-120% mid-game (the emptiest floors) and +25-35% at max; on a casual
-three-sessions-a-day schedule the 8 and 24 hour ones lose more and more to a full cage,
-so the Flyers are the casual pick (TV -45 to -75% there). The simulation nets (seed 7, build and three weeks after max): casual
-+47,000 chips on 58 Flyers, regular +204,000 (Flyers and Billboards), whale +820,000. Extending one that
+Marketing level makes the boost 15% stronger. A campaign costs 0.45 / 1.8 / 4 hours of the floor's full
+income (at least 120 chips), about 0.23 of an hour per hour it runs (the TV Ad 0.17). Without one a floor
+runs 46-71% full (a maxed one 71%), and a campaign that fills it pays back while under ~78% of the seats are
+taken, as far as the cage has room between collects. Collected every two hours, its coins won back at RTP
+0.97 return +10-30% of the price early, +50-115% mid-game (the emptiest floors) and +20-25% at max (the TV
+Ad +65-170%); on a casual three-sessions-a-day schedule the 8 and 24 hour ones lose more and more to a full
+cage, so the Flyers are the casual pick (TV -40 to -60% there once the floor fills up). The TV Ad cost 5
+hours until the polish pass and no simulated player ever ran one; at 4 it is the whale's campaign (seven
+sessions a day) and still a poor pick for anyone who sleeps through a full cage. The simulation nets (seed
+7, build and three weeks after max): casual +47,000 chips on 57 Flyers, regular +183,000 (Flyers and
+Billboards, a few TV Ads), whale +700,000 (mostly TV Ads). Extending one that
 still runs costs 1.5× more for every run already queued (1×, 1.5×, 2.25×, …), and at most a week can be
 queued: idling long on campaigns costs real chips.
 
@@ -189,8 +195,9 @@ Three missions a player per Amsterdam day, drawn on the day's first read or even
 campaign), and one more of anything left, a visit included (3 rounds at someone else's casino). A mission
 the casino can't do isn't drawn (no live table built, nothing left to build, no other casino). Rewards are
 **coins**, fixed when the day's missions are drawn: 0.5-1 hour of the casino's full guest income each
-(`missionReward`, at least 800 coins an hour, so a new casino gets 400-800), plus 0.75 hours for clearing all
-three (the bonus). Coins, so they are bet before they become chips.
+(`missionReward`, at least 1,500 coins an hour, about a casino with the Main Floor open, so a new casino gets
+750-1,500 a mission and about 3,750 for the first day: half again the starter cage, earned in the first
+session), plus 0.75 hours for clearing all three (the bonus). Coins, so they are bet before they become chips.
 
 - Progress counts the real events, in the same transaction as the event: a settled round (solo, step and
   live table rounds, each counted once when it settles; a visit counts when a solo round settles or a step
@@ -267,22 +274,46 @@ converts the rest; seven sessions. All save for the Construction Crew once the L
 zone), bet their coins at RTP 0.97 with dice-like variance, re-bet a share of spare chips and run the ad
 campaign that pays best against their own collect times (when it returns a fifth over its price). Daily
 missions: the casual player clears two a day, the regular and the whale all three and the bonus (about 9%,
-13% and 8% of the coins they claim). Day each milestone was reached:
+13% and 8% of the coins they claim), claimed in the day's last session (the first day's in the first
+session: 20 rounds, two collects and a build fit in it). Day each milestone was reached
+(`bun scripts/tycoon-sim.ts 60 7 21`):
 
 | profile | 8 builds | main | pit | lounge | crew | high limit | penthouse | 50% | 90% | max |
 |---|---|---|---|---|---|---|---|---|---|---|
-| casual | 0 | 1.3 | 2.9 | 5.5 | 9.3 | 16.3 | 22.3 | 11.5 | 22.9 | 26.9 |
-| regular | 0 | 0.5 | 0.8 | 2.5 | 6.5 | 11.3 | 15.3 | 7.3 | 15.8 | 18.9 |
-| whale | 0 | 0.5 | 1.3 | 1.3 | 2.8 | 6.3 | 8.4 | 3.4 | 9.3 | 11.4 |
+| casual | 0 | 0.5 | 2.9 | 5.5 | 9.3 | 16.3 | 22.3 | 11.3 | 22.9 | 26.3 |
+| regular | 0 | 0.5 | 0.8 | 2.3 | 5.8 | 11.3 | 15.3 | 7.3 | 15.8 | 18.8 |
+| whale | 0 | 0.4 | 1.3 | 3.5 | 4.3 | 6.4 | 9.4 | 3.4 | 9.9 | 12.4 |
 
-The first session lands 8-10 builds (seeds 1, 2, 3, 7), all under a quarter of an hour for a casual
-player: the starter cage is full (7,500 coins) and the first steps are cheap and quick (Dice and Spiñata
-level 2 at 380 chips and two minutes, Marketing 1 at 900). Then it slows: the median build takes 25-40
-minutes in week one, two to three hours in week two, three to nine hours in week three and nine at the end.
-Over seeds 1, 2, 3, 7 and 11 casual maxes on day 26.3-27.9, regular 18.3-18.9, whale 11.4-12.3. The late
-game was made about 10% dearer and slower for that (the Lounge, High Limit and Penthouse zones and games,
-upgrade levels 4-5, game levels 4-5 at ×3.8 and ×5.5 the build, builds up to 9 hours); before it, with the
-cheaper campaigns already in, casual maxed on day 23.9-25.3.
+Day each star was first held (same run; 10 comes 6-10 days after max):
+
+| profile | 1-3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|
+| casual | 0.3 | 1.9 | 2.3 | 4.9 | 15.9 | 21.3 | 28.9 | 35.9 |
+| regular | 0.3 | 0.3 | 0.3 | 0.3 | 10.8 | 14.5 | 20.3 | 24.9 |
+| whale | 0.3 | 1.3 | 1.3 | 1.3 | 6.3 | 9.4 | 13.7 | 17.5 |
+
+The first session lands 7-11 builds over seeds 1, 2, 3, 7 and 11 (a casual player's 15 minutes: 7-9, the
+Main Floor among them; regular 10, whale 10-11), all under half an hour: the starter cage is full (7,500
+coins), the first day's missions add about 3,750 and the first steps are cheap and quick (Dice and Spiñata
+level 2 at 380 chips and two minutes, Marketing 1 at 900). Then it slows: the median build takes 25-65
+minutes in week one, two to eight hours in week two, three to nine hours in week three and eight to nine at
+the end. Over seeds 1, 2, 3, 7 and 11 casual maxes on day 26.3-27.3, regular 18.3-18.9, whale 12.4-12.9.
+The late game was made about 10% dearer and slower earlier (the Lounge, High Limit and Penthouse zones and
+games, upgrade levels 4-5, game levels 4-5 at ×3.8 and ×5.5 the build, builds up to 9 hours); before it,
+with the cheaper campaigns already in, casual maxed on day 23.9-25.3.
+
+**The first hour and day.** A new player who plays the first hour through (Main Floor first, then the
+quickest step it can pay) has 10 builds by minute 36: the Main Floor (25 minutes, 3,600 chips), Limbo,
+Wheel, both starters to level 2-3, Cage and Marketing 1. After that the cage brings 400-600 coins an hour
+and the next steps cost 580-2,400 chips, so the rest of that hour is play and saving (the next goal, Decor 1
+or a Main Floor game, is an evening's cage). From the second session on every session pays for 1-4 builds
+(Main Floor games at 1,500-2,000 chips, 5-14 minutes). The polish pass made three changes for that: the
+missions' floor went from 800 to 1,500 coins an hour (the first day's three missions and bonus pay ~3,750
+instead of ~2,000, so a casual player opens the Main Floor on day 0 instead of day 1); visitors now come
+by a game's seats (0.32 per level-1 seat instead of 0.9 per game) and Limbo and the Wheel earn a third more
+(the Penthouse's two games a sixth less, so a full floor stays at ~179,000 a day), because before it a new
+Wheel, Roulette or card table drew too few visitors for its seats and *lowered* the cage's income (Wheel
+-15 an hour, Roulette -5, Blackjack -1); now every new game adds 13-125 an hour.
 
 A casual player is held back by build steps late and by chips in the middle: with three short sessions a
 day every long step costs them about half a day whatever its timer (anything from 5 to 10 hours finishes
