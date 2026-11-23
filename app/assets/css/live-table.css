@@ -46,8 +46,7 @@
     left: 0;
     top: 0;
     transform-origin: top left;
-    /* Set by LiveTableStage's ResizeObserver: scale() needs a unitless ratio. */
-    transform: scale(var(--lt-scale, 1));
+    /* The scale (and on a phone the camera's framing) is set inline by LiveTableStage. */
 }
 
 /*
@@ -175,9 +174,15 @@
     pointer-events: none;
 }
 
-/* DOM furniture over a canvas table (blackjack): only its controls take clicks. */
-.lt-stage-wrap.lt-overlay { position: absolute; inset: 0; background: none; pointer-events: none; }
-.lt-overlay .lt-sit { pointer-events: auto; }
+/* A canvas table (blackjack): the canvas sits first on the stage, and of the
+   DOM furniture over it only the controls take clicks. */
+.lt-stage-wrap.lt-canvas-host { pointer-events: none; }
+.lt-canvas-host .lt-canvas { position: absolute; left: 0; top: 0; pointer-events: auto; }
+.lt-canvas-host .lt-sit { pointer-events: auto; }
+/* The phone camera glides between framings. */
+.lt-camera .lt-stage { transition: transform 0.5s cubic-bezier(0.3, 0.7, 0.3, 1); }
+/* Framed close on a phone, the band carries the status: no banner across the cards. */
+.lt-camera .lt-phase { display: none; }
 
 /* ---- felt furniture ------------------------------------------------------ */
 
@@ -205,18 +210,22 @@
 .lt-spot.clickable:hover { border-color: var(--lt-gold); box-shadow: 0 0 18px rgba(217, 177, 103, 0.4); }
 .lt-spot.lit { border-color: var(--lt-gold); box-shadow: 0 0 26px rgba(217, 177, 103, 0.6); }
 .lt-spot.you { border-color: var(--lt-win); box-shadow: 0 0 0 4px color-mix(in srgb, var(--lt-win) 25%, transparent); }
-.lt-spot.won { border-color: #fff; box-shadow: 0 0 0 4px color-mix(in srgb, var(--lt-win) 60%, transparent), 0 0 30px color-mix(in srgb, var(--lt-win) 70%, transparent); }
-.lt-spot.lost { opacity: 0.55; }
+.lt-spot.won { border-color: #ffd36b; animation: lt-spot-won 1.1s ease-in-out infinite; }
+.lt-spot.lost { opacity: 0.45; }
+@keyframes lt-spot-won {
+    0%, 100% { box-shadow: 0 0 0 4px rgb(255 211 107 / 0.7), 0 0 18px 4px rgb(255 196 40 / 0.55); }
+    50% { box-shadow: 0 0 0 7px rgb(255 211 107 / 0.35), 0 0 36px 12px rgb(255 196 40 / 0.35); }
+}
 .lt-spot-label {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    font-size: 13px;
-    font-weight: 800;
+    font-family: var(--font-game);
+    font-size: 16px;
     letter-spacing: 0.06em;
     color: var(--lt-gold);
-    opacity: 0.8;
+    opacity: 0.85;
     text-align: center;
     line-height: 1.15;
     pointer-events: none;
@@ -233,11 +242,11 @@
     position: absolute;
     transform: translate(-50%, -50%);
     font-family: var(--font-game);
-    font-size: 15px;
+    font-size: 19px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--lt-gold);
-    opacity: 0.8;
+    opacity: 0.85;
     white-space: nowrap;
     pointer-events: none;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
@@ -246,11 +255,11 @@
     position: absolute;
     transform: translate(-50%, -50%);
     border-radius: 999px;
-    padding: 1px 11px;
-    background: rgb(20 10 5 / 0.82);
-    box-shadow: 0 2px 0 rgb(0 0 0 / 0.4);
+    padding: 1px 13px;
+    background: rgb(20 10 5 / 0.85);
+    box-shadow: 0 3px 0 rgb(0 0 0 / 0.4), inset 0 0 0 1.5px rgb(217 177 103 / 0.35);
     font-family: var(--font-game);
-    font-size: 19px;
+    font-size: 23px;
     letter-spacing: 0.02em;
     color: #fff7ea;
     white-space: nowrap;
@@ -334,14 +343,14 @@
 .lt-plate .nm {
     display: block;
     font-family: var(--font-round);
-    font-size: 21px;
+    font-size: 24px;
     font-weight: 700;
     color: #fff7ea;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.lt-plate .net { font-family: var(--font-game); font-size: 18px; letter-spacing: 0.02em; color: rgb(255 247 234 / 0.5); }
+.lt-plate .net { font-family: var(--font-game); font-size: 21px; letter-spacing: 0.02em; color: rgb(255 247 234 / 0.5); }
 .lt-plate .net.up { color: #ffe08a; }
 .lt-plate .net.down { color: rgb(255 247 234 / 0.45); }
 .lt-plate.you { border-color: #ffd36b; box-shadow: 0 6px 0 #160b05, 0 0 26px rgb(255 200 80 / 0.35), inset 0 2px 0 rgb(255 222 170 / 0.25); }
@@ -387,9 +396,9 @@
     position: absolute;
     transform: translate(-50%, -50%);
     border-radius: 999px;
-    padding: 4px 16px;
+    padding: 5px 20px;
     font-family: var(--font-game);
-    font-size: 21px;
+    font-size: 26px;
     letter-spacing: 0.04em;
     background: linear-gradient(180deg, #3a2113, #1f1109);
     border: 2.5px solid rgb(217 177 103 / 0.9);
@@ -406,11 +415,14 @@
     color: #fff;
     text-shadow: 0 2px 0 rgb(0 0 0 / 0.4);
     box-shadow: 0 4px 0 #0c2263, 0 0 22px rgb(255 196 40 / 0.6);
+    animation: lt-pop 0.42s cubic-bezier(0.3, 1.6, 0.5, 1) both, lt-badge-glow 1.2s ease-in-out 0.42s infinite alternate;
 }
+@keyframes lt-badge-glow { to { box-shadow: 0 4px 0 #0c2263, 0 0 34px 6px rgb(255 196 40 / 0.75); } }
 .lt-badge.lose { background: linear-gradient(180deg, #3a2a2a, #241818); border-color: rgb(255 255 255 / 0.18); color: rgb(255 247 234 / 0.6); }
 .lt-badge.push { background: linear-gradient(180deg, #3a3550, #24203a); border-color: rgb(255 255 255 / 0.3); color: rgb(255 247 234 / 0.85); }
 .lt-badge.gold { background: linear-gradient(180deg, #fff0b0, #ffc93a 55%, #e79a00); border-color: #fff; color: #4a2a00; box-shadow: 0 4px 0 #9a5a00, 0 0 22px rgb(255 201 58 / 0.6); }
 .lt-badge.pop { animation: lt-pop 0.42s cubic-bezier(0.3, 1.6, 0.5, 1) both; }
+.lt-badge.pop.win { animation: lt-pop 0.42s cubic-bezier(0.3, 1.6, 0.5, 1) both, lt-badge-glow 1.2s ease-in-out 0.42s infinite alternate; }
 @keyframes lt-pop {
     from { transform: translate(-50%, -50%) scale(0.4); opacity: 0; }
 }
@@ -430,7 +442,7 @@
     animation: lt-float 2.8s cubic-bezier(0.2, 0.8, 0.3, 1) both;
 }
 .lt-float.up {
-    font-size: 46px;
+    font-size: 54px;
     color: #fff;
     -webkit-text-stroke: 0.05em #5a3200;
     paint-order: stroke fill;
@@ -469,8 +481,8 @@
 .lt-tray-label {
     position: absolute;
     transform: translate(-50%, 0);
-    font-size: 14px;
-    font-weight: 800;
+    font-family: var(--font-game);
+    font-size: 17px;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--lt-gold);
@@ -577,17 +589,28 @@
 .lt-hand.tight > * + * { margin-left: -70px; }
 .lt-hand.dim { filter: grayscale(1) opacity(0.45); }
 
-/* A card that turns over: both faces in 3D space, the wrapper rotates. */
+/* A card that turns over: both faces in 3D space, the wrapper rotates. Turning
+   face up is a small moment: the card lifts off the felt, turns with real
+   perspective and settles. A face-down card simply lies there. The delay comes
+   from --deal-delay (the card's turn in the deal) plus --flip-delay. */
 .lt-flip {
     position: relative;
     display: block;
     width: 112px;
     height: 156px;
     transform-style: preserve-3d;
-    transform: rotateY(0deg);
-    transition: transform 600ms cubic-bezier(0.45, 0.05, 0.15, 1);
+    transform: perspective(900px) rotateY(0deg);
 }
-.lt-flip.down { transform: rotateY(180deg); }
+.lt-flip.down { transform: perspective(900px) rotateY(180deg); }
+.lt-flip:not(.down) {
+    animation: lt-flip-up 0.5s cubic-bezier(0.3, 0.6, 0.25, 1) both;
+    animation-delay: calc(var(--deal-delay, 0ms) + var(--flip-delay, 0.24s));
+}
+@keyframes lt-flip-up {
+    0% { transform: perspective(900px) rotateY(180deg); }
+    45% { transform: perspective(900px) translateY(-14px) rotateY(80deg) scale(1.12); }
+    100% { transform: perspective(900px) rotateY(0deg); }
+}
 .lt-flip-face {
     position: absolute;
     display: block;
@@ -596,21 +619,38 @@
 }
 .lt-flip-back { transform: rotateY(180deg); }
 
-/* Dealt from the shoe (--deal-from) and swept to the discard tray (--discard-to). */
+/* Dealt from the shoe (--deal-from) along an arc (--deal-mid lifts it off the
+   felt), spinning flat as it lands; swept to the discard tray (--discard-to). */
 .lt-deal-enter-active {
-    transition: opacity 0.3s ease, transform 0.42s cubic-bezier(0.16, 0.85, 0.3, 1);
+    animation: lt-deal-in 0.46s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+    animation-delay: var(--deal-delay, 0ms);
 }
-.lt-deal-enter-from {
-    opacity: 0;
-    transform: var(--deal-from) rotate(-20deg) scale(0.8);
+@keyframes lt-deal-in {
+    0% { opacity: 0; transform: var(--deal-from) rotate(-26deg) scale(0.7); }
+    12% { opacity: 1; }
+    55% { transform: var(--deal-mid, none) rotate(-7deg) scale(1.05); }
+    100% { opacity: 1; transform: none; }
 }
+/* Hands are swept whole, so a leaving card keeps its place in the row. */
 .lt-deal-leave-active {
-    position: absolute;
-    transition: opacity 0.4s ease-in, transform 0.4s ease-in;
+    transition: opacity 0.38s ease-in 0.06s, transform 0.42s cubic-bezier(0.5, 0, 0.75, 0.2);
 }
+.lt-deal-leave-active:nth-child(2) { transition-delay: 0.1s, 0.05s; }
+.lt-deal-leave-active:nth-child(3) { transition-delay: 0.14s, 0.1s; }
+.lt-deal-leave-active:nth-child(n+4) { transition-delay: 0.18s, 0.14s; }
 .lt-deal-leave-to {
     opacity: 0;
-    transform: var(--discard-to) rotate(20deg) scale(0.55);
+    transform: var(--discard-to) rotate(24deg) scale(0.55);
+}
+
+@keyframes lt-label-in {
+    from { opacity: 0; transform: translate(-50%, -10%); }
+}
+
+/* A total or label that pops when its value changes (keyed by the value). */
+.lt-tick { animation: lt-tick 0.34s cubic-bezier(0.3, 1.6, 0.5, 1) both; }
+@keyframes lt-tick {
+    from { transform: translate(-50%, -50%) scale(1.35); }
 }
 
 /* ---- chips ---------------------------------------------------------------- */
@@ -652,7 +692,7 @@
 .lt-phase.untimed { padding-right: 28px; }
 .lt-phase .label {
     font-family: var(--font-game);
-    font-size: 26px;
+    font-size: 30px;
     letter-spacing: 0.08em;
     color: #ffe9b0;
     text-shadow: 0 3px 0 rgb(0 0 0 / 0.5);
@@ -691,12 +731,24 @@
     border-top: 3px solid #8a5a2e;
     box-shadow: inset 0 3px 0 rgb(0 0 0 / 0.35);
 }
+/* The game's controls fill the band's held height, centred, with the footer below. */
+.lt-controls { display: flex; flex: 1 1 auto; flex-direction: column; justify-content: center; gap: 10px; }
+.lt-controls:empty { display: none; }
 /* On a phone the controls follow you down the page. */
 @media (max-width: 1023px) {
     .lt-band { position: sticky; bottom: 0; z-index: 20; box-shadow: inset 0 3px 0 rgb(0 0 0 / 0.35), 0 -10px 24px rgb(0 0 0 / 0.45); }
 }
 @media (min-width: 640px) {
     .lt-band { padding: 14px 18px 16px; }
+}
+
+/* On a desktop the felt gets every pixel the band can spare: the band is held
+   at its tallest (betting), so it is kept tight. */
+@media (min-width: 1024px) {
+    .lt-band { gap: 8px; padding: 10px 18px 12px; }
+    .lt-band .lt-betbar .lb-tile { min-height: 44px; }
+    .lt-band .lt-betbar .deal { min-height: 50px; }
+    .lt-band-foot, .lt-band-foot button { min-height: 34px; }
 }
 
 /* Status, real size, for screens where the felt's own banner is too small to read. */
@@ -749,7 +801,7 @@
     align-items: center;
     justify-content: safe center;
     gap: 8px;
-    padding: 12px 14px;
+    padding: 9px 14px;
     overflow-x: auto;
     border-radius: 999px;
     background: linear-gradient(180deg, #160b05, #22130a);
@@ -771,7 +823,7 @@
 }
 @media (min-width: 640px) {
     .lt-rack { gap: 12px; }
-    .lt-rack > button { width: 60px; height: 60px; }
+    .lt-rack > button { width: 56px; height: 56px; }
 }
 .lt-rack > button:hover:not(:disabled) { transform: translateY(-4px) scale(1.06); }
 .lt-rack > button:active:not(:disabled) { transform: translateY(0) scale(0.94); }
@@ -831,6 +883,25 @@
     color: rgb(255 247 234 / 0.75);
 }
 .lt-hint-text b { color: #ffd36b; }
+
+/* Between decisions: your stake in play and what happens next. */
+.lt-stake {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    align-self: center;
+    max-width: 100%;
+    min-height: 60px;
+    border-radius: 20px;
+    padding: 8px 20px;
+    background: rgb(0 0 0 / 0.3);
+    box-shadow: inset 0 2px 0 rgb(0 0 0 / 0.35), inset 0 0 0 1.5px rgb(217 177 103 / 0.18);
+}
+.lt-stake .amt { font-family: var(--font-game); font-size: 26px; color: #ffe9b0; text-shadow: 0 2px 0 rgb(0 0 0 / 0.45); margin-top: 3px; }
+.lt-stake .sep { width: 2px; align-self: stretch; margin: 4px 2px; border-radius: 2px; background: rgb(217 177 103 / 0.25); }
+.lt-stake .msg { min-width: 0; font-family: var(--font-round); font-size: 15px; font-weight: 600; color: rgb(255 247 234 / 0.8); }
+.lt-stake .msg b { color: #ffd36b; }
 
 /* Phone-sized bet spots: the felt's own are too small to tap below 640px. */
 .lt-touch-spots { display: grid; gap: 8px; }
@@ -942,16 +1013,16 @@
     align-items: center;
     gap: 8px;
     border-radius: 999px;
-    padding: 4px 18px;
+    padding: 6px 22px;
     font-family: var(--font-game);
-    font-size: 22px;
+    font-size: 26px;
     letter-spacing: 0.04em;
     white-space: nowrap;
     background: rgb(0 0 0 / 0.4);
     color: rgb(255 247 234 / 0.7);
 }
 .lt-result.win {
-    font-size: 28px;
+    font-size: 36px;
     background: none;
     color: #fff;
     -webkit-text-stroke: 0.05em #5a3200;
@@ -961,6 +1032,7 @@
 }
 .lt-result.win svg { width: 0.85em; height: 0.85em; }
 .lt-result.push { color: #fff7ea; }
+.lt-result-note { font-family: var(--font-round); font-size: 14px; font-weight: 600; color: rgb(255 247 234 / 0.7); text-align: center; }
 @keyframes lt-result-pop { from { transform: scale(0.4); opacity: 0; } }
 
 /* Big action buttons (hit, stand, play, fold): a stacked label. */
@@ -982,11 +1054,15 @@
     .lt-plate.turn .av,
     .lt-ring.urgent .count,
     .lt-result.win,
+    .lt-flip:not(.down),
+    .lt-deal-enter-active,
+    .lt-tick,
+    .lt-spot.won,
+    .lt-badge.win,
     .lb-hint { animation: none; }
     .lb-tile, .lt-touch-spot, .lt-rack > button { transition: none; }
-    .lt-flip,
-    .lt-deal-enter-active,
-    .lt-deal-leave-active { transition: none; }
+    .lt-deal-leave-active,
+    .lt-camera .lt-stage { transition: none; }
 }
 
 }

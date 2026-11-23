@@ -251,10 +251,9 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
   >
     <template #felt>
       <div class="relative">
-        <div ref="canvasWrap" class="w-full" :style="{ aspectRatio: `${STAGE_W} / ${STAGE_H}` }" />
-
-        <!-- Seats, open chairs and the phase banner: the same DOM pieces as every table, over the canvas. -->
-        <LiveTableStage class="lt-overlay" :width="STAGE_W" :height="STAGE_H" :felt="false">
+        <!-- The Pixi table, with the seats, open chairs and the phase banner over it: the same DOM pieces as every table. -->
+        <LiveTableStage class="lt-canvas-host" :width="STAGE_W" :height="STAGE_H" :felt="false" :focus="mySeat ? SEAT_LAYOUT[mySeat.index]!.x : null">
+          <div ref="canvasWrap" class="lt-canvas" :style="{ width: `${STAGE_W}px`, height: `${STAGE_H}px` }" />
           <LiveTablePhase
             :label="(state?.message ?? 'Connecting').toUpperCase()"
             :tone="phaseTone"
@@ -277,7 +276,7 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
         </LiveTableStage>
 
         <!-- Side-bet reference: top corner, dimmed and collapsed to its header. -->
-        <div class="bj-corner absolute top-[4%] right-[5%] hidden max-w-[48%] rounded-xl bg-black/80 ring-1 ring-amber-400/25 backdrop-blur-sm md:block" :class="{ open: showSideBets }">
+        <div class="bj-corner absolute top-[21%] right-[4%] hidden max-w-[48%] rounded-xl bg-black/80 ring-1 ring-amber-400/25 backdrop-blur-sm md:block" :class="{ open: showSideBets }">
           <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-xs font-bold tracking-wider text-amber-300 uppercase lg:text-sm" @click="showSideBets = !showSideBets">
             <span class="inline-block transition-transform" :class="showSideBets ? 'rotate-90' : ''">›</span> Side bets
           </button>
@@ -396,16 +395,16 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
         </span>
       </div>
 
-      <p v-else class="lt-hint-text">
-        <template v-if="phase === 'playing'">Waiting for <b>{{ seats[game?.activeSeat ?? -1]?.name ?? 'the table' }}</b>.</template>
-        <template v-else-if="me?.hands.length">Your hand is in.</template>
-        <template v-else>{{ state?.message ?? 'Next round soon.' }}</template>
-      </p>
+      <LiveTableStake v-else :amount="me?.hands.length ? table.inPlay.value : 0">
+        <template v-if="phase === 'playing'">Waiting for <b>{{ seats[game?.activeSeat ?? -1]?.name ?? 'the table' }}</b></template>
+        <template v-else-if="me?.hands.length">{{ phase === 'dealing' ? 'Cards are coming' : 'Dealer plays' }}</template>
+        <template v-else>Betting opens with the next hand</template>
+      </LiveTableStake>
 
     </template>
 
     <template #footer>
-      <button v-if="mySeat" type="button" class="flex min-h-11 items-center gap-1.5 rounded-lg px-2.5 font-semibold transition" :class="hints ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60' : 'bg-white/5 text-white/60 hover:bg-white/10'" @click="toggleHints">
+      <button v-if="mySeat" type="button" class="flex min-h-11 lg:min-h-[34px] items-center gap-1.5 rounded-lg px-2.5 font-semibold transition" :class="hints ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60' : 'bg-white/5 text-white/60 hover:bg-white/10'" @click="toggleHints">
         <Lightbulb v-if="hints" class="size-3.5" /><LightbulbOff v-else class="size-3.5" /> Hints {{ hints ? 'on' : 'off' }}
       </button>
       <div v-if="shoe" class="flex min-w-40 items-center gap-2">

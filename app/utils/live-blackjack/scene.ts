@@ -229,6 +229,10 @@ export class LiveBlackjackScene {
     private sideSettledRound = -1
     /** serverNow - clientNow, so countdowns stay honest on a drifting clock. */
     private clockSkew = 0
+    /** Moments already celebrated (a blackjack, a 21, a bust), so each fires once. */
+    private moments = new Set<string>()
+    private momentsRound = -1
+    private lastDealerText = ''
 
     constructor(
         private PIXI: Pixi,
@@ -466,10 +470,12 @@ export class LiveBlackjackScene {
     private buildDealerBadge(): Container {
         const box = new this.PIXI.Container()
         const bg = new this.PIXI.Graphics()
-        bg.roundRect(-40, -18, 80, 36, 18).fill({ color: 0x0b0806, alpha: 0.85 })
-        bg.roundRect(-40, -18, 80, 36, 18).stroke({ width: 1.5, color: GOLD, alpha: 0.55 })
+        bg.roundRect(-52, -21, 104, 46, 23).fill({ color: 0x000000, alpha: 0.4 })
+        bg.roundRect(-52, -25, 104, 46, 23).fill({ color: 0x1f1109, alpha: 0.96 })
+        bg.roundRect(-52, -25, 104, 46, 23).stroke({ width: 2.5, color: GOLD, alpha: 0.75 })
         box.addChild(bg)
-        this.dealerScoreText = label(this.PIXI, '', 20, 0xf7f3e8, '700')
+        this.dealerScoreText = label(this.PIXI, '', 28, 0xfff7ea, '700')
+        this.dealerScoreText.y = -2
         this.dealerScoreText.anchor.set(0.5)
         box.addChild(this.dealerScoreText)
         box.visible = false
@@ -518,7 +524,14 @@ export class LiveBlackjackScene {
 
         this.dealerScore.visible = state.game.dealer.cards.length > 0
         const dealer = state.game.dealer
-        this.dealerScoreText.text = dealer.blackjack ? 'BJ' : dealer.busted ? 'BUST' : scoreText(dealer.score, dealer.soft)
+        const dealerText = dealer.blackjack ? 'BJ' : dealer.busted ? 'BUST' : scoreText(dealer.score, dealer.soft)
+        this.dealerScoreText.text = dealerText
+        this.dealerScoreText.style.fill = dealer.busted ? 0xff8a9a : 0xfff7ea
+        // The total ticks: every new value lands with a little pop.
+        if (dealerText !== this.lastDealerText && this.dealerScore.visible && animating()) {
+            gsap.fromTo(this.dealerScore.scale, { x: 1.3, y: 1.3 }, { x: 1, y: 1, duration: 0.32, ease: 'back.out(3)', overwrite: true })
+        }
+        this.lastDealerText = dealerText
 
         const targets: CardTarget[] = []
         this.layoutDealer(state, targets)
@@ -528,8 +541,114 @@ export class LiveBlackjackScene {
             this.layoutSeat(state, i, targets)
         }
         this.syncCards(targets)
+        this.celebrate(state)
         this.settleSideChips(state)
         this.settleChips(state)
+    }
+
+    /**
+     * The moments of a hand, each once: a blackjack gets a gold starburst, a
+     * drawn 21 a smaller one, and a bust shakes the cards with a red stamp.
+     */
+    private celebrate(state: LbTableState) {
+        if (state.roundId !== this.momentsRound) {
+            this.moments.clear()
+            this.momentsRound = state.roundId
+        }
+        const once = (key: string) => {
+            if (this.moments.has(key)) return false
+            this.moments.add(key)
+            return true
+        }
+        for (const seat of state.seats) {
+            if (!seat) continue
+            const pos = SEAT_LAYOUT[seat.index]!
+            const hands = seat.game.hands
+            hands.forEach((hand, h) => {
+                const x = pos.x + (h - (hands.length - 1) / 2) * (SEAT_WIDTH / hands.length)
+                const y = pos.y + HAND_Y_OFFSET
+                const key = `${seat.index}-${h}`
+                if (hand.status === 'blackjack' && once(`${key}-bj`)) this.burst(x, y, 'BLACKJACK!', 0xffc93a, 1)
+                else if (hand.status === 'busted' && once(`${key}-bust`)) this.bust(hand.cards.map(c => c.id), x, y)
+                else if (hand.score === 21 && hand.status !== 'blackjack' && once(`${key}-21`)) this.burst(x, y, '21!', 0x7ee08f, 0.75)
+            })
+        }
+        const dealer = state.game.dealer
+        if (dealer.blackjack && once('dealer-bj')) this.burst(DEALER_POS.x, DEALER_POS.y, 'BLACKJACK', 0xffc93a, 0.9)
+        else if (dealer.busted && once('dealer-bust')) this.bust(dealer.cards.map(c => c.id), DEALER_POS.x, DEALER_POS.y)
+    }
+
+    /** A starburst of rays behind a word that slams in and floats off. */
+    private burst(x: number, y: number, text: string, color: number, size: number) {
+        if (!animating()) return
+        const box = new this.PIXI.Container()
+        box.position.set(x, y)
+        const rays = new this.PIXI.Graphics()
+        const count = 14
+        for (let i = 0; i < count; i++) {
+            const a = (i / count) * Math.PI * 2
+            const b = a + Math.PI / count * 0.55
+            rays.moveTo(0, 0).lineTo(Math.cos(a) * 150, Math.sin(a) * 150).lineTo(Math.cos(b) * 150, Math.sin(b) * 150).closePath()
+        }
+        rays.fill({ color, alpha: 0.32 })
+        rays.circle(0, 0, 54).fill({ color, alpha: 0.35 })
+        const word = new this.PIXI.Text({
+            text,
+            style: {
+                fontFamily: '"Lilita One", Fredoka, system-ui, sans-serif',
+                fontSize: 46 * size,
+                letterSpacing: 2,
+                fill: 0xffffff,
+                stroke: { color: 0x5a3200, width: 7, join: 'round' },
+                dropShadow: { color: color, blur: 12, distance: 0, alpha: 0.9 }
+            }
+        })
+        word.anchor.set(0.5)
+        box.addChild(rays, word)
+        box.scale.set(0.3)
+        this.flashLayer.addChild(box)
+        const spin = { r: 0 }
+        gsap.timeline({ onComplete: () => killAndDestroy(box, { children: true }) })
+            .to(box.scale, { x: 1, y: 1, duration: 0.36, ease: 'back.out(2.6)' })
+            .to(spin, { r: 0.6, duration: 1.5, ease: 'none', onUpdate: () => { if (!rays.destroyed) rays.rotation = spin.r } }, 0)
+            .to(box, { alpha: 0, duration: 0.35 }, 1.15)
+            .to(box.position, { y: y - 30, duration: 0.5, ease: 'power1.in' }, 1.0)
+    }
+
+    /** A bust: the hand's cards shudder and a red stamp drops on them. */
+    private bust(cardIds: string[], x: number, y: number) {
+        if (!animating()) return
+        for (const id of cardIds) {
+            const sprite = this.cards.get(id)?.sprite
+            if (!sprite) continue
+            const shake = { t: 0 }
+            gsap.to(shake, {
+                t: 1,
+                duration: 0.42,
+                ease: 'none',
+                onUpdate: () => {
+                    if (sprite.destroyed) return
+                    sprite.pivot.x = Math.sin(shake.t * Math.PI * 7) * 9 * (1 - shake.t)
+                },
+                onComplete: () => { if (!sprite.destroyed) sprite.pivot.x = 0 }
+            })
+        }
+        const box = new this.PIXI.Container()
+        const word = label(this.PIXI, 'BUST', 30, 0xffffff, '800')
+        word.anchor.set(0.5)
+        const w = word.width + 34
+        const bg = new this.PIXI.Graphics()
+        bg.roundRect(-w / 2, -24, w, 48, 14).fill(0xd62f4b).stroke({ width: 3, color: 0xffffff, alpha: 0.9 })
+        box.addChild(bg, word)
+        box.position.set(x, y)
+        box.rotation = -0.12
+        box.scale.set(2)
+        box.alpha = 0
+        this.flashLayer.addChild(box)
+        gsap.timeline({ onComplete: () => killAndDestroy(box, { children: true }) })
+            .to(box, { alpha: 1, duration: 0.08 })
+            .to(box.scale, { x: 1, y: 1, duration: 0.22, ease: 'power3.in' }, 0)
+            .to(box, { alpha: 0, duration: 0.3 }, 1.1)
     }
 
     private layoutDealer(state: LbTableState, out: CardTarget[]) {
@@ -636,15 +755,20 @@ export class LiveBlackjackScene {
                 if (!animating()) {
                     existing.sprite.texture = texture
                 } else {
+                    // The hole card is a small moment: it lifts, turns, and lands
+                    // with a flash of gold behind it.
+                    const lift = target.key && existing.y === DEALER_POS.y ? 1.14 : 1.06
+                    gsap.to(existing.sprite.scale, { y: target.scale * lift, duration: 0.18, ease: 'power1.out' })
                     gsap.to(existing.sprite.scale, {
                         x: 0,
-                        duration: 0.16,
-                        ease: 'power1.in',
+                        duration: 0.18,
+                        ease: 'power2.in',
                         onComplete: () => {
                             // The round can end mid-flip, taking the sprite with it.
                             if (existing.sprite.destroyed) return
                             existing.sprite.texture = texture
-                            gsap.to(existing.sprite.scale, { x: target.scale, duration: 0.2, ease: 'back.out(2)' })
+                            if (lift > 1.1) this.flashBehind(existing.sprite.x, existing.sprite.y)
+                            gsap.to(existing.sprite.scale, { x: target.scale, y: target.scale, duration: 0.3, ease: 'back.out(2.2)' })
                         }
                     })
                 }
@@ -822,6 +946,17 @@ export class LiveBlackjackScene {
         })
     }
 
+    /** A soft gold flash behind a card that just turned over. */
+    private flashBehind(x: number, y: number) {
+        const glow = new this.PIXI.Graphics()
+        glow.roundRect(-CARD_W / 2 - 14, -CARD_H / 2 - 14, CARD_W + 28, CARD_H + 28, 20).fill({ color: 0xffd36b, alpha: 0.55 })
+        glow.position.set(x, y)
+        this.uiLayer.addChildAt(glow, 0)
+        gsap.timeline({ onComplete: () => killAndDestroy(glow) })
+            .fromTo(glow.scale, { x: 0.9, y: 0.9 }, { x: 1.25, y: 1.25, duration: 0.5, ease: 'power2.out' })
+            .to(glow, { alpha: 0, duration: 0.5, ease: 'power1.in' }, 0)
+    }
+
     /**
      * Stamp what a player just did over their hand. Fires for every seat, so the
      * table can follow each other's decisions rather than only seeing the cards
@@ -865,6 +1000,10 @@ export class LiveBlackjackScene {
 /** Everything anchored to one seat on the canvas: bet spots, chips, per-hand badges. */
 class SeatNode {
     private badges: Container[] = []
+    /** What stood on each spot last, so a chip added to it drops on. */
+    private chipAmounts = new Map<string, number>()
+    /** What each hand's badge said last, so a changed total pops. */
+    private badgeText = new Map<string, string>()
     private chipSprites: Sprite[] = []
     private ring: Graphics
     private mainSpot!: Container
@@ -952,14 +1091,14 @@ class SeatNode {
                 stakeSpots.push({ x, amount })
                 const active = activeHand === h && seat.game.hands.length > 1
                 if (active) this.addActiveHandMarker(x, hand.cards.length, seat.game.hands.length)
-                this.addHandBadge(hand, x, state, active, lift)
+                this.addHandBadge(hand, x, state, active, lift, `${state.roundId}-${h}`)
             })
         } else if (seat.game.pendingBet > 0) {
             stakeSpots.push({ x: this.pos.x, amount: seat.game.pendingBet })
         }
 
         const betY = this.pos.y + BET_Y_OFFSET - lift
-        for (const spot of stakeSpots) this.addChips(spot.x, betY, spot.amount, tex)
+        stakeSpots.forEach((spot, i) => this.addChips(spot.x, betY, spot.amount, tex, 0.62, MAX_STAKE_CHIPS, this.chipLayer, `m${i}`))
         if (seat.game.insurance > 0) this.addInsuranceBadge(seat.game.insurance)
         this.updateSideSpots(state, seat, isYou, tex)
     }
@@ -995,7 +1134,7 @@ class SeatNode {
             // winner's grow to what the bet returns.
             const chips = result ? result.payout : stake
             if (chips > 0) {
-                this.addChips(spot.x, this.pos.y + SIDE_SPOT_Y_OFFSET, chips, tex, 0.42, 6, this.spotLayer)
+                this.addChips(spot.x, this.pos.y + SIDE_SPOT_Y_OFFSET, chips, tex, 0.42, 6, this.spotLayer, spot.key)
             }
             if (result && stake > 0) {
                 // The badge is rebuilt on every snapshot, so the pop has to be
@@ -1069,10 +1208,10 @@ class SeatNode {
         this.badges.push(box)
     }
 
-    private addHandBadge(hand: LbHand, x: number, state: LbTableState, active = false, lift = 0) {
+    private addHandBadge(hand: LbHand, x: number, state: LbTableState, active = false, lift = 0, key = '') {
         const done = hand.net !== undefined && state.phase === 'payout'
         const text = done
-            ? `${hand.net! > 0 ? '+' : hand.net! < 0 ? '−' : ''}${formatCoins(Math.abs(hand.net!))}`
+            ? (hand.net === 0 ? 'PUSH' : `${hand.net! > 0 ? '+' : '−'}${formatCoins(Math.abs(hand.net!))}`)
             : hand.status === 'busted'
                 ? 'BUST'
                 : hand.status === 'blackjack'
@@ -1092,14 +1231,15 @@ class SeatNode {
         const won = done && hand.net! > 0
 
         const box = new this.PIXI.Container()
-        const value = label(this.PIXI, text, won ? 21 : 19, done && hand.net! < 0 ? 0xb8ab9c : 0xffffff, '800')
+        const value = label(this.PIXI, text, won ? 28 : 26, done && hand.net! < 0 ? 0xb8ab9c : 0xffffff, '800')
         value.anchor.set(0.5)
-        const w = Math.max(62, value.width + 26)
+        value.y = -1
+        const w = Math.max(74, value.width + 30)
         const bg = new this.PIXI.Graphics()
-        if (won) bg.roundRect(-w / 2 - 6, -21, w + 12, 42, 21).fill({ color: 0xffc428, alpha: 0.35 })
-        bg.roundRect(-w / 2, -13, w, 34, 17).fill({ color: 0x000000, alpha: 0.45 })
-        bg.roundRect(-w / 2, -17, w, 34, 17).fill({ color: tone, alpha: 0.96 })
-        bg.roundRect(-w / 2, -17, w, 34, 17).stroke({
+        if (won) bg.roundRect(-w / 2 - 7, -27, w + 14, 54, 27).fill({ color: 0xffc428, alpha: 0.35 })
+        bg.roundRect(-w / 2, -16, w, 42, 21).fill({ color: 0x000000, alpha: 0.45 })
+        bg.roundRect(-w / 2, -21, w, 42, 21).fill({ color: tone, alpha: 0.96 })
+        bg.roundRect(-w / 2, -21, w, 42, 21).stroke({
             width: active || won ? 3 : 2,
             color: active ? 0xffffff : won ? 0xffd36b : GOLD,
             alpha: active || won ? 0.95 : 0.6
@@ -1108,6 +1248,14 @@ class SeatNode {
         box.position.set(x, this.pos.y + HAND_BADGE_Y - lift)
         this.uiLayer.addChild(box)
         this.badges.push(box)
+        // The total ticks: a new value lands with a pop, a settled win bigger.
+        if (key && this.badgeText.get(key) !== text) {
+            if (this.badgeText.has(key) || done) {
+                if (animating()) gsap.fromTo(box.scale, { x: won ? 1.6 : 1.3, y: won ? 1.6 : 1.3 }, { x: 1, y: 1, duration: won ? 0.45 : 0.3, ease: 'back.out(3)' })
+            }
+            this.badgeText.set(key, text)
+        }
+        if (this.badgeText.size > 40) this.badgeText.clear()
     }
 
     private addInsuranceBadge(amount: number) {
@@ -1131,17 +1279,37 @@ class SeatNode {
         tex: LbTextures,
         scale = 0.62,
         max = MAX_STAKE_CHIPS,
-        layer = this.chipLayer
+        layer = this.chipLayer,
+        key = ''
     ) {
+        const before = this.chipAmounts.get(key) ?? 0
+        this.chipAmounts.set(key, amount)
         if (amount <= 0) return
         const stack = chipStack(amount, max)
+        // A bet that grew drops its new top chip on with a bounce.
+        const drop = key && amount > before && animating()
         stack.forEach((chip, i) => {
             const sprite = new this.PIXI.Sprite(tex.chip.get(chip.value)!)
             sprite.anchor.set(0.5)
             sprite.scale.set(scale)
-            sprite.position.set(x + (i % 2 ? 2 : -2), y - i * 7 * (scale / 0.62))
+            const restY = y - i * 7 * (scale / 0.62)
+            sprite.position.set(x + (i % 2 ? 2 : -2), restY)
             layer.addChild(sprite)
             this.chipSprites.push(sprite)
+            if (drop && i === stack.length - 1) {
+                const fall = { t: 0 }
+                sprite.alpha = 0
+                gsap.to(fall, {
+                    t: 1,
+                    duration: 0.32,
+                    ease: 'bounce.out',
+                    onUpdate: () => {
+                        if (sprite.destroyed) return
+                        sprite.y = restY - 34 * (1 - fall.t)
+                        sprite.alpha = Math.min(1, fall.t * 3)
+                    }
+                })
+            }
         })
 
         // Side stakes are read off their own result badge, and a second label

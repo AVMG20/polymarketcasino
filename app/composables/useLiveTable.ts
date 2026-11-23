@@ -249,12 +249,16 @@ export function useLiveTable<TSeat, TShared, TAction>(slug: string, onGameEvent?
         ws = null
     })
 
+    /** What the player has riding on the round now (0 while watching or between hands). */
+    const inPlay = computed(() => (mySeat.value && stakedOf ? stakedOf(mySeat.value.game) : 0))
+
     return {
         state,
         me,
         connected,
         feed,
         mySeat,
+        inPlay,
         phase,
         clock,
         canSit,

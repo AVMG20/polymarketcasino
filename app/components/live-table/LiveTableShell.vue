@@ -53,6 +53,14 @@ const tableEl = ref<HTMLElement | null>(null)
 const bandEl = ref<HTMLElement | null>(null)
 /** Height (px) the felt may take; null until measured. */
 const feltRoom = ref<number | null>(null)
+/**
+ * The tallest the band has been in this layout (seated or not, this width).
+ * The band holds that height, so the felt keeps its size from betting to
+ * playing instead of jumping with every change of controls.
+ */
+const bandHold = ref(0)
+const holding = ref(false)
+let heldFor = ''
 let observer: ResizeObserver | null = null
 
 function scrollerOf(el: HTMLElement): HTMLElement | null {
@@ -71,9 +79,23 @@ function measure() {
     // The table's top within the scrolled content, and the height of the window onto it.
     const top = scroller ? rect.top - scroller.getBoundingClientRect().top + scroller.scrollTop : rect.top + window.scrollY
     const viewH = scroller ? scroller.clientHeight : window.innerHeight
-    const room = Math.floor(viewH - top - band.offsetHeight - 16)
+    const layout = `${props.seated}|${props.connected}|${window.innerWidth}|${viewH}`
+    if (layout !== heldFor) {
+        heldFor = layout
+        bandHold.value = 0
+    }
+    // Measured without the hold, so a band that grew is seen at its new height.
+    const natural = band.scrollHeight
+    if (natural > bandHold.value) bandHold.value = natural
+    const room = Math.floor(viewH - top - bandHold.value - 16)
+    // Only a felt sized by the height needs the hold: one that already spans the
+    // width (a phone) keeps its size whatever the band does.
+    const across = table.parentElement?.clientWidth ?? 0
+    holding.value = room * (props.aspect ?? 1720 / 980) < across
     if (room !== feltRoom.value) feltRoom.value = room
 }
+
+watch(() => [props.seated, props.connected], () => nextTick(measure))
 
 onMounted(() => {
     measure()
@@ -119,7 +141,7 @@ const lastChat = computed(() => [...props.feed].reverse().find(item => item.kind
           <slot name="felt" />
         </GameWinBurst>
 
-        <div ref="bandEl" class="lt-band">
+        <div ref="bandEl" class="lt-band" :style="holding && bandHold ? { minHeight: `${bandHold}px` } : undefined">
           <div class="lt-band-status">
             <p class="msg">
               <template v-if="!connected"><Loader2 class="mr-1 inline size-4 animate-spin" />Connecting</template>
@@ -146,9 +168,11 @@ const lastChat = computed(() => [...props.feed].reverse().find(item => item.kind
             <button v-else-if="openSeat !== null" type="button" class="lb-tile lb-tile-green shrink-0" @click="$emit('sit', openSeat)">SIT DOWN</button>
           </div>
 
-          <slot name="controls" />
+          <div class="lt-controls">
+            <slot name="controls" />
+          </div>
 
-          <div class="flex flex-wrap items-center gap-2 text-[11px]">
+          <div class="lt-band-foot flex flex-wrap items-center gap-2 text-[11px]">
             <slot name="footer" />
             <TableBankroll class="ml-auto" />
           </div>

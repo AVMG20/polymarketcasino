@@ -56,6 +56,7 @@ function handStyle(x: number, y: number) {
         'left': `${x}px`,
         'top': `${y}px`,
         '--deal-from': `translate(${SHOE_POS.x - x}px, ${SHOE_POS.y - y}px)`,
+        '--deal-mid': `translate(${Math.round((SHOE_POS.x - x) * 0.4)}px, ${Math.round((SHOE_POS.y - y) * 0.4 - 70)}px)`,
         '--discard-to': `translate(${DISCARD_POS.x - x}px, ${DISCARD_POS.y - y}px)`
     }
 }
@@ -174,7 +175,7 @@ watch(() => mySeat.value?.roundsPlayed, (played, before) => {
 
 const anteRows = CH_ANTE_TABLE.map(row => ({ label: row.label, pays: `${row.pays}:1` }))
 const aaRows = CH_AA_TABLE.map(row => ({ label: row.label, pays: `${row.pays}:1` }))
-const outcomeLabel = { win: 'YOU WIN', lose: 'DEALER WINS', push: 'PUSH', folded: 'FOLDED' }
+const outcomeLabel = { win: 'You beat the dealer', lose: 'Dealer wins', push: 'Hand pushes', folded: 'Folded' }
 </script>
 
 <template>
@@ -199,7 +200,7 @@ const outcomeLabel = { win: 'YOU WIN', lose: 'DEALER WINS', push: 'PUSH', folded
     @build="table.build"
   >
     <template #felt>
-      <LiveTableStage tone="blue">
+      <LiveTableStage tone="blue" :focus="mySeat ? SEAT_POS[mySeat.index]!.x : null">
         <LiveTableCorner title="Paytables">
           <div class="ch-paytable-title">Ante</div>
           <LiveTablePaytable :rows="anteRows" :head="['Hand', 'Pays']" />
@@ -227,8 +228,8 @@ const outcomeLabel = { win: 'YOU WIN', lose: 'DEALER WINS', push: 'PUSH', folded
 
         <!-- The dealer's two cards: face down until the showdown. -->
         <TransitionGroup name="lt-deal" tag="div" class="lt-hand ch-hand ch-small" :style="handStyle(DEALER_POS.x, DEALER_POS.y)">
-          <span v-for="(card, i) in shared?.dealer.cards ?? []" :key="card.id" class="block" :style="{ transitionDelay: dealDelay(-1, i) }">
-            <span class="lt-flip" :class="{ down: !card.rank }" :style="{ transitionDelay: `${i * 160}ms` }">
+          <span v-for="(card, i) in shared?.dealer.cards ?? []" :key="card.id" class="block" :style="{ '--deal-delay': dealDelay(-1, i) }">
+            <span class="lt-flip" :class="{ down: !card.rank }" :style="{ '--flip-delay': `${240 + i * 180}ms` }">
               <span class="lt-flip-face" v-html="face(card)" />
               <span class="lt-flip-face lt-flip-back" v-html="CARD_BACK" />
             </span>
@@ -243,7 +244,7 @@ const outcomeLabel = { win: 'YOU WIN', lose: 'DEALER WINS', push: 'PUSH', folded
           <span v-for="n in 5" :key="n" class="ch-slot" />
         </div>
         <TransitionGroup name="lt-deal" tag="div" class="lt-hand ch-board-cards ch-small" :style="handStyle(BOARD_POS.x - (5 - (shared?.board.length ?? 0)) * BOARD_STEP / 2, BOARD_POS.y)">
-          <span v-for="(card, i) in shared?.board ?? []" :key="card.id" class="block" :style="{ transitionDelay: boardDelay(i) }">
+          <span v-for="(card, i) in shared?.board ?? []" :key="card.id" class="block" :style="{ '--deal-delay': boardDelay(i) }">
             <span class="lt-flip" :class="{ down: !card.rank }">
               <span class="lt-flip-face" v-html="face(card)" />
               <span class="lt-flip-face lt-flip-back" v-html="CARD_BACK" />
@@ -264,19 +265,19 @@ const outcomeLabel = { win: 'YOU WIN', lose: 'DEALER WINS', push: 'PUSH', folded
           <LiveTableSit v-if="!seats[i]" :x="p.x" :y="p.y + SPOT_DY" :mode="!!mySeat || !connected ? 'taken' : table.canSit.value ? 'open' : 'locked'" @sit="table.canSit.value ? table.sit(i) : table.build()" />
           <template v-else>
             <TransitionGroup name="lt-deal" tag="div" class="lt-hand ch-hand" :class="{ dim: seats[i]!.game.decision === 'fold' }" :style="handStyle(p.x, p.y + HAND_DY)">
-              <span v-for="(card, c) in seats[i]!.game.cards" :key="card.id" class="block" :style="{ transitionDelay: dealDelay(i, c) }">
+              <span v-for="(card, c) in seats[i]!.game.cards" :key="card.id" class="block" :style="{ '--deal-delay': dealDelay(i, c) }">
                 <span class="lt-flip" :class="{ down: !card.rank }">
                   <span class="lt-flip-face" v-html="face(card)" />
                   <span class="lt-flip-face lt-flip-back" v-html="CARD_BACK" />
                 </span>
               </span>
             </TransitionGroup>
-            <div v-if="seats[i]!.game.handLabel && (showdown || seats[i]!.playerId === table.me.value)" class="ch-strength" :style="pos(p.x, p.y + 38)">{{ seats[i]!.game.handLabel }}</div>
+            <div v-if="seats[i]!.game.handLabel && (showdown || seats[i]!.playerId === table.me.value)" class="ch-strength" :style="pos(p.x, p.y + 28)">{{ seats[i]!.game.handLabel }}</div>
             <div v-if="badgeFor(seats[i]!.game)" class="lt-badge pop inline-flex items-center gap-1.5" :class="badgeFor(seats[i]!.game)!.tone" :style="pos(p.x, p.y - 150)">
               {{ badgeFor(seats[i]!.game)!.text }}<CasinoChipIcon v-if="badgeFor(seats[i]!.game)!.tone === 'win'" class="size-6" />
             </div>
 
-            <div v-for="(spot, s) in SPOTS" :key="`${spot}-cap`" class="lt-cap" :style="pos(p.x + (s - 1) * SPOT_DX, p.y + SPOT_DY - 52)">{{ SPOT_LABEL[spot] }}</div>
+            <div v-for="(spot, s) in SPOTS" :key="`${spot}-cap`" class="lt-cap" :style="pos(p.x + (s - 1) * SPOT_DX, p.y + SPOT_DY - 56)">{{ SPOT_LABEL[spot] }}</div>
             <div
               v-for="(spot, s) in SPOTS"
               :key="spot"
@@ -338,19 +339,19 @@ const outcomeLabel = { win: 'YOU WIN', lose: 'DEALER WINS', push: 'PUSH', folded
       </template>
 
       <div v-else-if="showdown && me?.outcome" class="flex flex-col items-center gap-1">
-        <span class="lt-result" :class="myTone || (me.outcome === 'push' ? 'push' : '')">
-          {{ outcomeLabel[me.outcome] }}<span v-if="me.net" class="ml-2">{{ me.net > 0 ? '+' : '−' }}{{ formatCoins(Math.abs(me.net)) }}</span><CasinoChipIcon v-if="(me.net ?? 0) > 0" />
+        <span class="lt-result" :class="myTone || (!me.net ? 'push' : '')">
+          {{ !me.net ? 'PUSH' : me.net > 0 ? `WIN +${formatCoins(me.net)}` : `${me.outcome === 'folded' ? 'FOLD' : 'LOSE'} −${formatCoins(-me.net)}` }}<CasinoChipIcon v-if="(me.net ?? 0) > 0" />
         </span>
-        <span class="text-xs text-white/60">
-          <template v-if="me.handLabel && me.outcome !== 'folded'">{{ me.handLabel }}</template>
+        <span class="lt-result-note">
+          {{ outcomeLabel[me.outcome] }}<template v-if="me.handLabel && me.outcome !== 'folded'"> · {{ me.handLabel }}</template>
           <template v-if="me.aaMultiplier"> · AA bonus {{ me.aaLabel }} pays {{ me.aaMultiplier }}:1</template>
         </span>
       </div>
 
-      <p v-else class="lt-hint-text">
-        <template v-if="me?.cards.length">{{ me.decision ? `You ${me.decision === 'call' ? 'called' : 'folded'}. Waiting for the table.` : 'Cards are coming.' }}</template>
-        <template v-else>Betting opens with the next hand.</template>
-      </p>
+      <LiveTableStake v-else :amount="me?.cards.length ? table.inPlay.value : 0">
+        <template v-if="me?.cards.length">{{ me.decision ? `You ${me.decision === 'call' ? 'called' : 'folded'}, waiting for the table` : 'Cards are coming' }}</template>
+        <template v-else>Betting opens with the next hand</template>
+      </LiveTableStake>
     </template>
 
     <template #rules>
@@ -374,18 +375,17 @@ const outcomeLabel = { win: 'YOU WIN', lose: 'DEALER WINS', push: 'PUSH', folded
 <style scoped>
 .ch-hand > * + * { margin-left: -40px; }
 /* The dealer's cards and the board sit a little smaller, so the middle of the felt breathes. */
-.ch-small { scale: 0.86; }
+.ch-small { transform: translate(-50%, -50%) scale(0.86); }
 .ch-board-cards > * + * { margin-left: 10px; }
 .ch-board {
     position: absolute;
-    transform: translate(-50%, -50%);
     display: flex;
     gap: 10px;
     padding: 10px;
     border-radius: 18px;
     border: 2.5px solid rgb(240 200 120 / 0.3);
     background: rgb(0 0 0 / 0.12);
-    scale: 0.86;
+    transform: translate(-50%, -50%) scale(0.86);
     pointer-events: none;
 }
 .ch-slot {
@@ -407,7 +407,9 @@ const outcomeLabel = { win: 'YOU WIN', lose: 'DEALER WINS', push: 'PUSH', folded
     0%, 100% { box-shadow: 0 0 0 0 rgb(255 214 120 / 0.5); }
     50% { box-shadow: 0 0 20px 6px rgb(255 214 120 / 0.45); }
 }
+/* A hand's name shows once its cards have landed and turned. */
 .ch-strength {
+    animation: lt-label-in 0.3s ease-out 0.8s both;
     position: absolute;
     transform: translate(-50%, -50%);
     border-radius: 999px;
@@ -415,7 +417,7 @@ const outcomeLabel = { win: 'YOU WIN', lose: 'DEALER WINS', push: 'PUSH', folded
     background: rgb(20 10 5 / 0.8);
     box-shadow: 0 3px 0 rgb(0 0 0 / 0.4);
     font-family: var(--font-game);
-    font-size: 20px;
+    font-size: 24px;
     letter-spacing: 0.03em;
     color: #ffe9b0;
     white-space: nowrap;
@@ -436,6 +438,7 @@ const outcomeLabel = { win: 'YOU WIN', lose: 'DEALER WINS', push: 'PUSH', folded
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .lt-spot.ch-spot.pulse { animation: none; }
+    .lt-spot.ch-spot.pulse,
+    .ch-strength { animation: none; }
 }
 </style>

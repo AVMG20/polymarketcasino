@@ -14,6 +14,7 @@ const flying = ref(false)
 const last = ref<LimboResult | null>(null)
 const win = ref<WinShow | null>(null)
 const history = ref<{ id: string, label: string, won: boolean }[]>([])
+const sound = useGameSound()
 
 const target = computed(() => {
     const value = toCents(parseDecimal(targetText.value))
@@ -59,6 +60,7 @@ function animate(to: number): Promise<void> {
     return new Promise((resolve) => {
         const start = performance.now()
         const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : Math.min(900, 300 + Math.log10(to) * 200)
+        if (duration) sound.launch(duration / 1000)
         const step = (now: number) => {
             const t = duration ? Math.min(1, (now - start) / duration) : 1
             // Climb on a log scale so 1.5× and 5,000× both read as a rise.
@@ -86,6 +88,8 @@ async function play() {
     shown.value = response.result.result
     flying.value = false
     last.value = response.result
+    if (response.result.won) sound.win(response.result.target)
+    else sound.lose()
     win.value = { id: response.roundId, payout: response.payout, multiplier: response.result.won ? response.result.target : 0 }
     history.value = [{ id: response.roundId, label: `${formatFixed(response.result.result, 2)}×`, won: response.result.won }, ...history.value].slice(0, 20)
     round.settle()
@@ -103,6 +107,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 <template>
   <GameFrame slug="limbo">
+    <template #actions>
+      <GameSoundToggle />
+    </template>
     <div class="@container">
       <div class="grid grid-cols-1 gap-3 @3xl:grid-cols-[minmax(0,1fr)_20rem]">
         <!-- The win centres on the sky (lifted by the ground band), not on the readout. -->

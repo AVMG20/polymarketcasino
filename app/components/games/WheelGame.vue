@@ -21,6 +21,7 @@ const difficulty = ref<WheelDifficulty>('medium')
 const lastResult = ref<(WheelResult & { payout: number }) | null>(null)
 const win = ref<WinShow | null>(null)
 let rounds = 0
+const sound = useGameSound()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 // The wheel is drawn once with segment 0 starting at the top and turned with a
@@ -148,9 +149,13 @@ function easeOut(t: number) {
 
 function animateSpin(from: number, to: number, duration: number, onDone: () => void) {
     const start = performance.now()
+    const arc = (2 * Math.PI) / wheelSegments.value.length
     const tick = (now: number) => {
         const t = duration ? Math.min(1, (now - start) / duration) : 1
+        const was = rotation.value
         rotation.value = from + (to - from) * easeOut(t)
+        // The pointer clicks over every segment edge it passes.
+        if (Math.floor(rotation.value / arc) > Math.floor(was / arc)) sound.tick(0.35 + 0.4 * (1 - t))
         if (t < 1) frame = requestAnimationFrame(tick)
         else onDone()
     }
@@ -185,6 +190,8 @@ async function spin() {
         drawWheel(winIdx)
         lastResult.value = { ...data.gameData, payout: data.payout }
         win.value = { id: ++rounds, payout: data.payout, multiplier: data.gameData.multiplier }
+        if (data.gameData.multiplier >= 1) sound.win(data.gameData.multiplier)
+        else sound.lose()
         setBalance(data.balance)
         pushHistory({ id: rounds, multiplier: data.gameData.multiplier, won: data.gameData.won, payout: data.payout, bet: lastBet.value })
         isSpinning.value = false
@@ -237,6 +244,9 @@ watch(difficulty, () => {
 
 <template>
   <GameFrame slug="wheel">
+    <template #actions>
+      <GameSoundToggle />
+    </template>
     <div class="@container">
       <div class="grid grid-cols-1 gap-3 @3xl:grid-cols-[minmax(0,1fr)_20rem]">
         <GameWinBurst :show="win" class="rounded-[1.5rem]">

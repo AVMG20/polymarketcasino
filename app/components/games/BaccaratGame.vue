@@ -24,8 +24,19 @@ const SEAT_POS = [
 ]
 const SHOE_POS = { x: 1431, y: 196 }
 const DISCARD_POS = { x: 289, y: 196 }
-const PLAYER_HAND_POS = { x: 668, y: 196 }
-const BANKER_HAND_POS = { x: 1052, y: 196 }
+/**
+ * The hands grow outward from the middle, where the house's chips sit between
+ * them: the Player's inner edge at 770, the Banker's at 950. A third card is
+ * laid sideways on the outer end, so it never reaches the chips.
+ */
+const HAND_Y = 196
+const PLAYER_EDGE = 770
+const BANKER_EDGE = 950
+/** Centre x of each card as laid (two upright, the third sideways). */
+const CARD_X = { player: [714, 642, 548], banker: [1006, 1078, 1172] } as const
+/** Over the two upright cards: where the side's name and total sit. */
+const PLAYER_HAND_POS = { x: 678, y: HAND_Y }
+const BANKER_HAND_POS = { x: 1042, y: HAND_Y }
 const HOUSE_POS = { x: 860, y: 300 }
 const CHIP_SIZE = 64
 
@@ -42,13 +53,15 @@ const SPOT_DEFS: { key: BacSpot, dx: number, dy: number, r: number, label: strin
 ]
 const spotAt = (seat: number, def: { dx: number, dy: number }) => ({ x: SEAT_POS[seat]!.x + def.dx, y: SEAT_POS[seat]!.y + 106 + def.dy })
 
-/** Cards fly in from the shoe and out to the discard tray along one vector per hand. */
-function handStyle(pos: { x: number, y: number }) {
+/** Each card flies in from the shoe along an arc and out to the discard tray, from where it lies. */
+function cardStyle(side: 'player' | 'banker', i: number) {
+    const x = CARD_X[side][Math.min(i, 2)]!
+    const dx = SHOE_POS.x - x
+    const dy = SHOE_POS.y - HAND_Y
     return {
-        'left': `${pos.x}px`,
-        'top': `${pos.y}px`,
-        '--deal-from': `translate(${SHOE_POS.x - pos.x}px, ${SHOE_POS.y - pos.y}px)`,
-        '--discard-to': `translate(${DISCARD_POS.x - pos.x}px, ${DISCARD_POS.y - pos.y}px)`
+        '--deal-from': `translate(${dx}px, ${dy}px)`,
+        '--deal-mid': `translate(${Math.round(dx * 0.4)}px, ${Math.round(dy * 0.4 - 70)}px)`,
+        '--discard-to': `translate(${DISCARD_POS.x - x}px, ${DISCARD_POS.y - HAND_Y}px)`
     }
 }
 
@@ -190,7 +203,7 @@ const CARD_BACK = cardBack()
     @build="table.build"
   >
     <template #felt>
-      <LiveTableStage tone="red">
+      <LiveTableStage tone="red" :focus="mySeat ? SEAT_POS[mySeat.index]!.x : null" :camera="{ span: 0.78, tall: 0.9, top: 0.045 }">
         <!-- Shoe and discard: the trays every card is dealt from and swept to. -->
         <div class="lt-tray" :style="{ left: `${DISCARD_POS.x}px`, top: `${DISCARD_POS.y}px` }">
           <template v-if="(shoe?.dealt ?? 0) > 0">
@@ -208,10 +221,19 @@ const CARD_BACK = cardBack()
         <div class="lt-tray-label" :style="{ left: `${SHOE_POS.x}px`, top: `${SHOE_POS.y + 98}px` }">Shoe · {{ cardsLeft }}</div>
 
         <!-- Player and Banker: dealt face down, turned over one by one. -->
+        <div v-for="side in (['player', 'banker'] as const)" v-show="winner === side || winner === 'tie'" :key="`${side}-glow`" class="bac-glow" :class="winner === 'tie' ? 'tie' : side" :style="{ left: `${side === 'player' ? PLAYER_HAND_POS.x - 40 : BANKER_HAND_POS.x + 40}px`, top: `${HAND_Y}px` }" />
         <div class="bac-side player" :class="{ won: winner === 'player' }" :style="{ left: `${PLAYER_HAND_POS.x}px` }">PLAYER</div>
         <div class="bac-side banker" :class="{ won: winner === 'banker' }" :style="{ left: `${BANKER_HAND_POS.x}px` }">BANKER</div>
-        <TransitionGroup v-for="side in (['player', 'banker'] as const)" :key="side" name="lt-deal" tag="div" class="lt-hand bac-hand" :style="handStyle(side === 'player' ? PLAYER_HAND_POS : BANKER_HAND_POS)">
-          <span v-for="item in (side === 'player' ? playerCards : bankerCards)" :key="item.card.id" class="block">
+        <TransitionGroup
+          v-for="side in (['player', 'banker'] as const)"
+          :key="side"
+          name="lt-deal"
+          tag="div"
+          class="lt-hand bac-hand"
+          :class="[side, { lost: winner && winner !== side && winner !== 'tie' }]"
+          :style="{ left: `${side === 'player' ? PLAYER_EDGE : BANKER_EDGE}px`, top: `${HAND_Y}px` }"
+        >
+          <span v-for="(item, i) in (side === 'player' ? playerCards : bankerCards)" :key="item.card.id" class="block" :style="cardStyle(side, i)">
             <span class="block" :class="{ 'bac-third': item.third }">
               <span class="lt-flip" :class="{ down: !item.up }">
                 <span class="lt-flip-face" v-html="item.card.rank && item.card.suit ? cardFace(item.card.rank, item.card.suit) : CARD_BACK" />
@@ -221,10 +243,10 @@ const CARD_BACK = cardBack()
           </span>
         </TransitionGroup>
         <template v-if="round && step >= 4">
-          <div class="lt-badge" :class="winner ? (winner === 'tie' ? 'push' : winner === 'player' ? 'win' : 'lose') : ''" :style="{ left: `${PLAYER_HAND_POS.x}px`, top: '318px', fontSize: '24px' }">
+          <div :key="`p${total(playerCards)}${winner}`" class="lt-badge bac-total lt-tick" :class="winner ? (winner === 'tie' ? 'push' : winner === 'player' ? 'win' : 'lose') : ''" :style="{ left: `${PLAYER_HAND_POS.x}px`, top: '318px' }">
             {{ total(playerCards) }}<span v-if="revealed && round.natural && round.playerTotal >= 8"> · NATURAL</span>
           </div>
-          <div v-if="step >= 6" class="lt-badge" :class="winner ? (winner === 'tie' ? 'push' : winner === 'banker' ? 'win' : 'lose') : ''" :style="{ left: `${BANKER_HAND_POS.x}px`, top: '318px', fontSize: '24px' }">
+          <div v-if="step >= 6" :key="`b${total(bankerCards)}${winner}`" class="lt-badge bac-total lt-tick" :class="winner ? (winner === 'tie' ? 'push' : winner === 'banker' ? 'win' : 'lose') : ''" :style="{ left: `${BANKER_HAND_POS.x}px`, top: '318px' }">
             {{ total(bankerCards) }}<span v-if="revealed && round.natural && round.bankerTotal >= 8"> · NATURAL</span>
           </div>
         </template>
@@ -260,7 +282,7 @@ const CARD_BACK = cardBack()
               :style="{ left: `${spotAt(i, def).x}px`, top: `${spotAt(i, def).y}px`, width: `${def.r * 2}px`, height: `${def.r * 2}px`, margin: `${-def.r}px 0 0 ${-def.r}px` }"
               @click="seats[i]!.playerId === table.me.value && place(def.key)"
             >
-              <span v-if="!def.below && !amountOn(seats[i]!.game, def.key)" class="lt-spot-label" style="font-size: 12px">{{ def.label }}</span>
+              <span v-if="!def.below && !amountOn(seats[i]!.game, def.key)" class="lt-spot-label">{{ def.label }}</span>
               <LiveTableChipPile class="lt-spot-chips" :amount="amountOn(seats[i]!.game, def.key)" :size="def.r > 50 ? CHIP_SIZE : 54" :max="4" />
             </div>
             <div v-for="def in SPOT_DEFS.filter(d => d.below)" :key="`${def.key}-cap`" class="lt-cap" :style="{ left: `${spotAt(i, def).x}px`, top: `${spotAt(i, def).y + def.r + 14}px` }">
@@ -333,12 +355,12 @@ const CARD_BACK = cardBack()
         <span class="lt-result" :class="myNet > 0 ? 'win' : myNet === 0 ? 'push' : ''">
           {{ myNet > 0 ? `WIN +${formatCoins(myNet)}` : myNet < 0 ? `LOSE −${formatCoins(-myNet)}` : 'PUSH' }}<CasinoChipIcon v-if="myNet > 0" />
         </span>
-        <span class="text-xs text-white/60">{{ winner === 'tie' ? 'Tie' : `${winner === 'player' ? 'Player' : 'Banker'} wins` }}</span>
+        <span class="lt-result-note">Player {{ round!.playerTotal }} · Banker {{ round!.bankerTotal }}<template v-if="round!.natural"> · natural</template></span>
       </div>
-      <p v-else class="lt-hint-text">
-        <template v-if="me && bacTotal(me.staked)">Your bets are in.</template>
-        <template v-else>Betting opens with the next hand.</template>
-      </p>
+      <LiveTableStake v-else :amount="table.inPlay.value">
+        <template v-if="me && bacTotal(me.staked)">The cards are coming</template>
+        <template v-else>Betting opens with the next hand</template>
+      </LiveTableStake>
     </template>
 
     <template #rules>
@@ -368,7 +390,35 @@ const CARD_BACK = cardBack()
 .bac-side.player { background: linear-gradient(180deg, #5b9bff, #2563eb); box-shadow: 0 4px 0 #173f9a; }
 .bac-side.banker { background: linear-gradient(180deg, #ff6b6b, #c81e1e); box-shadow: 0 4px 0 #7a1010; }
 .bac-side.won { transform: translate(-50%, -50%) scale(1.12); box-shadow: 0 4px 0 rgb(0 0 0 / 0.4), 0 0 0 3px #ffd36b, 0 0 30px 6px rgb(255 200 80 / 0.75); }
-.bac-hand > * + * { margin-left: -40px; }
+/* Baccarat times its own turns (the reveal steps): no extra flip delay. */
+.bac-hand { --flip-delay: 0ms; transition: filter 0.4s ease; }
+/* The Player's hand grows leftward from its inner edge, the Banker's rightward. */
+.bac-hand.player { flex-direction: row-reverse; transform: translate(-100%, -50%); }
+.bac-hand.player > * + * { margin-left: 0; margin-right: -40px; }
+.bac-hand.banker { transform: translate(0, -50%); }
+.bac-hand.banker > * + * { margin-left: -40px; }
+/* Earlier cards on top, so every card's corner index stays in sight. */
+.bac-hand.player > :nth-child(1) { z-index: 3; }
+.bac-hand.player > :nth-child(2) { z-index: 2; }
+.bac-hand.lost { filter: brightness(0.6) saturate(0.6); }
+.bac-total { min-width: 64px; text-align: center; font-size: 34px; padding: 2px 18px; }
+/* The winning hand glows from the felt under its cards. */
+.bac-glow {
+    position: absolute;
+    width: 440px;
+    height: 260px;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    pointer-events: none;
+    animation: bac-glow 1.4s ease-in-out infinite alternate;
+}
+/* Gold, whichever side won: on the red felt a red glow would vanish. */
+.bac-glow.player, .bac-glow.banker { background: radial-gradient(closest-side, rgb(255 222 140 / 0.6), rgb(255 196 60 / 0.22) 62%, transparent); }
+.bac-glow.tie { background: radial-gradient(closest-side, rgb(170 240 160 / 0.5), rgb(110 220 120 / 0.18) 62%, transparent); }
+@keyframes bac-glow { from { opacity: 0.65; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+    .bac-glow { animation: none; }
+}
 /* The third card is drawn sideways, the way a baccarat dealer lays it. */
 .bac-third { transform: rotate(90deg); margin: 0 22px; }
 

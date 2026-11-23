@@ -17,6 +17,7 @@ const rolling = ref(false)
 const last = ref<DiceResult | null>(null)
 const win = ref<WinShow | null>(null)
 const history = ref<{ id: string, label: string, won: boolean }[]>([])
+const sound = useGameSound()
 
 const presets = [
     { value: 10, face: '#a855f7', edge: '#6b21a8' },
@@ -55,7 +56,10 @@ function fill(to: number): Promise<void> {
         const start = performance.now()
         const step = (now: number) => {
             const t = duration ? Math.min(1, (now - start) / duration) : 1
+            const was = shown.value ?? 0
             shown.value = Math.round(to * t * t * 100) / 100
+            // A counter tick every 4 points the fill passes, higher as it climbs.
+            if (Math.floor(shown.value / 4) > Math.floor(was / 4)) sound.tick(shown.value / 100)
             if (t < 1) frame = requestAnimationFrame(step)
             else resolve()
         }
@@ -79,6 +83,8 @@ async function roll() {
     await fill(response.result.roll)
     rolling.value = false
     last.value = response.result
+    if (response.result.won) sound.win(response.result.multiplier)
+    else sound.lose()
     win.value = { id: response.roundId, payout: response.payout, multiplier: response.result.won ? response.result.multiplier : 0 }
     history.value = [{ id: response.roundId, label: formatFixed(response.result.roll, 2), won: response.result.won }, ...history.value].slice(0, 20)
     round.settle()
@@ -96,6 +102,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 <template>
   <GameFrame slug="dice">
+    <template #actions>
+      <GameSoundToggle />
+    </template>
     <div class="@container">
       <div class="grid grid-cols-1 gap-3 @3xl:grid-cols-[minmax(0,1fr)_20rem]">
         <GameWinBurst :show="win" class="rounded-[1.5rem] [--wb-lift:8rem] sm:[--wb-lift:8.5rem]">

@@ -54,6 +54,7 @@ function handStyle(x: number, y: number) {
         'left': `${x}px`,
         'top': `${y}px`,
         '--deal-from': `translate(${SHOE_POS.x - x}px, ${SHOE_POS.y - y}px)`,
+        '--deal-mid': `translate(${Math.round((SHOE_POS.x - x) * 0.4)}px, ${Math.round((SHOE_POS.y - y) * 0.4 - 70)}px)`,
         '--discard-to': `translate(${DISCARD_POS.x - x}px, ${DISCARD_POS.y - y}px)`
     }
 }
@@ -228,7 +229,7 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
     @build="table.build"
   >
     <template #felt>
-      <LiveTableStage tone="teal">
+      <LiveTableStage tone="teal" :focus="mySeat ? SEAT_POS[mySeat.index]!.x : null">
         <LiveTableCorner title="Bonus paytables">
           <div class="tcp-paytable-title">Pair Plus</div>
           <LiveTablePaytable :rows="pairPlusRows" :head="['Hand', 'Pays']" />
@@ -256,8 +257,8 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
 
         <!-- The dealer's hand: dealt face down, turned over at the showdown. -->
         <TransitionGroup name="lt-deal" tag="div" class="lt-hand tcp-hand" :style="handStyle(DEALER_POS.x, DEALER_POS.y)">
-          <span v-for="(card, i) in dealer?.cards ?? []" :key="card.id" class="block" :style="{ transitionDelay: dealDelay(-1, i) }">
-            <span class="lt-flip" :class="{ down: !card.rank }" :style="{ transitionDelay: `${i * 160}ms` }">
+          <span v-for="(card, i) in dealer?.cards ?? []" :key="card.id" class="block" :style="{ '--deal-delay': dealDelay(-1, i) }">
+            <span class="lt-flip" :class="{ down: !card.rank }" :style="{ '--flip-delay': `${240 + i * 180}ms` }">
               <span class="lt-flip-face" v-html="face(card)" />
               <span class="lt-flip-face lt-flip-back" v-html="CARD_BACK" />
             </span>
@@ -280,19 +281,19 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
           <LiveTableSit v-if="!seats[i]" :x="p.x" :y="p.y + SPOT_DY" :mode="!!mySeat || !connected ? 'taken' : table.canSit.value ? 'open' : 'locked'" @sit="table.canSit.value ? table.sit(i) : table.build()" />
           <template v-else>
             <TransitionGroup name="lt-deal" tag="div" class="lt-hand tcp-hand" :class="{ dim: seats[i]!.game.decision === 'fold' }" :style="handStyle(p.x, p.y + HAND_DY)">
-              <span v-for="(card, c) in seats[i]!.game.cards" :key="card.id" class="block" :style="{ transitionDelay: dealDelay(i, c) }">
+              <span v-for="(card, c) in seats[i]!.game.cards" :key="card.id" class="block" :style="{ '--deal-delay': dealDelay(i, c) }">
                 <span class="lt-flip" :class="{ down: !card.rank }">
                   <span class="lt-flip-face" v-html="face(card)" />
                   <span class="lt-flip-face lt-flip-back" v-html="CARD_BACK" />
                 </span>
               </span>
             </TransitionGroup>
-            <div v-if="seats[i]!.game.hand" class="tcp-strength" :style="pos(p.x, p.y + 38)">{{ seats[i]!.game.hand!.label }}</div>
+            <div v-if="seats[i]!.game.hand" class="tcp-strength" :style="pos(p.x, p.y + 28)">{{ seats[i]!.game.hand!.label }}</div>
             <div v-if="badgeFor(seats[i]!.game)" class="lt-badge pop inline-flex items-center gap-1.5" :class="badgeFor(seats[i]!.game)!.tone" :style="pos(p.x, p.y - 150)">{{ badgeFor(seats[i]!.game)!.text }}<CasinoChipIcon v-if="badgeFor(seats[i]!.game)!.tone === 'win' && seats[i]!.game.result" class="size-6" /></div>
 
-            <div class="lt-cap" :style="pos(p.x - SPOT_DX, p.y + SPOT_DY - 52)">Pair Plus</div>
-            <div class="lt-cap" :style="pos(p.x, p.y + SPOT_DY - 52)">Ante</div>
-            <div class="lt-cap" :style="pos(p.x + SPOT_DX, p.y + SPOT_DY - 52)">Play</div>
+            <div class="lt-cap" :style="pos(p.x - SPOT_DX, p.y + SPOT_DY - 56)">Pair Plus</div>
+            <div class="lt-cap" :style="pos(p.x, p.y + SPOT_DY - 56)">Ante</div>
+            <div class="lt-cap" :style="pos(p.x + SPOT_DX, p.y + SPOT_DY - 56)">Play</div>
             <div
               v-for="(spot, s) in (['pairPlus', 'ante', 'play'] as const)"
               :key="spot"
@@ -355,21 +356,21 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
 
       <div v-else-if="showdown && me?.result" class="flex flex-col items-center gap-1">
         <span class="lt-result" :class="badgeFor(me)?.tone">{{ badgeFor(me)?.text }}<CasinoChipIcon v-if="badgeFor(me)?.tone === 'win'" /></span>
-        <span class="text-xs text-white/60">
+        <span class="lt-result-note">
           <template v-if="me.hand">{{ me.hand.label }}</template>
           <template v-if="me.result.anteBonus"> · ante bonus +{{ formatCoins(me.result.anteBonus) }}</template>
           <template v-if="me.result.pairPlus"> · pair plus pays {{ formatCoins(me.result.pairPlus) }}</template>
         </span>
       </div>
 
-      <p v-else class="lt-hint-text">
-        <template v-if="me?.ante">{{ me.decision ? `You ${me.decision}. Waiting for the table.` : 'Cards are coming.' }}</template>
-        <template v-else>Betting opens with the next hand.</template>
-      </p>
+      <LiveTableStake v-else :amount="me?.ante ? table.inPlay.value : 0">
+        <template v-if="me?.ante">{{ me.decision ? `You ${me.decision === 'play' ? 'played' : 'folded'}, waiting for the table` : 'Cards are coming' }}</template>
+        <template v-else>Betting opens with the next hand</template>
+      </LiveTableStake>
     </template>
 
     <template #footer>
-      <button v-if="mySeat" type="button" class="flex min-h-11 items-center gap-1.5 rounded-lg px-2.5 font-semibold transition" :class="hints ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60' : 'bg-white/5 text-white/60 hover:bg-white/10'" @click="toggleHints">
+      <button v-if="mySeat" type="button" class="flex min-h-11 lg:min-h-[34px] items-center gap-1.5 rounded-lg px-2.5 font-semibold transition" :class="hints ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60' : 'bg-white/5 text-white/60 hover:bg-white/10'" @click="toggleHints">
         <Lightbulb v-if="hints" class="size-3.5" /><LightbulbOff v-else class="size-3.5" /> Hints {{ hints ? 'on' : 'off' }}
       </button>
     </template>
@@ -407,7 +408,9 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
     0%, 100% { box-shadow: 0 0 0 0 rgba(217, 177, 103, 0.5); }
     50% { box-shadow: 0 0 20px 6px rgba(217, 177, 103, 0.4); }
 }
+/* A hand's name shows once its cards have landed and turned. */
 .tcp-strength {
+    animation: lt-label-in 0.3s ease-out 0.8s both;
     position: absolute;
     transform: translate(-50%, -50%);
     border-radius: 999px;
@@ -415,7 +418,7 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
     background: rgb(20 10 5 / 0.8);
     box-shadow: 0 3px 0 rgb(0 0 0 / 0.4);
     font-family: var(--font-game);
-    font-size: 20px;
+    font-size: 24px;
     letter-spacing: 0.03em;
     color: #ffe9b0;
     white-space: nowrap;
@@ -433,5 +436,8 @@ const anteBonusRows = (Object.entries(ANTE_BONUS_PAYS) as [TcpCategory, number][
     text-transform: uppercase;
     color: var(--lt-gold);
     opacity: 0.85;
+}
+@media (prefers-reduced-motion: reduce) {
+    .tcp-strength { animation: none; }
 }
 </style>
