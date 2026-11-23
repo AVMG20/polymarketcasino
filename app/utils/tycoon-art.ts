@@ -8,10 +8,21 @@ import {
 } from '#shared/tycoon'
 import { formatFixed } from '~/utils/format-decimal'
 
-/** How a build item looks in the game UI: a cover image (games) or a big icon on a colour. */
+/** The hand-drawn pictures of TycoonIllo (zones, upgrades, gem shop items). */
+export type IlloName =
+    | 'backroom' | 'main' | 'pit' | 'lounge' | 'highlimit' | 'penthouse'
+    | 'cage' | 'marketing' | 'decor' | 'crew'
+    | 'rush' | 'builder' | 'golden' | 'wardrobe'
+    | 'dice' | 'cherry' | 'bigwin' | 'cards' | 'coins' | 'visit' | 'chest'
+
+/**
+ * How a build item looks in the game UI: a game's cover, or (zones and
+ * upgrades) its TycoonIllo picture; `icon` is the small glyph for badges.
+ */
 export interface BuildArt {
     cover: string | null
     icon: Component | null
+    illo: IlloName | null
     /** Main colour, hex. */
     color: string
 }
@@ -38,9 +49,9 @@ export function isNewBuild(kind: BuildKind, id: string, level: number): boolean 
 }
 
 export function buildArt(kind: BuildKind, id: string): BuildArt {
-    if (kind === 'game') return { cover: findGame(id)?.cover ?? null, icon: null, color: findTycoonGame(id)?.accent ?? '#a879ff' }
+    if (kind === 'game') return { cover: findGame(id)?.cover ?? null, icon: null, illo: null, color: findTycoonGame(id)?.accent ?? '#a879ff' }
     const art = (kind === 'zone' ? ZONE_ART : UPGRADE_ART)[id]
-    return { cover: null, icon: art?.icon ?? null, color: art?.color ?? '#a879ff' }
+    return { cover: null, icon: art?.icon ?? null, illo: art ? id as IlloName : null, color: art?.color ?? '#a879ff' }
 }
 
 export function zoneArt(id: string): { icon: Component, color: string } {

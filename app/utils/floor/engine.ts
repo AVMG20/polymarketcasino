@@ -313,6 +313,7 @@ export class FloorEngine implements FloorApi {
         this.objects.addChild(this.player.container)
 
         this.guests = new GuestCrowd(PIXI, this.bank, this.fx, this.objects, this.overlay, this.reduced)
+        this.guests.onEarn = (x, y, amount) => this.guestEarned(x, y, amount)
 
         // Click marker: a ring and an X, yellow for walking, red for using.
         this.marker = new PIXI.Container()
@@ -415,7 +416,10 @@ export class FloorEngine implements FloorApi {
         this.pruneFigures()
         this.setCage(scene.cage.fill, scene.cage.stored)
         this.partyOn = scene.rush
-        this.guests.setCount(scene.visitors ?? guestCount(scene.guestsPerHour, scene.rush), scene.rush)
+        const visitors = scene.visitors ?? guestCount(scene.guestsPerHour, scene.rush)
+        this.guests.setCount(visitors, scene.rush)
+        // Playing guests pop coins off their machines, labelled with their real share of the income.
+        this.guests.earnPerSec = Math.max(0, scene.guestsPerHour) / Math.max(1, visitors) / 3600
         if (this.firstScene) {
             this.firstScene = false
             if (this.resume) {
@@ -1287,6 +1291,24 @@ export class FloorEngine implements FloorApi {
     }
 
     /** `options.to`: the HUD pill in canvas pixels (default: the top right). */
+    /** A playing guest spent `amount` at their machine: a small coin rises with "+N". */
+    private guestEarned(x: number, y: number, amount: number) {
+        if (this.paused || this.destroyed) return
+        if (amount >= 1) this.floaters.spawn(`+${formatCoins(amount, true)}`, x + 10, y - 58, COIN_TINT, 14)
+        if (!this.reduced) {
+            this.particles.spawn(this.fx.coin.texture, x - 6, y - 52, {
+                vx: (Math.random() - 0.5) * 12,
+                vy: -46,
+                gravity: 0,
+                life: 0,
+                max: 0.9,
+                scale0: 0.55,
+                scale1: 0.45,
+                drag: 0.4
+            })
+        }
+    }
+
     collected(amount: number, options: FloorCollectOptions = {}) {
         if (!this.cage) return
         const { currency = 'chips', to } = options
@@ -1564,3 +1586,4 @@ export class FloorEngine implements FloorApi {
         this.bank.destroy()
     }
 }
+

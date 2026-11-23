@@ -142,9 +142,10 @@ export function drawFigure(ctx: CanvasRenderingContext2D, x: number, y: number, 
     torsoGrad.addColorStop(1, darken(look.shirt, 0.08))
     shapes.push({ path: c => roundRect(c, x - 8, torsoY, 16, 15, 6), fill: torsoGrad })
 
-    // Head.
+    // Head (long hair falls behind it, framing the face).
     const hx = x + 0.5 + t * 0.3
     const hy = y - 35 + bodyDrop
+    if (!back && look.style === 'long' && look.hat !== 'hardhat') shapes.push({ path: c => roundRect(c, hx - 12, hy - 6, 24, 19, 7), fill: look.hair })
     const headGrad = ctx.createRadialGradient(hx - 3, hy - 4, 2, hx, hy, 12)
     headGrad.addColorStop(0, lighten(look.skin, 0.18))
     headGrad.addColorStop(1, darken(look.skin, 0.06))
@@ -174,7 +175,13 @@ export function drawFigure(ctx: CanvasRenderingContext2D, x: number, y: number, 
                 c.lineTo(hx + 7, hy - 9)
                 c.closePath()
             },
-            fill: '#f4c14f'
+            fill: (() => {
+                const g = ctx.createLinearGradient(hx, hy - 20, hx, hy - 9)
+                g.addColorStop(0, '#fff1a8')
+                g.addColorStop(0.5, '#f4c14f')
+                g.addColorStop(1, '#c98a1e')
+                return g
+            })()
         })
     } else if (look.hat === 'party') {
         shapes.push({
@@ -284,20 +291,7 @@ export function drawFigure(ctx: CanvasRenderingContext2D, x: number, y: number, 
     }
 
     if (look.outfit && look.outfit !== 'classic') drawOutfit(ctx, look, x, torsoY, back)
-    if (look.hat === 'tophat') {
-        ctx.fillStyle = '#d6264b'
-        ctx.fillRect(hx - 7.5, hy - 12.5, 15, 3)
-    } else if (look.hat === 'cowboy') {
-        ctx.fillStyle = darken(look.hatColor, 0.45)
-        ctx.fillRect(hx - 7.6, hy - 10, 15.2, 2.4)
-    } else if (look.hat === 'party') {
-        ctx.fillStyle = 'rgba(255,255,255,0.75)'
-        for (const [dx, dy] of [[-2.5, -11], [2.5, -14], [-0.5, -18]] as const) {
-            ctx.beginPath()
-            ctx.arc(hx + dx + t * 0.3, hy + dy, 1.1, 0, Math.PI * 2)
-            ctx.fill()
-        }
-    }
+    drawHatDetail(ctx, look, hx, hy, back, t, turn)
 
     // Shirt highlight.
     ctx.fillStyle = 'rgba(255,255,255,0.22)'
@@ -347,6 +341,114 @@ export function drawFigure(ctx: CanvasRenderingContext2D, x: number, y: number, 
     ctx.ellipse(hx - 4, hy - 6.5, 3, 1.6, -0.5, 0, Math.PI * 2)
     ctx.fill()
     ctx.restore()
+}
+
+/** What goes on a hat after the outlined fill: bands, jewels, stitching and a shine. */
+function drawHatDetail(ctx: CanvasRenderingContext2D, look: Look, hx: number, hy: number, back: boolean, t: number, turn: 0 | 1) {
+    const shine = (cx: number, cy: number, rx: number, ry: number, alpha = 0.45) => {
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`
+        ctx.beginPath()
+        ctx.ellipse(cx, cy, rx, ry, -0.5, 0, Math.PI * 2)
+        ctx.fill()
+    }
+    switch (look.hat) {
+        case 'cap':
+            // Seam, button on top and a shine on the crown.
+            ctx.strokeStyle = darken(look.hatColor, 0.3)
+            ctx.lineWidth = 0.8
+            ctx.beginPath()
+            ctx.moveTo(hx + (back ? 0 : 1.5), hy - 14)
+            ctx.quadraticCurveTo(hx + (back ? 0 : 3.5), hy - 9, hx + (back ? 0 : 3), hy - 4.4)
+            ctx.stroke()
+            ctx.fillStyle = darken(look.hatColor, 0.25)
+            ctx.beginPath()
+            ctx.arc(hx, hy - 14.2, 1.3, 0, Math.PI * 2)
+            ctx.fill()
+            shine(hx - 4.5, hy - 9.5, 2.6, 1.3)
+            if (!back) {
+                ctx.fillStyle = 'rgba(255,255,255,0.3)'
+                ctx.beginPath()
+                ctx.ellipse(hx + 7 * (turn || 1), hy - 4.8, 4.2, 0.9, 0, 0, Math.PI * 2)
+                ctx.fill()
+            }
+            return
+        case 'crown':
+            // A darker band, a ruby in front, sapphires beside it, pearls on the tips.
+            ctx.fillStyle = 'rgba(150, 90, 10, 0.45)'
+            ctx.fillRect(hx - 7.2, hy - 12, 14.4, 2.6)
+            ctx.fillStyle = '#e8304f'
+            ctx.beginPath()
+            ctx.arc(hx, hy - 13.2, 1.7, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.fillStyle = '#4aa6ff'
+            ctx.beginPath()
+            ctx.arc(hx - 4.4, hy - 12.2, 1.1, 0, Math.PI * 2)
+            ctx.arc(hx + 4.4, hy - 12.2, 1.1, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.fillStyle = '#fff6d8'
+            ctx.strokeStyle = INK
+            ctx.lineWidth = 0.9
+            for (const [dx, dy] of [[-8, -18.4], [0, -20.6], [8, -18.4]] as const) {
+                ctx.beginPath()
+                ctx.arc(hx + dx, hy + dy, 1.4, 0, Math.PI * 2)
+                ctx.fill()
+                ctx.stroke()
+            }
+            shine(hx - 5.2, hy - 14.6, 0.9, 2.2, 0.7)
+            return
+        case 'party':
+            ctx.fillStyle = 'rgba(255,255,255,0.75)'
+            for (const [dx, dy] of [[-2.5, -11], [2.5, -14], [-0.5, -18]] as const) {
+                ctx.beginPath()
+                ctx.arc(hx + dx + t * 0.3, hy + dy, 1.1, 0, Math.PI * 2)
+                ctx.fill()
+            }
+            // A ruffle at the rim.
+            ctx.fillStyle = '#ffe066'
+            for (let k = -2; k <= 2; k++) {
+                ctx.beginPath()
+                ctx.arc(hx + k * 2.6, hy - 7.6, 1.15, 0, Math.PI * 2)
+                ctx.fill()
+            }
+            return
+        case 'beanie':
+            // Ribbed cuff and a shine on the knit.
+            ctx.strokeStyle = darken(look.hatColor, 0.36)
+            ctx.lineWidth = 0.8
+            ctx.beginPath()
+            for (let k = -9; k <= 9; k += 3) {
+                ctx.moveTo(hx + k, hy - 4.6)
+                ctx.lineTo(hx + k, hy - 1)
+            }
+            ctx.stroke()
+            shine(hx - 5, hy - 9, 2.8, 1.4)
+            shine(hx - 1.2, hy - 16.2, 1, 0.8, 0.7)
+            return
+        case 'tophat':
+            ctx.fillStyle = '#d6264b'
+            ctx.fillRect(hx - 7.5, hy - 12.5, 15, 3)
+            ctx.fillStyle = 'rgba(255,255,255,0.18)'
+            ctx.fillRect(hx - 5.5, hy - 24.5, 2.2, 11)
+            ctx.fillStyle = 'rgba(255,255,255,0.4)'
+            ctx.fillRect(hx - 6.5, hy - 11.9, 4, 1)
+            return
+        case 'cowboy':
+            ctx.fillStyle = darken(look.hatColor, 0.45)
+            ctx.fillRect(hx - 7.6, hy - 10, 15.2, 2.4)
+            // A gold buckle on the band and the crown's crease.
+            ctx.fillStyle = '#f4c14f'
+            ctx.fillRect(hx - 1.3 + t * 0.6, hy - 10.3, 2.6, 3)
+            ctx.strokeStyle = darken(look.hatColor, 0.3)
+            ctx.lineWidth = 0.9
+            ctx.beginPath()
+            ctx.moveTo(hx, hy - 16)
+            ctx.lineTo(hx, hy - 11.5)
+            ctx.stroke()
+            shine(hx - 4.4, hy - 14.6, 1.1, 2.4, 0.35)
+            return
+        case 'hardhat':
+            shine(hx - 4.5, hy - 10.5, 2.8, 1.4, 0.5)
+    }
 }
 
 /** Patterns and suits on the torso (clipped to it). */
@@ -458,14 +560,23 @@ function drawAccessory(ctx: CanvasRenderingContext2D, look: Look, x: number, tor
                 return
             }
             ctx.fillStyle = '#1a1424'
-            roundRect(ctx, ex - 6.6, hy - 1.6, 5.6, 4, 1.5)
+            roundRect(ctx, ex - 7, hy - 1.8, 6.2, 4.4, 1.6)
             ctx.fill()
-            roundRect(ctx, ex + 1, hy - 1.6, 5.6, 4, 1.5)
+            roundRect(ctx, ex + 0.8, hy - 1.8, 6.2, 4.4, 1.6)
             ctx.fill()
-            ctx.fillRect(ex - 1.2, hy - 1, 2.4, 1)
-            ctx.fillStyle = 'rgba(255,255,255,0.55)'
-            ctx.fillRect(ex - 5.6, hy - 0.8, 1.6, 1)
-            ctx.fillRect(ex + 2, hy - 0.8, 1.6, 1)
+            ctx.fillRect(ex - 1.2, hy - 1.2, 2.4, 1.1)
+            // Temple arm towards the ear.
+            ctx.fillRect(ex - 10, hy - 1.4, 3.2, 1)
+            ctx.fillStyle = 'rgba(255,255,255,0.6)'
+            for (const lx of [ex - 6, ex + 1.8]) {
+                ctx.beginPath()
+                ctx.moveTo(lx, hy + 0.6)
+                ctx.lineTo(lx + 1.6, hy - 1.2)
+                ctx.lineTo(lx + 2.6, hy - 1.2)
+                ctx.lineTo(lx + 1, hy + 0.6)
+                ctx.closePath()
+                ctx.fill()
+            }
             return
         case 'monocle':
             if (back) return
@@ -482,22 +593,44 @@ function drawAccessory(ctx: CanvasRenderingContext2D, look: Look, x: number, tor
             ctx.quadraticCurveTo(ex + 8, hy + 7, ex + 5, hy + 10)
             ctx.stroke()
             return
-        case 'goldchain':
+        case 'goldchain': {
             if (back) return
-            ctx.strokeStyle = '#f4c14f'
-            ctx.lineWidth = 1.5
+            ctx.strokeStyle = '#8a5a12'
+            ctx.lineWidth = 2.6
             ctx.beginPath()
-            ctx.moveTo(x - 5, torsoY + 0.8)
-            ctx.quadraticCurveTo(x, torsoY + 9, x + 5, torsoY + 0.8)
+            ctx.moveTo(x - 5.4, torsoY + 0.6)
+            ctx.quadraticCurveTo(x, torsoY + 9.4, x + 5.4, torsoY + 0.6)
             ctx.stroke()
-            ctx.fillStyle = '#ffe066'
-            ctx.strokeStyle = '#b98228'
-            ctx.lineWidth = 0.8
+            ctx.strokeStyle = '#f4c14f'
+            ctx.lineWidth = 1.6
+            ctx.stroke()
+            // Links: little bright beads along the chain.
+            ctx.fillStyle = '#fff1a8'
+            for (const k of [0.18, 0.36, 0.64, 0.82]) {
+                const u = 1 - k
+                ctx.beginPath()
+                ctx.arc(u * u * (x - 5.4) + 2 * u * k * x + k * k * (x + 5.4), u * u * (torsoY + 0.6) + 2 * u * k * (torsoY + 9.4) + k * k * (torsoY + 0.6), 0.5, 0, Math.PI * 2)
+                ctx.fill()
+            }
+            // A big gold medallion with a star.
+            ctx.fillStyle = '#ffd23f'
+            ctx.strokeStyle = '#8a5a12'
+            ctx.lineWidth = 0.9
             ctx.beginPath()
-            ctx.arc(x, torsoY + 6.6, 2.1, 0, Math.PI * 2)
+            ctx.arc(x, torsoY + 7.4, 2.8, 0, Math.PI * 2)
             ctx.fill()
             ctx.stroke()
+            ctx.fillStyle = '#fff6c2'
+            ctx.beginPath()
+            for (let k = 0; k < 10; k++) {
+                const rr = k % 2 ? 0.7 : 1.6
+                const a = -Math.PI / 2 + (k * Math.PI) / 5
+                ctx.lineTo(x + Math.cos(a) * rr, torsoY + 7.4 + Math.sin(a) * rr)
+            }
+            ctx.closePath()
+            ctx.fill()
             return
+        }
         case 'headphones':
             ctx.strokeStyle = '#2a1b30'
             ctx.lineWidth = 2.6
@@ -507,6 +640,17 @@ function drawAccessory(ctx: CanvasRenderingContext2D, look: Look, x: number, tor
             ctx.strokeStyle = '#e8594f'
             ctx.lineWidth = 1.2
             ctx.stroke()
+            // The cups: a dark speaker ring and a shine on each.
+            for (const side of [-1, 1]) {
+                ctx.fillStyle = darken('#e8594f', 0.35)
+                ctx.beginPath()
+                ctx.ellipse(hx + side * 10.6, hy + 1, 1.6, 2.6, 0, 0, Math.PI * 2)
+                ctx.fill()
+                ctx.fillStyle = 'rgba(255,255,255,0.55)'
+                ctx.beginPath()
+                ctx.ellipse(hx + side * 10.6 - 1.2, hy - 1.6, 0.9, 1.3, -0.4, 0, Math.PI * 2)
+                ctx.fill()
+            }
     }
 }
 
@@ -521,8 +665,8 @@ function hairPaths(look: Look, hx: number, hy: number, back: boolean, t: number)
         return out
     }
     const s = t * 1.5
+    // Long hair is drawn behind the head (drawFigure); here only the fringe.
     const out: ((c: CanvasRenderingContext2D) => void)[] = []
-    if (look.style === 'long') out.push(c => roundRect(c, hx - 12, hy - 6, 24, 19, 7))
     if (look.style === 'bun') out.push(c => { c.beginPath(); c.arc(hx - s, hy - 12.5, 4.6, 0, Math.PI * 2) })
     if (look.style === 'spiky') {
         out.push((c) => {

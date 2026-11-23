@@ -3,8 +3,9 @@ import { findTycoonGame } from '#shared/tycoon'
 
 /**
  * A game as a little illustration: its machine or table (by archetype) in
- * the game's accent colour, under a spotlight. Slots show their own symbol
- * three times on the reels, so the cabinets tell apart.
+ * the game's accent colour, under a spotlight. Slots wear their own topper
+ * (piñata, raccoon, dynamite...) and show their symbol on the reels; each
+ * card table deals its own hand, so every game tells apart at a glance.
  */
 const props = defineProps<{ slug: string }>()
 const def = computed(() => findTycoonGame(props.slug))
@@ -24,6 +25,8 @@ const SYMBOL: Record<string, string> = {
     aethergates: 'crown'
 }
 const symbol = computed(() => SYMBOL[props.slug] ?? 'seven')
+/** Three Card Poker's fan: a straight flush look, mixed suits for colour. */
+const POKER_FAN = [{ angle: -18, rank: 'Q', red: false }, { angle: 0, rank: 'K', red: true }, { angle: 18, rank: 'A', red: false }]
 
 /** `share` of the accent mixed with `other` (CSS color-mix, used as a style fill). */
 const mix = (other: string, share: number) => `color-mix(in oklab, ${accent.value} ${share}%, ${other})`
@@ -68,6 +71,18 @@ const minesTiles = Array.from({ length: 25 }, (_, i) => ([6, 13, 15, 19, 21].inc
         <stop offset="0.55" :style="{ stopColor: accent }" />
         <stop offset="1" :style="{ stopColor: mix('black', 70) }" />
       </linearGradient>
+      <linearGradient :id="`${uid}-stripes`" x1="0" x2="0.35" y1="0" y2="1">
+        <stop offset="0" stop-color="#ff5fa8" /><stop offset="0.25" stop-color="#ff5fa8" />
+        <stop offset="0.25" stop-color="#ffd23f" /><stop offset="0.5" stop-color="#ffd23f" />
+        <stop offset="0.5" stop-color="#38d3e8" /><stop offset="0.75" stop-color="#38d3e8" />
+        <stop offset="0.75" stop-color="#7ee08f" /><stop offset="1" stop-color="#7ee08f" />
+      </linearGradient>
+      <linearGradient :id="`${uid}-felt`" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity="0.22" />
+        <stop offset="1" stop-color="#000" stop-opacity="0.3" />
+      </linearGradient>
+      <path :id="`${uid}-spade`" d="M5 0 C1 4 0 6.5 2 8.2 C3.4 9.3 4.4 8.6 4.7 7.6 L3.9 11 H6.1 L5.3 7.6 C5.6 8.6 6.6 9.3 8 8.2 C10 6.5 9 4 5 0 Z" :fill="INK" />
+      <path :id="`${uid}-heart`" d="M5 10 C0.8 7 0 4.6 1.2 3 C2.4 1.6 4.2 2 5 3.6 C5.8 2 7.6 1.6 8.8 3 C10 4.6 9.2 7 5 10 Z" fill="#e11d48" />
       <g :id="`${uid}-sym`">
         <template v-if="symbol === 'cherry'">
           <path d="M3 5 Q4.5 0.5 8 1 M7 5.5 Q6.5 2.5 8 1" fill="none" stroke="#16a34a" stroke-width="1.1" stroke-linecap="round" />
@@ -100,19 +115,89 @@ const minesTiles = Array.from({ length: 25 }, (_, i) => ([6, 13, 15, 19, 21].inc
     <ellipse cx="50" cy="90" rx="34" ry="6" fill="black" opacity="0.4" />
 
     <g :stroke="INK" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round">
-      <!-- Slot cabinet -->
+      <!-- Slot cabinet, with the game's own topper so the slots tell apart -->
       <template v-if="archetype === 'slot'">
-        <rect x="31" y="8" width="38" height="14" rx="7" fill="#ffc93a" />
-        <circle v-for="x in [39, 46, 54, 61]" :key="x" :cx="x" cy="15" r="2.2" fill="#fff7c2" stroke-width="1.4" />
         <path d="M76 52 L84 30" fill="none" stroke="#c9b8e8" stroke-width="3.2" />
         <circle cx="85" cy="27" r="5" fill="#ff5470" />
+        <circle cx="83.6" cy="25.6" r="1.4" fill="#fff" stroke="none" />
         <rect x="22" y="20" width="56" height="68" rx="10" :fill="`url(#${uid}-body)`" />
+        <path d="M27 30 V80" stroke="#fff" stroke-opacity="0.45" stroke-width="3" />
         <rect x="28" y="31" width="44" height="26" rx="5" fill="#fff" />
         <line x1="42.7" y1="31" x2="42.7" y2="57" stroke-width="1.8" />
         <line x1="57.3" y1="31" x2="57.3" y2="57" stroke-width="1.8" />
-        <use v-for="x in [30.3, 45, 59.7]" :key="x" :href="`#${uid}-sym`" :transform="`translate(${x} 37.5) scale(1.25)`" stroke="none" />
+        <use v-for="x in [29.2, 43.6, 58.4]" :key="x" :href="`#${uid}-sym`" :transform="`translate(${x} 37.2) scale(1.32)`" stroke="none" />
         <rect x="30" y="64" width="40" height="15" rx="4" fill="#241a36" />
         <ellipse cx="50" cy="73" rx="12" ry="3.2" fill="#ffc93a" stroke-width="1.6" />
+
+        <!-- Spiñata: a candy-striped piñata star with tassels -->
+        <g v-if="slug === 'spinata'" stroke-width="2.2">
+          <path d="M40 22 V27 M50 25 V30 M60 22 V27" stroke="#ffc93a" stroke-width="2.4" />
+          <polygon :points="star(50, 14, 15, 0.52)" :fill="`url(#${uid}-stripes)`" />
+          <circle cx="50" cy="15" r="3.4" fill="#fff7c2" stroke-width="1.6" />
+        </g>
+        <!-- Trash Panda: a masked raccoon peeking over the top -->
+        <g v-else-if="slug === 'trashpanda'" stroke-width="2.2">
+          <path d="M34 14 L35 2 L44 9 Z M66 14 L65 2 L56 9 Z" fill="#8e8aa6" />
+          <path d="M37 8 L37.5 5 L41 8.5 Z M63 8 L62.5 5 L59 8.5 Z" fill="#3a3350" stroke="none" />
+          <path d="M32 24 Q32 6 50 6 Q68 6 68 24 Z" fill="#b8b4cc" />
+          <path d="M33 18 Q50 10 67 18 Q66 23 58 22 Q50 20 42 22 Q34 23 33 18 Z" fill="#2a2338" stroke-width="1.6" />
+          <circle cx="42.5" cy="17.4" r="2.4" fill="#fff" stroke="none" /><circle cx="57.5" cy="17.4" r="2.4" fill="#fff" stroke="none" />
+          <circle cx="43" cy="17.6" r="1.2" :fill="INK" stroke="none" /><circle cx="57" cy="17.6" r="1.2" :fill="INK" stroke="none" />
+          <ellipse cx="50" cy="22.5" rx="2.4" ry="1.6" :fill="INK" stroke="none" />
+        </g>
+        <!-- Fire in the Hole: a dynamite bundle with a lit fuse -->
+        <g v-else-if="slug === 'fireinthehole'" stroke-width="2.2">
+          <path d="M50 8 Q52 2 58 3" fill="none" stroke-width="1.8" />
+          <polygon :points="star(59, 3, 5, 0.4)" fill="#fde047" stroke="#f97316" stroke-width="1.2" />
+          <rect x="37" y="8" width="9" height="18" rx="2.5" fill="#e11d48" />
+          <rect x="54" y="8" width="9" height="18" rx="2.5" fill="#e11d48" />
+          <rect x="45.5" y="6" width="9" height="20" rx="2.5" fill="#ff5470" />
+          <rect x="35" y="15" width="30" height="4.5" rx="1" fill="#7a4a1d" stroke-width="1.6" />
+        </g>
+        <!-- Candy Madness: a swirl lollipop -->
+        <g v-else-if="slug === 'candymadness'" stroke-width="2.2">
+          <path d="M50 22 V28" stroke-width="5" /><path d="M50 22 V28" stroke="#fff7ea" stroke-width="2.4" />
+          <circle cx="50" cy="13" r="12" fill="#ff7ab8" />
+          <path d="M50 13 m0 -2.2 a2.2 2.2 0 1 1 -2.2 2.2 a4.6 4.6 0 0 1 4.6 -4.6 a7 7 0 0 1 7 7 a9.2 9.2 0 0 1 -9.2 9.2" fill="none" stroke="#fff" stroke-width="2.4" />
+          <path d="M42 7 Q45 4 49 3.6" fill="none" stroke="#fff" stroke-opacity="0.8" stroke-width="2" />
+        </g>
+        <!-- Book of Shadows: an open spell book with a glowing eye -->
+        <g v-else-if="slug === 'bookofshadows'" stroke-width="2.2">
+          <circle cx="50" cy="12" r="12" fill="#e9d5ff" fill-opacity="0.35" stroke="none" />
+          <path d="M28 24 L30 8 Q40 4 50 9 Q60 4 70 8 L72 24 Q60 20 50 25 Q40 20 28 24 Z" fill="#6b21a8" />
+          <path d="M32 21 L33 9 Q42 6 50 10 V23 Q42 19 32 21 Z M68 21 L67 9 Q58 6 50 10 V23 Q58 19 68 21 Z" fill="#fff4dc" stroke-width="1.6" />
+          <path d="M53 15 Q58.5 11 64 15 Q58.5 19 53 15 Z" fill="#fde047" stroke-width="1.2" />
+          <circle cx="58.5" cy="15" r="1.4" :fill="INK" stroke="none" />
+          <path d="M36 13 H45 M36 16.5 H44" stroke-width="1.2" opacity="0.5" />
+        </g>
+        <!-- Xeno Slot: a flying saucer -->
+        <g v-else-if="slug === 'xenoslot'" stroke-width="2.2">
+          <path d="M40 14 Q40 3 50 3 Q60 3 60 14 Z" fill="#bff7ee" />
+          <ellipse cx="50" cy="10" rx="3.4" ry="4" fill="#4ade80" stroke-width="1.4" />
+          <ellipse cx="50" cy="17" rx="22" ry="7" fill="#9aa3c2" />
+          <ellipse cx="50" cy="15.5" rx="22" ry="3.6" fill="#d9def0" stroke="none" />
+          <circle v-for="x in [36, 44, 56, 64]" :key="x" :cx="x" cy="19" r="1.8" fill="#fde047" stroke-width="1" />
+        </g>
+        <!-- Ember Portals: a ring of fire around a swirl -->
+        <g v-else-if="slug === 'emberportals'" stroke-width="2.2">
+          <path d="M34 22 Q30 14 35 6 Q36 11 39 11 Q40 3 47 1 Q46 7 50 8 Q53 2 59 3 Q57 8 61 11 Q64 8 66 6 Q71 14 66 22 Z" fill="#f97316" />
+          <path d="M39 22 Q36 16 40 11 Q42 14 45 13 Q47 8 51 7 Q51 11 55 12 Q58 10 61 11 Q64 16 61 22 Z" fill="#fde047" stroke="none" />
+          <ellipse cx="50" cy="18" rx="9" ry="7" fill="#6d28d9" stroke-width="1.8" />
+          <path d="M50 18 m-4 0 a4 3 0 1 1 4 3" fill="none" stroke="#e9d5ff" stroke-width="1.6" />
+        </g>
+        <!-- Aethergates: a temple gate with a lightning bolt -->
+        <g v-else-if="slug === 'aethergates'" stroke-width="2.2">
+          <path d="M28 16 L50 3 L72 16 Z" fill="#fff3c4" />
+          <rect x="28" y="16" width="44" height="6" rx="1" fill="#ffe08a" />
+          <path d="M33 22 V27 M43 22 V27 M57 22 V27 M67 22 V27" stroke-width="3.6" />
+          <path d="M33 22 V27 M43 22 V27 M57 22 V27 M67 22 V27" stroke="#fff3c4" stroke-width="1.6" />
+          <path d="M52 5 L45 12.5 H50 L47 19 L56 10 H51 Z" fill="#facc15" stroke-width="1.4" />
+        </g>
+        <!-- Any other slot: the classic bulb sign -->
+        <g v-else>
+          <rect x="31" y="8" width="38" height="14" rx="7" fill="#ffc93a" />
+          <circle v-for="x in [39, 46, 54, 61]" :key="x" :cx="x" cy="15" r="2.2" fill="#fff7c2" stroke-width="1.4" />
+        </g>
       </template>
 
       <!-- Dice on felt -->
@@ -243,24 +328,67 @@ const minesTiles = Array.from({ length: 25 }, (_, i) => ([6, 13, 15, 19, 21].inc
         </g>
       </template>
 
-      <!-- Card table -->
+      <!-- Card table: each game deals its own hand -->
       <template v-else>
         <path d="M6 58 Q50 30 94 58 V66 Q50 40 6 66 Z" fill="#7a4a1d" />
         <path d="M10 60 Q50 36 90 60 L90 88 H10 Z" :style="{ fill: accent }" />
+        <path d="M10 60 Q50 36 90 60 L90 88 H10 Z" :fill="`url(#${uid}-felt)`" stroke="none" />
         <path d="M22 72 Q50 56 78 72" fill="none" stroke="#fff" stroke-opacity="0.45" stroke-width="1.6" stroke-dasharray="3 3" />
-        <g transform="rotate(-10 40 46)">
-          <rect x="27" y="28" width="24" height="34" rx="4" fill="#fff" />
-          <text x="31" y="40" font-size="10" font-weight="900" :fill="INK" stroke="none" font-family="ui-rounded, sans-serif">A</text>
-          <path d="M39 45 C35 49 34 52 37 54 C38.5 55 39.5 54 39.8 53 C40 54 41 55 42.6 54 C45.5 52 44 49 39 45 Z" :fill="INK" stroke="none" />
-        </g>
-        <g transform="rotate(10 62 46)">
-          <rect x="50" y="30" width="24" height="34" rx="4" fill="#fff" />
-          <text x="54" y="42" font-size="10" font-weight="900" fill="#e11d48" stroke="none" font-family="ui-rounded, sans-serif">K</text>
-          <path d="M62 56 C57 52 56 49 58 47.4 C59.6 46 61.4 46.8 62 48.4 C62.6 46.8 64.4 46 66 47.4 C68 49 67 52 62 56 Z" fill="#e11d48" stroke="none" />
-        </g>
-        <g v-for="(x, i) in [22, 78]" :key="x">
+
+        <!-- Three Card Poker: a fan of three -->
+        <template v-if="slug === 'three-card-poker'">
+          <g v-for="(card, i) in POKER_FAN" :key="i" :transform="`rotate(${card.angle} 50 78)`">
+            <rect x="38" y="22" width="24" height="34" rx="4" fill="#fff" />
+            <text x="41.5" y="33" font-size="9" font-weight="900" :fill="card.red ? '#e11d48' : INK" stroke="none" font-family="ui-rounded, sans-serif">{{ card.rank }}</text>
+            <use :href="`#${uid}-${card.red ? 'heart' : 'spade'}`" transform="translate(45 37) scale(1)" stroke="none" />
+          </g>
+        </template>
+
+        <!-- Baccarat: a natural nine beside a face-down card -->
+        <template v-else-if="slug === 'baccarat'">
+          <g transform="rotate(-10 40 46)">
+            <rect x="27" y="28" width="24" height="34" rx="4" fill="#fff" />
+            <text x="31" y="40" font-size="10" font-weight="900" fill="#e11d48" stroke="none" font-family="ui-rounded, sans-serif">9</text>
+            <use :href="`#${uid}-heart`" transform="translate(34 42)" stroke="none" />
+          </g>
+          <g transform="rotate(10 62 46)">
+            <rect x="50" y="30" width="24" height="34" rx="4" fill="#c81e3c" />
+            <rect x="53.5" y="33.5" width="17" height="27" rx="2.5" fill="none" stroke="#fff" stroke-opacity="0.85" stroke-width="1.4" />
+            <path d="M62 38 L67 47 L62 56 L57 47 Z" fill="#ffc93a" stroke-width="1.2" />
+          </g>
+        </template>
+
+        <!-- Casino Hold'em: the five community cards -->
+        <template v-else-if="slug === 'casino-holdem'">
+          <g v-for="i in 5" :key="i" stroke-width="1.8">
+            <rect :x="13 + (i - 1) * 15.2" y="34" width="13" height="19" rx="2.4" :fill="i > 3 ? '#1e3a8a' : '#fff'" />
+            <use v-if="i <= 3" :href="`#${uid}-${i === 2 ? 'heart' : 'spade'}`" :transform="`translate(${14.3 + (i - 1) * 15.2} 38.5) scale(0.95)`" stroke="none" />
+            <path v-else :d="`M${16 + (i - 1) * 15.2} 37 h7 v13 h-7 Z`" fill="none" stroke="#fff" stroke-opacity="0.7" stroke-width="1" />
+          </g>
+          <g v-for="(angle, i) in [-12, 12]" :key="`h${i}`" :transform="`rotate(${angle} 50 92)`" stroke-width="1.8">
+            <rect x="42" y="56" width="16" height="22" rx="3" fill="#fff" />
+            <text x="44.6" y="65" font-size="7" font-weight="900" :fill="i ? '#e11d48' : INK" stroke="none" font-family="ui-rounded, sans-serif">A</text>
+          </g>
+        </template>
+
+        <!-- Blackjack: ace and king, 21 -->
+        <template v-else>
+          <g transform="rotate(-10 40 46)">
+            <rect x="27" y="28" width="24" height="34" rx="4" fill="#fff" />
+            <text x="31" y="40" font-size="10" font-weight="900" :fill="INK" stroke="none" font-family="ui-rounded, sans-serif">A</text>
+            <use :href="`#${uid}-spade`" transform="translate(34 43)" stroke="none" />
+          </g>
+          <g transform="rotate(10 62 46)">
+            <rect x="50" y="30" width="24" height="34" rx="4" fill="#fff" />
+            <text x="54" y="42" font-size="10" font-weight="900" fill="#e11d48" stroke="none" font-family="ui-rounded, sans-serif">K</text>
+            <use :href="`#${uid}-heart`" transform="translate(57 44)" stroke="none" />
+          </g>
+        </template>
+
+        <g v-for="(x, i) in [20, 80]" :key="x">
           <ellipse :cx="x" cy="80" rx="8" ry="3.5" :fill="i ? '#ffc93a' : '#ff5470'" />
           <ellipse :cx="x" cy="76" rx="8" ry="3.5" :fill="i ? '#ffc93a' : '#ff5470'" />
+          <ellipse :cx="x" cy="76" rx="4.4" ry="1.6" fill="none" stroke="#fff" stroke-opacity="0.85" stroke-width="1.2" stroke-dasharray="2 1.6" />
         </g>
       </template>
     </g>

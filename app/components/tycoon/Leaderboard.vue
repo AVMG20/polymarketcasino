@@ -41,6 +41,28 @@ function visit(entry: LeaderboardEntry) {
     void router.push(entry.owner.id === myId.value ? '/' : `/visit/${encodeURIComponent(entry.owner.id)}`)
 }
 
+/**
+ * The pinned row repeats your own row: hide it while that row is in view in
+ * the list (the drawer's scroll box), so you never show twice.
+ */
+const mineVisible = ref(false)
+let observer: IntersectionObserver | null = null
+let observed: Element | null = null
+function setMineRow(el: unknown) {
+    const row = el instanceof Element ? el : null
+    if (row === observed) return
+    observer?.disconnect()
+    observer = null
+    observed = row
+    mineVisible.value = false
+    if (!row) return
+    observer = new IntersectionObserver(([entry]) => {
+        mineVisible.value = !!entry && entry.isIntersecting && entry.intersectionRatio >= 0.9
+    }, { root: row.closest('.drawer-scroll'), threshold: [0, 0.9, 1] })
+    observer.observe(row)
+}
+onBeforeUnmount(() => observer?.disconnect())
+
 const MEDALS = ['#ffc93a', '#d9dde8', '#e0915a'] as const
 const ZONE_LIST = ZONES.map(zone => ({ id: zone.id, name: zone.name, art: zoneArt(zone.id) }))
 </script>
@@ -68,11 +90,11 @@ const ZONE_LIST = ZONES.map(zone => ({ id: zone.id, name: zone.name, art: zoneAr
           <template v-else-if="data">
             <p v-if="!data.entries.length" class="px-6 py-10 text-center text-[var(--g-muted)]">No casinos yet</p>
             <ol class="flex-1 space-y-1.5 px-3 pb-3">
-              <li v-for="entry in data.entries" :key="entry.owner.id">
+              <li v-for="entry in data.entries" :key="entry.owner.id" :ref="entry.owner.id === myId ? setMineRow : undefined">
                 <TycoonLeaderboardRow :entry="entry" :me="entry.owner.id === myId" :medal="MEDALS[entry.rank - 1] ?? null" :zones="ZONE_LIST" @select="visit(entry)" />
               </li>
             </ol>
-            <div v-if="data.me" class="sticky bottom-0 border-t-2 border-black/40 bg-[#2a1f3f] px-3 pt-2 pb-3 shadow-[0_-8px_16px_rgb(0_0_0/0.3)]">
+            <div v-if="data.me" class="pinned sticky bottom-0 border-t-2 border-black/40 bg-[#2a1f3f] px-3 pt-2 pb-3 shadow-[0_-8px_16px_rgb(0_0_0/0.3)]" :class="mineVisible ? 'pinned-off' : ''" :aria-hidden="mineVisible || undefined" :inert="mineVisible || undefined">
               <TycoonLeaderboardRow :entry="data.me" me :medal="null" :zones="ZONE_LIST" @select="visit(data.me)" />
             </div>
           </template>
@@ -86,3 +108,13 @@ const ZONE_LIST = ZONES.map(zone => ({ id: zone.id, name: zone.name, art: zoneAr
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+/* Your own row is in the list: the pinned copy slides away (it keeps its space, so the list doesn't jump). */
+.pinned { transition: transform 0.2s ease, opacity 0.2s ease; }
+.pinned-off { transform: translateY(100%); opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .pinned { transition: opacity 0.15s ease; }
+  .pinned-off { transform: none; }
+}
+</style>

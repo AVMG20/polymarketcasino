@@ -385,6 +385,22 @@ export function useTycoon() {
         return first ? `${first.kind}:${first.id}` : null
     })
 
+    /**
+     * What the player is saving for while nothing can start: the cheapest
+     * item they could build once they have the chips (open zone, not running,
+     * not maxed). Null while something can start (the Build badge says so).
+     */
+    const goal = computed<BuildView | null>(() => {
+        if (!state.value || startable.value.length) return null
+        let best: BuildView | null = null
+        for (const item of BUILD_ITEMS) {
+            const v = view(item.kind, item.id, false)
+            if (!v.cost || v.running || v.lockZone || v.affordable) continue
+            if (!best || v.cost.chips < (best.cost?.chips ?? Infinity)) best = v
+        }
+        return best
+    })
+
     function start() {
         if (!import.meta.client || ticker) return
         // Back from another tab or app: say what happened while the player was away.
@@ -412,7 +428,7 @@ export function useTycoon() {
         state, ready, loadFailed, chips, gems, busy, lastBuilt, serverTime, offset, welcome, missions, claimable, missionDone,
         cageStored, cageFill, rushActive, rushLeftMs, rushPrice, queue,
         seats, visitors, waiting, demand, occupied, perHour, campaign, campaigns,
-        startable, suggestion,
+        startable, suggestion, goal,
         refresh, refreshSoon, collect, build, buyGem, buyCosmetic, equipCosmetic, startCampaign, claimMission, setChips, blocker, cost, skipPrice, view
     }
 }

@@ -35,6 +35,20 @@ async function run(c: CampaignView) {
     await tycoon.startCampaign(c.def.id)
 }
 
+/**
+ * The longest campaign on offer that outlasts the cage: its guests keep
+ * paying in, but a full cage stops filling. Players who start a day-long run
+ * and go to bed should know to collect on the way (or to grow the cage).
+ */
+const roughHours = (hours: number) => (hours >= 2 ? `~${Math.round(hours)}h` : formatDuration(hours * 3_600_000))
+const outlasts = computed(() => {
+    const capacity = tycoon.state.value?.cage.capacity ?? 0
+    const long = tycoon.campaigns.value
+        .filter(c => c.lockedAt === null && c.perHour > 0 && c.def.ms > (capacity / c.perHour) * 3_600_000)
+        .sort((a, b) => b.def.ms - a.def.ms)[0]
+    return long ? { name: long.def.name, runs: formatDuration(long.def.ms), fills: roughHours(capacity / long.perHour) } : null
+})
+
 /** About what the extension after this one costs: every queued run adds ×CAMPAIGN_STACK_FACTOR (the server rounds its own price). */
 const nextCost = (c: CampaignView) => Math.ceil(c.cost * CAMPAIGN_STACK_FACTOR)
 
@@ -115,6 +129,15 @@ function buttonTitle(c: CampaignView): string {
       </div>
     </div>
 
+    <!-- A long run outlasts the cage: say so before the player goes to bed. -->
+    <p
+      v-if="outlasts"
+      class="g-well flex items-center gap-2 rounded-2xl px-2.5 py-2 text-[12.5px] leading-[1.3] font-semibold text-[var(--g-muted)]"
+      :title="`The cage stops filling when it is full: collect while ${outlasts.name} runs, or upgrade the cage to hold more`"
+    >
+      <TycoonChipJar :fill="1" class="h-8 w-7 shrink-0" />
+      <span><span class="text-[var(--g-ink)]">{{ outlasts.name }}</span> runs {{ outlasts.runs }}, an empty cage fills in {{ outlasts.fills }}: collect on the way or upgrade the cage.</span>
+    </p>
   </div>
 </template>
 

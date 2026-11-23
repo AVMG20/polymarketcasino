@@ -117,7 +117,7 @@ const room = computed<ZoneId>({
           @click="tryOn(item)"
         >
           <span class="relative grid aspect-square w-full place-items-center overflow-hidden rounded-xl bg-black/30" :class="item.premium ? 'g-gem-glow' : ''">
-            <TycoonAvatarPortrait :name="name" :avatar="{ ...worn, [item.slot]: item.id }" :size="80" />
+            <TycoonAvatarPortrait :name="name" :avatar="{ ...worn, [item.slot]: item.id }" :crop="item.slot === 'hat' ? 'bust' : 'upper'" :size="80" />
             <span v-if="worn[item.slot as AvatarSlot] === item.id" class="absolute top-1 right-1 grid size-5 place-items-center rounded-full border-2 border-black/50 bg-[#3fd25a]"><Check class="size-3 text-white" :stroke-width="4" /></span>
           </span>
           <span class="mt-1 w-full truncate text-center text-[12px] leading-4 font-semibold">{{ item.name }}</span>

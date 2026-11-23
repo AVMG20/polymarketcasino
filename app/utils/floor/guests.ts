@@ -28,6 +28,10 @@ interface Guest {
     resume: State
     emoteT: number
     fade: number
+    /** Coins this guest has spent at their machine since the last pop. */
+    earned: number
+    /** Seconds until the next coin pops off their machine. */
+    popT: number
 }
 
 const LINES = ['Feeling lucky!', 'One more spin…', 'Jackpot?!', 'Nice place!', 'Ooh, shiny!', 'Hit me!', 'Let it ride!', 'So close!', 'Red, red, red!', 'This one\'s hot']
@@ -62,6 +66,13 @@ export class GuestCrowd {
     private rush = false
     private lineT = 6
     private bubbles: { box: Container, text: Text, bg: Graphics, actor: Actor | null, t: number }[] = []
+    /**
+     * What one playing guest brings in, coins a second. Every 8-16 s a coin
+     * pops off their machine, labelled with the whole coins they spent since
+     * the last label (0 = just the coin), so a busy floor visibly makes money.
+     */
+    earnPerSec = 0
+    onEarn: ((x: number, y: number, amount: number) => void) | null = null
     private nextLook = Math.floor(Math.random() * LOOK_POOL)
     private initialised = false
 
@@ -125,7 +136,7 @@ export class GuestCrowd {
         const actor = new Actor(this.PIXI, figureFrames(this.bank, look), this.fx, start)
         actor.speed = 1.9 + Math.random() * 0.8
         this.layer.addChild(actor.container)
-        const g: Guest = { actor, state: 'idle', timer: atEntrance ? 0 : Math.random() * 3, spot: null, resume: 'idle', emoteT: 3 + Math.random() * 6, fade: atEntrance ? 0 : 1 }
+        const g: Guest = { actor, state: 'idle', timer: atEntrance ? 0 : Math.random() * 3, spot: null, resume: 'idle', emoteT: 3 + Math.random() * 6, fade: atEntrance ? 0 : 1, earned: Math.random(), popT: 4 + Math.random() * 8 }
         actor.container.alpha = g.fade
         this.guests.push(g)
         if (atEntrance) this.wander(g)
@@ -271,6 +282,17 @@ export class GuestCrowd {
                 }
                 case 'play': {
                     g.timer -= dt
+                    if (this.onEarn && this.earnPerSec > 0) {
+                        g.earned += this.earnPerSec * dt
+                        g.popT -= dt
+                        if (g.popT <= 0) {
+                            g.popT = 8 + Math.random() * 8
+                            const whole = Math.floor(g.earned)
+                            g.earned -= whole
+                            const p = g.actor.container.position
+                            this.onEarn(p.x, p.y, whole)
+                        }
+                    }
                     g.emoteT -= dt * (this.rush ? 1.8 : 1)
                     if (g.emoteT <= 0) {
                         g.emoteT = 4 + Math.random() * 8

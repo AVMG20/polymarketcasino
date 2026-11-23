@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
-import { ArrowRight, Check, Cherry, Coins, Dices, Flame, Footprints, Gift, Hammer, Megaphone, Spade, Timer } from 'lucide-vue-next'
+import { ArrowRight, Check, Timer } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import type { MissionId, MissionKey, MissionView } from '#shared/missions'
+import type { IlloName } from '~/utils/tycoon-art'
 
 /**
  * Today's three missions and the bonus for clearing them: a progress bar
@@ -13,15 +13,15 @@ const emit = defineEmits<{ go: [id: MissionId] }>()
 const tycoon = useTycoon()
 const missions = computed(() => tycoon.missions.value)
 
-const LOOK: Record<MissionId, { icon: Component, color: string }> = {
-    'rounds': { icon: Dices, color: '#4aa6ff' },
-    'slot-wins': { icon: Cherry, color: '#ff5470' },
-    'big-win': { icon: Flame, color: '#ff9a2e' },
-    'table-hands': { icon: Spade, color: '#3fd25a' },
-    'collects': { icon: Coins, color: '#ffc93a' },
-    'build': { icon: Hammer, color: '#3fd25a' },
-    'campaign': { icon: Megaphone, color: '#4aa6ff' },
-    'visit': { icon: Footprints, color: '#a879ff' }
+const LOOK: Record<MissionId, { illo: IlloName, color: string }> = {
+    'rounds': { illo: 'dice', color: '#4aa6ff' },
+    'slot-wins': { illo: 'cherry', color: '#ff5470' },
+    'big-win': { illo: 'bigwin', color: '#ff9a2e' },
+    'table-hands': { illo: 'cards', color: '#3fd25a' },
+    'collects': { illo: 'coins', color: '#ffc93a' },
+    'build': { illo: 'crew', color: '#3fd25a' },
+    'campaign': { illo: 'marketing', color: '#4aa6ff' },
+    'visit': { illo: 'visit', color: '#a879ff' }
 }
 
 const done = (m: MissionView) => m.progress >= m.target
@@ -55,8 +55,8 @@ async function claim(m: MissionView) {
         class="row relative flex items-center gap-2.5 rounded-[20px] p-2"
         :class="[m.claimed ? 'row-claimed' : done(m) ? 'row-done' : '', popped === m.id ? 'g-pop' : '']"
       >
-        <span class="grid size-12 shrink-0 place-items-center rounded-2xl border-2 border-black/45 shadow-[0_3px_0_rgb(0_0_0/0.4),inset_0_2px_0_rgb(255_255_255/0.35)]" :style="{ background: LOOK[m.id as MissionId]?.color ?? '#4a3a6b' }">
-          <component :is="LOOK[m.id as MissionId]?.icon ?? Gift" class="size-6 text-white drop-shadow-[0_1.5px_0_rgb(0_0_0/0.35)]" :stroke-width="2.75" />
+        <span class="badge grid size-12 shrink-0 place-items-center rounded-2xl border-2 border-black/45" :style="{ '--tone': LOOK[m.id as MissionId]?.color ?? '#4a3a6b' }">
+          <TycoonIllo :name="LOOK[m.id as MissionId]?.illo ?? 'chest'" :color="LOOK[m.id as MissionId]?.color" plain class="size-9! drop-shadow-[0_2px_0_rgb(0_0_0/0.3)]" />
         </span>
         <span class="min-w-0 flex-1">
           <span class="g-title line-clamp-2 text-[15px] leading-5 sm:text-base">{{ m.title }}</span>
@@ -96,7 +96,7 @@ async function claim(m: MissionView) {
     <!-- The bonus chest for clearing all three. -->
     <div class="bonus flex items-center gap-2.5 rounded-[20px] p-2" :class="[missions.bonus.claimed ? 'row-claimed' : done(missions.bonus) ? 'row-done' : '', popped === 'bonus' ? 'g-pop' : '']">
       <span class="grid size-12 shrink-0 place-items-center rounded-2xl border-2 border-black/45 bg-gradient-to-b from-[#ffd65c] to-[#e88a00] shadow-[0_3px_0_rgb(0_0_0/0.4),inset_0_2px_0_rgb(255_255_255/0.45)]" :class="done(missions.bonus) && !missions.bonus.claimed ? 'g-bounce' : ''">
-        <Gift class="size-6 text-[#5a3200]" :stroke-width="2.75" />
+        <TycoonIllo name="chest" color="#ffc93a" plain class="size-9! drop-shadow-[0_2px_0_rgb(0_0_0/0.3)]" />
       </span>
       <span class="min-w-0 flex-1">
         <span class="g-title block truncate text-[15px] leading-5 sm:text-base">{{ missions.bonus.title }}</span>
@@ -124,6 +124,10 @@ async function claim(m: MissionView) {
 </template>
 
 <style scoped>
+.badge {
+  background: radial-gradient(circle at 30% 22%, color-mix(in oklab, var(--tone) 55%, white), var(--tone) 50%, color-mix(in oklab, var(--tone) 60%, black));
+  box-shadow: 0 3px 0 rgb(0 0 0 / 0.4), inset 0 2px 0 rgb(255 255 255 / 0.35);
+}
 .row, .bonus {
   background: linear-gradient(180deg, #45356a, #33264f 70%);
   border: 2px solid #120c1d;

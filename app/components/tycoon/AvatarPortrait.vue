@@ -16,17 +16,38 @@ const props = withDefaults(defineProps<{
     avatar?: AvatarLook | null
     /** Box size in CSS px (height for `full`; width follows). */
     size?: number
-    crop?: 'bust' | 'full'
+    /** `bust` the head (and hat), `upper` head and torso (outfits, chains), `full` the whole figure. */
+    crop?: 'bust' | 'upper' | 'full'
     animate?: boolean
 }>(), { avatar: null, size: 40, crop: 'bust', animate: false })
 
 const canvas = ref<HTMLCanvasElement | null>(null)
-// The part of the figure canvas each crop shows (figure px).
-const view = computed(() => props.crop === 'bust'
-    ? { x: -2, y: 6, w: 44, h: 44 }
-    : { x: 0, y: 0, w: FIGURE_W, h: FIGURE_H })
-const box = computed(() => ({ w: Math.round(props.size * view.value.w / view.value.h), h: props.size }))
 const look = computed(() => avatarLook(props.name || 'player', props.avatar))
+
+/**
+ * Where the top of a bust starts (figure px): the head sits at y 24-46 and
+ * the hair tops out near 21; each hat reaches higher. A bust is cropped from
+ * there to the shoulders (y 52), so a bare head fills a round frame and a
+ * tall hat zooms out just as far as it needs.
+ */
+const BUST_TOP: Record<string, number> = { none: 19.5, cap: 19, hardhat: 18, beanie: 15, crown: 13, cowboy: 13, tophat: 8, party: 8 }
+const BUST_BOTTOM = 52
+
+// The part of the figure canvas each crop shows (figure px).
+const view = computed(() => {
+    if (props.crop === 'bust') {
+        const { hat, style } = look.value
+        // A bun or spikes stick up past a bare head (or a cap).
+        const hair = (hat === 'none' || hat === 'cap') && (style === 'bun' || style === 'spiky') ? 15.5 : 99
+        const top = Math.min(hair, BUST_TOP[hat] ?? 8)
+        const side = BUST_BOTTOM - top
+        return { x: 20.5 - side / 2, y: top, w: side, h: side }
+    }
+    return props.crop === 'upper'
+        ? { x: -4, y: 17, w: 48, h: 48 }
+        : { x: 0, y: 0, w: FIGURE_W, h: FIGURE_H }
+})
+const box = computed(() => ({ w: Math.round(props.size * view.value.w / view.value.h), h: props.size }))
 
 let raf = 0
 let started = 0

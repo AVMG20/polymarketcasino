@@ -229,6 +229,16 @@ export const CHANDELIERS: { zone: ZoneId, at: Tile }[] = [
     { zone: 'penthouse', at: { x: 10, y: 3 } }
 ]
 
+/**
+ * Where a skin's big floor emblem sits, in tiles from the zone's back corner,
+ * and its size (tiles). A zone not listed centres it. The backroom's middle is
+ * under the dice table and the cashier cage: its emblem lies on the open floor
+ * between the builder's desk and the cage, by the entrance.
+ */
+export const EMBLEMS: Partial<Record<ZoneId, { x: number, y: number, r: number }>> = {
+    backroom: { x: 3.9, y: 5.75, r: 1 }
+}
+
 // ── lookups ────────────────────────────────────────────────────────────────
 
 const AREA_GRID: (Area | null)[] = (() => {

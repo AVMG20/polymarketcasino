@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
-import { Check, ChevronRight, Clock, Crown, HardHat, Lock, Shirt, Zap } from 'lucide-vue-next'
+import { Check, ChevronRight, Clock, Crown, Lock } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import { formatCoins } from '#shared/money'
+import type { IlloName } from '~/utils/tycoon-art'
 import { BUILDER_GEMS, GOLDEN_GEMS, RUSH_MS, type GemItem } from '#shared/tycoon'
 
 /** The Gems tab: High Rollers (the rush: guest income ×2), the gem builder and golden skins, as glowing tiles. */
@@ -21,7 +21,7 @@ interface Offer {
     name: string
     badge: string
     title: string
-    icon: Component | null
+    illo: IlloName
     color: string
     price: number
     owned: boolean
@@ -30,9 +30,9 @@ interface Offer {
 const offers = computed<Offer[]>(() => {
     const rushOn = tycoon.rushActive.value
     return [
-        { item: 'rush', name: 'High Rollers', badge: rushOn ? formatCountdown(tycoon.rushLeftMs.value) : `×2 income · ${formatDuration(RUSH_MS)}`, title: `High rollers visit: every guest spends double, so guest income is ×2 for ${formatDuration(RUSH_MS)}`, icon: Zap, color: '#ff9a2e', price: tycoon.rushPrice.value, owned: false },
-        { item: 'builder', name: 'Builder', badge: '+1', title: 'One more builder for good: one more construction at once (on top of the Construction Crew)', icon: HardHat, color: '#ffc93a', price: BUILDER_GEMS, owned: !!state.value?.gemBuilder },
-        { item: 'golden', name: 'Golden', badge: 'skin', title: 'A gold finish for one built game (cosmetic)', icon: Crown, color: '#eab308', price: GOLDEN_GEMS, owned: builtGames.value.length === 0 }
+        { item: 'rush', name: 'High Rollers', badge: rushOn ? formatCountdown(tycoon.rushLeftMs.value) : `×2 income · ${formatDuration(RUSH_MS)}`, title: `High rollers visit: every guest spends double, so guest income is ×2 for ${formatDuration(RUSH_MS)}`, illo: 'rush', color: '#ff9a2e', price: tycoon.rushPrice.value, owned: false },
+        { item: 'builder', name: 'Builder', badge: '+1', title: 'One more builder for good: one more construction at once (on top of the Construction Crew)', illo: 'builder', color: '#ffc93a', price: BUILDER_GEMS, owned: !!state.value?.gemBuilder },
+        { item: 'golden', name: 'Golden', badge: 'skin', title: 'A gold finish for one built game (cosmetic)', illo: 'golden', color: '#eab308', price: GOLDEN_GEMS, owned: builtGames.value.length === 0 }
     ]
 })
 
@@ -72,13 +72,8 @@ async function gild() {
 
     <div class="grid grid-cols-2 gap-2.5">
       <div v-for="offer in offers" :key="offer.item" class="tile flex flex-col rounded-[20px] p-1.5" :class="enabled && !offer.owned ? 'g-gem-glow' : 'opacity-60'" :title="offer.title">
-        <div class="relative grid aspect-[4/3] place-items-center overflow-hidden rounded-[14px] border-2 border-black/50" :style="{ background: `radial-gradient(circle at 30% 22%, color-mix(in oklab, ${offer.color} 55%, white), ${offer.color} 50%, color-mix(in oklab, ${offer.color} 55%, black))` }">
-          <component :is="offer.icon" v-if="offer.icon" class="size-12 text-white drop-shadow-[0_3px_0_rgb(0_0_0/0.3)]" :stroke-width="2.25" />
-          <span v-else class="relative h-12 w-14">
-            <CasinoChipIcon class="absolute bottom-0 left-0 size-9 drop-shadow-[0_2px_0_rgb(0_0_0/0.35)]" />
-            <CasinoChipIcon class="absolute right-0 bottom-1 size-9 drop-shadow-[0_2px_0_rgb(0_0_0/0.35)]" />
-            <CasinoChipIcon class="absolute top-0 left-2.5 size-9 drop-shadow-[0_2px_0_rgb(0_0_0/0.35)]" />
-          </span>
+        <div class="relative aspect-[4/3] overflow-hidden rounded-[14px] border-2 border-black/50">
+          <TycoonIllo :name="offer.illo" :color="offer.color" class="absolute inset-0" />
           <span class="g-num absolute top-1.5 right-1.5 flex items-center gap-1 rounded-full border-[1.5px] border-black/50 bg-[#120c1d]/85 px-1.5 text-xs leading-5"><Clock v-if="offer.item === 'rush'" class="size-3" :stroke-width="3" />{{ offer.badge }}</span>
         </div>
         <p class="g-title mt-1 text-center text-base leading-6">{{ offer.name }}</p>
@@ -101,7 +96,7 @@ async function gild() {
 
     <!-- Cosmetics: the wardrobe (avatar items, room skins). -->
     <button type="button" class="tile g-gem-glow flex w-full items-center gap-3 rounded-[20px] p-1.5 pr-3 text-left transition-transform active:scale-[0.98]" @click="cosmetics.show()">
-      <span class="grid size-14 shrink-0 place-items-center rounded-[14px] border-2 border-black/50 bg-[radial-gradient(circle_at_30%_22%,#d9c2ff,#a879ff_50%,#5b3a9e)]"><Shirt class="size-8 text-white drop-shadow-[0_3px_0_rgb(0_0_0/0.3)]" :stroke-width="2.25" /></span>
+      <span class="block size-14 shrink-0 overflow-hidden rounded-[14px] border-2 border-black/50"><TycoonIllo name="wardrobe" color="#a879ff" /></span>
       <span class="g-title min-w-0 flex-1 truncate text-lg">Wardrobe</span>
       <ChevronRight class="size-6 shrink-0 text-[var(--g-muted)]" :stroke-width="3" />
     </button>

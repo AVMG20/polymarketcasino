@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Heart, Home, Lock, Megaphone, RotateCcw, Sparkles, Trophy, Users, Vault } from 'lucide-vue-next'
+import { Heart, Home, Lock, Megaphone, RotateCcw, Sparkles, Trophy, Users } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { findGame } from '#shared/games/registry'
 import { formatCoins, formatCoinsExact } from '#shared/money'
@@ -305,16 +305,14 @@ useHead({ title: () => ownerName.value ? `${ownerName.value}'s casino` : 'Visiti
         </div>
       </div>
       <div v-else-if="info?.kind === 'cage'" class="flex items-center gap-3 p-3 pr-14">
-        <span class="grid size-14 shrink-0 place-items-center rounded-2xl border-2 border-black/40 bg-[#f59e0b]"><Vault class="size-7 text-white" :stroke-width="2.5" /></span>
+        <span class="block size-14 shrink-0 overflow-hidden rounded-2xl border-2 border-black/40"><TycoonItemArt kind="upgrade" id="cage" /></span>
         <div class="min-w-0">
           <p class="g-title text-xl leading-6">Cashier Cage</p>
           <p class="flex items-center gap-1.5 text-sm text-[var(--g-muted)]"><Lock class="size-3.5" :stroke-width="3" />Only {{ ownerName }} collects here</p>
         </div>
       </div>
       <div v-else-if="info?.kind === 'zone'" class="flex items-center gap-3 p-3 pr-14">
-        <span class="grid size-14 shrink-0 place-items-center rounded-2xl border-2 border-black/40" :style="{ background: zoneArt(info.id).color }">
-          <component :is="zoneArt(info.id).icon" class="size-7 text-white" :stroke-width="2.5" />
-        </span>
+        <span class="block size-14 shrink-0 overflow-hidden rounded-2xl border-2 border-black/40"><TycoonItemArt kind="zone" :id="info.id" /></span>
         <div class="min-w-0">
           <p class="g-title truncate text-xl leading-6">{{ infoZone?.name }}</p>
           <p class="flex items-center gap-1.5 text-sm text-[var(--g-muted)]"><Lock class="size-3.5" :stroke-width="3" />Not open yet</p>

@@ -1,6 +1,6 @@
 import type { ZoneId } from '#shared/tycoon'
 import { HH, HW, INK, Painter, artRng, darken, desaturate, faceColors, hashString, lighten, mix, rgba, roundRect } from '../iso'
-import { ZONE_RECTS, areaAt, type Rect } from '../layout'
+import { EMBLEMS, ZONE_RECTS, areaAt, type Rect } from '../layout'
 import type { SkinId } from '#shared/cosmetics'
 import { PAL, ZONE_STYLE, skinStyle, type Motif, type ZoneStyle } from './palette'
 
@@ -263,7 +263,7 @@ function rug(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: 
 }
 
 /** One motif centred at (cx, cy), about r tall, in the current fill/stroke. */
-function motifPath(ctx: CanvasRenderingContext2D, motif: Motif, cx: number, cy: number, r: number) {
+export function motifPath(ctx: CanvasRenderingContext2D, motif: Motif, cx: number, cy: number, r: number) {
     ctx.beginPath()
     switch (motif) {
         case 'fan': {
@@ -328,29 +328,57 @@ function motifPath(ctx: CanvasRenderingContext2D, motif: Motif, cx: number, cy: 
     }
 }
 
-/** A skin's motif on the floor: a big emblem in the middle and small ones strewn across the tiles. */
-function motifs(ctx: CanvasRenderingContext2D, w: number, h: number, style: ZoneStyle, motif: Motif) {
+/**
+ * A motif at (cx, cy) on a floor texture (local u/v, see Painter.top), drawn
+ * upright on screen as a decal lying on the floor: the iso map is undone
+ * around its centre, then squashed a little so it still reads as flat.
+ */
+function uprightMotif(ctx: CanvasRenderingContext2D, motif: Motif, cx: number, cy: number, r: number) {
+    ctx.save()
+    ctx.translate(cx, cy)
+    // Inverse of the top face's (u - v, (u + v) / 2): screen x/y in local units.
+    ctx.transform(0.5, -0.5, 1, 1, 0, 0)
+    ctx.scale(1.15, 0.78)
+    motifPath(ctx, motif, 0, 0, r)
+    ctx.restore()
+}
+
+/** A skin's motif on the floor: a big emblem (in the middle, or where EMBLEMS puts it) and small ones strewn across the tiles. */
+function motifs(ctx: CanvasRenderingContext2D, w: number, h: number, style: ZoneStyle, motif: Motif, place?: { x: number, y: number, r: number }) {
     const W = w * 32
     const H = h * 32
     ctx.fillStyle = rgba(style.pattern, style.kind === 'wood' ? 0.16 : 0.2)
     for (let i = 0; i < w; i++) {
         for (let j = 0; j < h; j++) {
             if ((i * 2 + j) % 5) continue
-            motifPath(ctx, motif, i * 32 + 16, j * 32 + 16, 8)
+            uprightMotif(ctx, motif, i * 32 + 16, j * 32 + 16, 8)
             ctx.fill()
         }
     }
-    const r = Math.min(W, H) * 0.2
+    // The emblem's spot: the middle, unless the zone's furniture covers it there (layout EMBLEMS).
+    const r = place ? place.r * 32 : Math.min(W, H) * 0.2
+    const cx = place ? place.x * 32 : W / 2
+    const cy = place ? place.y * 32 : H / 2
     ctx.fillStyle = rgba(darken(style.floor, 0.3), 0.55)
     ctx.beginPath()
-    ctx.arc(W / 2, H / 2, r * 1.35, 0, Math.PI * 2)
+    ctx.arc(cx, cy, r * 1.35, 0, Math.PI * 2)
     ctx.fill()
     ctx.strokeStyle = rgba(style.pattern, 0.8)
     ctx.lineWidth = 2
     ctx.stroke()
-    ctx.fillStyle = rgba(style.pattern, 0.7)
-    motifPath(ctx, motif, W / 2, H / 2, r)
+    // The emblem: a soft drop shadow, the motif in the skin's colour, a lit top edge.
+    ctx.save()
+    ctx.translate(1.5, 1.5)
+    ctx.fillStyle = rgba(darken(style.floor, 0.5), 0.45)
+    uprightMotif(ctx, motif, cx, cy, r)
     ctx.fill()
+    ctx.restore()
+    ctx.fillStyle = rgba(style.pattern, 0.8)
+    uprightMotif(ctx, motif, cx, cy, r)
+    ctx.fill()
+    ctx.strokeStyle = rgba(lighten(style.pattern, 0.35), 0.55)
+    ctx.lineWidth = 1
+    ctx.stroke()
 }
 
 /** A skin's echo on a tall wall: its motif above the wainscot, plus a pattern of its own. */
@@ -414,7 +442,7 @@ export function drawZoneFloor(p: Painter, zone: ZoneId, look: ZoneLook, decor: n
         } else {
             carpet(ctx, rect.w, rect.h, style, decor)
         }
-        if (style.motif !== 'none') motifs(ctx, rect.w, rect.h, style, style.motif)
+        if (style.motif !== 'none') motifs(ctx, rect.w, rect.h, style, style.motif, EMBLEMS[zone])
         // Faint tile grid for click-to-walk.
         ctx.strokeStyle = 'rgba(30, 10, 40, 0.07)'
         ctx.lineWidth = 0.8
