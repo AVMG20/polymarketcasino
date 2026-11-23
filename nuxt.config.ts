@@ -21,6 +21,9 @@ export default defineNuxtConfig({
 
     css: ['~/assets/css/main.css'],
 
+    // Dev-only pages (the floor sandbox) never ship in a production build.
+    ignore: process.env.NODE_ENV === 'production' ? ['**/pages/dev/**'] : [],
+
     shadcn: {
         prefix: '',
         componentDir: './app/components/ui'
