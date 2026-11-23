@@ -7,9 +7,7 @@ export const CONVERT_MIN_GEMS = 1
 /** The hub caps a player's gem pile at 100, so one conversion can take it all. */
 export const CONVERT_MAX_GEMS = 100
 
-/** Free coins once per Europe/Amsterdam day, so the casino plays with zero gems. */
-export const DAILY_ALLOWANCE_COINS = 2_500
-
+/** Missions and the stats days follow the Amsterdam calendar. */
 export const CASINO_TIME_ZONE = 'Europe/Amsterdam'
 
 // en-CA formats as YYYY-MM-DD. Built once: a formatter costs far more than a format.

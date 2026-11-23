@@ -26,6 +26,13 @@ import {
  * day's end and the non-game flows (allowance, gem conversions), which stay
  * out of wagered, paid out and return.
  *
+ * A stake is paid from coins first, then My Casino chips (`stake_chips` is
+ * the chip part); every payout is chips (economy v2). Wagered counts both
+ * and is split per currency (`wageredCoins`, `wageredChips`); net = payout −
+ * stake across both. The
+ * balance is the coin balance, which games only ever lower now: coins come
+ * in through the flows (allowance, convert, the cage).
+ *
  * Every aggregate runs in SQL as index seeks, so the cost follows the rows in
  * range, never the whole ledger: rounds are summed per game and Amsterdam day
  * as one range each of a covering index (no sort, no row reads), the balances
@@ -53,15 +60,17 @@ export function parseStatsQuery(query: Record<string, unknown>): StatsQuery {
 interface Units {
     rounds: number
     stake: number
+    chipStake: number
     payout: number
     best: number
 }
 
-const emptyUnits = (): Units => ({ rounds: 0, stake: 0, payout: 0, best: 0 })
+const emptyUnits = (): Units => ({ rounds: 0, stake: 0, chipStake: 0, payout: 0, best: 0 })
 
 function addUnits(into: Units, row: Units) {
     into.rounds += row.rounds
     into.stake += row.stake
+    into.chipStake += row.chipStake
     into.payout += row.payout
     into.best = Math.max(into.best, row.best)
 }
@@ -70,6 +79,8 @@ function totals(units: Units): RoundTotals {
     return {
         rounds: units.rounds,
         wagered: fromUnits(units.stake),
+        wageredCoins: fromUnits(units.stake - units.chipStake),
+        wageredChips: fromUnits(units.chipStake),
         paidOut: fromUnits(units.payout),
         net: fromUnits(units.payout - units.stake),
         returnRate: units.stake > 0 ? units.payout / units.stake : null,
@@ -96,7 +107,7 @@ export function playerStats(playerId: string, query: StatsQuery, now: Date = new
     const rows = played.length
         ? db.all<{ game: string, i: number, totals: string }>(sql`
             select g.value as game, b.key as i, (
-                select json_array(count(*), sum(stake), sum(payout), max(payout - stake))
+                select json_array(count(*), sum(stake), sum(stake_chips), sum(payout), max(payout - stake))
                 from ${gameRounds}
                 where player_id = ${playerId} and game = g.value
                     and created_at >= json_extract(b.value, '$[0]') and created_at < json_extract(b.value, '$[1]')
@@ -110,9 +121,9 @@ export function playerStats(playerId: string, query: StatsQuery, now: Date = new
     const selected = emptyUnits()
     let biggest: { units: number, game: string, day: string } | null = null
     for (const row of rows) {
-        const [rounds, stake, payout, best] = JSON.parse(row.totals) as [number, number | null, number | null, number | null]
+        const [rounds, stake, chipStake, payout, best] = JSON.parse(row.totals) as [number, number | null, number | null, number | null, number | null]
         if (!rounds) continue
-        const units: Units = { rounds, stake: stake ?? 0, payout: payout ?? 0, best: best ?? 0 }
+        const units: Units = { rounds, stake: stake ?? 0, chipStake: chipStake ?? 0, payout: payout ?? 0, best: best ?? 0 }
         const day = Number(row.i)
 
         const game = perGame.get(row.game) ?? emptyUnits()
@@ -150,7 +161,7 @@ export function playerStats(playerId: string, query: StatsQuery, now: Date = new
         balances.push(last)
     }
 
-    // ─── Allowance and conversions ──────────────────────────────────────
+    // ─── Allowance, conversions and the cage ────────────────────────────
 
     const flowRows = db.select({
         category: coinTransactions.category,

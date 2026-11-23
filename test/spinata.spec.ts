@@ -24,7 +24,7 @@ import {
     type SpinSymbol
 } from '../shared/slots/spinata'
 import { playRound } from '../server/utils/rounds'
-import { coinsOf, ledgerSum, seedPlayer } from './setup/players'
+import { chipsOf, coinsOf, ledgerSum, seedPlayer } from './setup/players'
 
 /** A grid from three rows of five symbols (top, middle, bottom). */
 function gridOf(rows: SpinSymbol[][]): SpinSymbol[][] {
@@ -169,20 +169,25 @@ describe('spinata rounds', () => {
     it('settles spins and bought free spins through playRound', async () => {
         const id = seedPlayer(1_000_000)
         let expected = 1_000_000
+        let chips = 0
         for (let i = 0; i < 40; i++) {
             const round = await playRound(id, 'spinata', { bet: 100 })
             const result = round.result as ReturnType<typeof playSpinata>
             expect(round.stake).toBe(100)
             expect(round.payout).toBe(result.payout)
-            expected = normalizeCoins(expected + round.payout - round.stake)
+            expected = normalizeCoins(expected - round.stake)
+            chips = normalizeCoins(chips + round.payout)
             expect(round.balance).toBe(expected)
         }
         const buy = await playRound(id, 'spinata', { bet: 200, options: { feature: 'buyBonus' } })
         expect(buy.stake).toBe(200 * SPN_BUY_BONUS_COST)
         expect((buy.result as ReturnType<typeof playSpinata>).freeSpins).toHaveLength(SPN_FREE_SPINS)
-        expected = normalizeCoins(expected + buy.payout - buy.stake)
+        expected = normalizeCoins(expected - buy.stake)
+            chips = normalizeCoins(chips + buy.payout)
         expect(coinsOf(id).coins).toBe(expected)
         expect(ledgerSum(id)).toBe(normalizeCoins(expected - 1_000_000))
+        // Every payout is chips.
+        expect(chipsOf(id)).toBe(chips)
     })
 
     it('rejects bad bets and options without charging', async () => {

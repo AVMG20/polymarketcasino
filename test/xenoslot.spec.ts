@@ -225,7 +225,8 @@ describe('xenoslot buy and stakes', () => {
         expect(coinsOf(id).coins).toBe(100_000)
         const buy = await playRound(id, 'xenoslot', { bet: 100, options: { buy: true } })
         expect(buy.stake).toBe(100 * XS_BUY_COST)
-        expect(buy.balance).toBe(100_000 - buy.stake + buy.payout)
+        expect(buy.balance).toBe(100_000 - buy.stake)
+        expect(buy.chips).toBe(buy.payout)
         // A player who can't cover the buy is refused and keeps every coin.
         const poor = seedPlayer(1_000)
         await expect(playRound(poor, 'xenoslot', { bet: 100, options: { buy: true } })).rejects.toMatchObject({ statusCode: 400 })

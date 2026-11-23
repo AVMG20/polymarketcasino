@@ -15,7 +15,7 @@ export function casinoManifest(): HubManifest {
                 name: 'Polynux Casino',
                 tagline: 'Slots, tables and high rollers',
                 description: `${GAMES.map(game => game.name).join(', ')}. `
-                    + 'Convert gems into coins, claim a free daily allowance, and hold coins for stars: lose them and the stars go too.',
+                    + 'Claim coins (your casino\'s cashier cage, converted gems), win chips, build your own casino, and hold chips for stars (1k up to 1M chips): spend or lose them and the stars go too.',
                 playPath: '/',
                 icon: CASINO_ICON,
                 cover: `${publicUrl}/images/casino-cover.svg`,

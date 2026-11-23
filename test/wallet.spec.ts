@@ -37,7 +37,7 @@ vi.mock('../server/utils/hub', async (importOriginal) => {
 })
 
 const { HubError } = await import('../server/utils/hub')
-const { claimAllowance, convertGems, getWallet, retryStaleConversions, settleConversion, spendNeverLanded } = await import('../server/utils/wallet')
+const { convertGems, getWallet, retryStaleConversions, settleConversion, spendNeverLanded } = await import('../server/utils/wallet')
 const { coinsOf, ledgerSum, seedPlayer } = await import('./setup/players')
 const { db } = await import('../server/database')
 const { gemConversions, players } = await import('../server/database/schema')
@@ -55,34 +55,14 @@ const makeStale = (conversionId: string) => db.update(gemConversions)
     .set({ createdAt: new Date(Date.now() - 120_000) })
     .where(eq(gemConversions.id, conversionId)).run()
 
-describe('daily allowance', () => {
-    it('pays 2,500 coins once per Amsterdam day, however many claims race', async () => {
-        const id = seedPlayer()
-        const results = await Promise.allSettled(Array.from({ length: 10 }, () => claimAllowance(id)))
-        expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
-        const rejected = results.find(r => r.status === 'rejected') as PromiseRejectedResult
-        expect(rejected.reason).toMatchObject({ statusCode: 400 })
-        expect(coinsOf(id).coins).toBe(2_500)
-        expect(ledgerSum(id)).toBe(2_500)
-    })
-
-    it('rolls over at Amsterdam midnight, not UTC midnight', async () => {
-        const id = seedPlayer()
-        // 22:30 UTC on 21 Nov is 23:30 in Amsterdam; 23:30 UTC is already 22 Nov there.
-        await claimAllowance(id, new Date('2026-11-21T22:30:00Z'))
-        await expect(claimAllowance(id, new Date('2026-11-21T22:59:00Z'))).rejects.toMatchObject({ statusCode: 400 })
-        await claimAllowance(id, new Date('2026-11-21T23:30:00Z'))
-        expect(coinsOf(id).coins).toBe(5_000)
-    })
-})
-
 describe('gem conversion', () => {
     it('spends gems at the hub and credits 1,000 coins per gem', async () => {
         const id = seedPlayer()
         hubGems.set(id, 50)
         const result = await convertGems(id, 25)
         expect(result).toMatchObject({ gems: 25, coins: 25_000, balance: 25_000, gemsLeft: 25 })
-        expect(result.stars).toMatchObject({ level: 1, previous: 0 })
+        // Stars follow chips: coins from a conversion move none.
+        expect(result.stars).toBeNull()
         expect(coinsOf(id).coins).toBe(25_000)
     })
 

@@ -120,7 +120,7 @@ export class BlackjackTable extends LiveTable<BjSeat, BjShared, BjTableAction> {
         if (spot !== 'main' && seat.pendingBet <= 0) fail('Place your main bet first')
         const next = (spot === 'main' ? seat.pendingBet : seat.pendingSide[spot]) + amount
         if (next > this.config.maxBet) fail('Table maximum reached')
-        if (this.committed(seat) + amount > player.balance) fail('Not enough coins')
+        if (this.committed(seat) + amount > player.balance) fail(this.notEnough(player))
         if (spot === 'main') seat.pendingBet = next
         else seat.pendingSide[spot] = next
         seat.chips.push({ spot, amount })
@@ -151,7 +151,7 @@ export class BlackjackTable extends LiveTable<BjSeat, BjShared, BjTableAction> {
             if (amount > this.config.maxBet) fail('Table maximum reached')
             if (amount > 0 && amount < this.config.minBet) fail(`Minimum bet is ${this.config.minBet}`)
         }
-        if (bet + sum(sides) > player.balance) fail('Not enough coins')
+        if (bet + sum(sides) > player.balance) fail(this.notEnough(player))
         const seat = player.game
         seat.pendingBet = bet
         seat.pendingSide = { ...sides }
@@ -217,7 +217,7 @@ export class BlackjackTable extends LiveTable<BjSeat, BjShared, BjTableAction> {
                     this.stake(player, [stakes[0]!])
                     seat.pendingSide = noSides()
                 } catch {
-                    this.tell(player.playerId, 'Not enough coins: you sit this one out')
+                    this.tell(player.playerId, `${this.notEnough(player)}: you sit this one out`)
                     continue
                 }
             }

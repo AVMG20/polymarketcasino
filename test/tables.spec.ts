@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { sealSession, type H3Event } from 'h3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { db } from '../server/database'
-import { coinTransactions, gameRounds, tableWagers } from '../server/database/schema'
+import { casinoProfiles, chipTransactions, coinTransactions, dailyMissions, gameRounds, tableWagers } from '../server/database/schema'
 import { refundOrphanedWagers, refundWagers, settleWagers, stakeWager, stakeWagers } from '../server/utils/tables/escrow'
 import { BaccaratTable } from '../server/utils/tables/baccarat'
 import { BlackjackTable } from '../server/utils/tables/blackjack'
@@ -14,9 +14,12 @@ import { TABLES } from '../server/utils/tables'
 import { SESSION_COOKIE, sessionConfig } from '../server/utils/session'
 import { seededRng } from '../shared/rng'
 import type { ServerMessage } from '../shared/tables/protocol'
-import { coinsOf, ledgerSum, seedPlayer } from './setup/players'
+import { sumCoins } from '../shared/money'
+import { amsterdamDay } from '../shared/economy'
+import { BONUS_MISSION } from '../shared/missions'
+import { chipLedgerSum, chipsOf, coinsOf, giveChips, ledgerSum, seedPlayer } from './setup/players'
 
-// Balances stay under the first star threshold (10,000), so no test talks to the hub.
+// Chip balances stay under the first star threshold (10,000), so no test talks to the hub.
 const START = 9_000
 
 const openRows = (playerId: string) => db.select().from(tableWagers).where(and(eq(tableWagers.playerId, playerId), eq(tableWagers.status, 'open'))).all()
@@ -43,12 +46,15 @@ describe('table escrow', () => {
         const id = seedPlayer(START)
         const { wagerIds } = stakeWagers(id, 'baccarat', 1, [{ amount: 100, kind: 'player' }, { amount: 200, kind: 'banker' }]).value
         const input = { playerId: id, game: 'baccarat', wagerIds, staked: 300, payout: 490, summary: {} }
-        expect(settleWagers(input).value).toEqual({ kind: 'settled', balance: START - 300 + 490 })
+        // The stake was coins; the whole payout comes as chips.
+        expect(settleWagers(input).value).toEqual({ kind: 'settled', balance: START - 300, chips: 490, chipsEarned: 490 })
         expect(settleWagers(input).value).toEqual({ kind: 'closed' })
-        expect(coinsOf(id).coins).toBe(START + 190)
-        expect(ledgerSum(id)).toBe(190)
+        expect(coinsOf(id).coins).toBe(START - 300)
+        expect(ledgerSum(id)).toBe(-300)
+        expect(chipsOf(id)).toBe(490)
+        expect(chipLedgerSum(id)).toBe(490)
         expect(openRows(id)).toHaveLength(0)
-        expect(rounds(id)).toMatchObject([{ game: 'baccarat', stake: 300, payout: 490 }])
+        expect(rounds(id)).toMatchObject([{ game: 'baccarat', stake: 300, payout: 490, funding: 'coins' }])
     })
 
     it('settles decimal stakes and payouts to 0.0001 coin, matching the escrow without float noise', () => {
@@ -56,10 +62,56 @@ describe('table escrow', () => {
         const { wagerIds } = stakeWagers(id, 'baccarat', 1, [{ amount: 0.1, kind: 'banker' }, { amount: 0.2, kind: 'player' }, { amount: 50, kind: 'tie' }]).value
         // 0.1 + 0.2 + 50 in floats is 50.300000000000004: still the same escrow.
         const result = settleWagers({ playerId: id, game: 'baccarat', wagerIds, staked: 0.1 + 0.2 + 50, payout: 97.5, summary: {} }).value
-        expect(result).toEqual({ kind: 'settled', balance: START - 50.3 + 97.5 })
-        expect(coinsOf(id).coins).toBe(START + 47.2)
-        expect(ledgerSum(id)).toBe(47.2)
+        expect(result).toMatchObject({ kind: 'settled', balance: START - 50.3, chips: 97.5 })
+        expect(coinsOf(id).coins).toBe(START - 50.3)
+        expect(ledgerSum(id)).toBe(-50.3)
+        expect(chipsOf(id)).toBe(97.5)
         expect(() => settleWagers({ playerId: id, game: 'baccarat', wagerIds: [], staked: 0, payout: 1.23456, summary: {} })).toThrow('4 decimals')
+    })
+
+    it('stakes coins first, then chips for the rest, records the chip part and pays chips', () => {
+        const id = seedPlayer(300)
+        giveChips(id, 5_000)
+        const { wagerIds, balance, chips } = stakeWagers(id, 'blackjack', 1, [{ amount: 500, kind: 'bet' }, { amount: 400, kind: 'pairs' }]).value
+        // 300 coins cover part of the first stake; chips pay the rest of both.
+        expect({ balance, chips }).toEqual({ balance: 0, chips: 4_400 })
+        expect(openRows(id).map(row => [row.amount, row.amountChips]).sort()).toEqual([[400, 400], [500, 200]])
+        expect(() => stakeWagers(id, 'blackjack', 1, [{ amount: 5_000, kind: 'double' }])).toThrow(expect.objectContaining({ statusMessage: 'Not enough coins or chips' }))
+        expect(settleWagers({ playerId: id, game: 'blackjack', wagerIds, staked: 900, payout: 1_800, summary: {} }).value)
+            .toEqual({ kind: 'settled', balance: 0, chips: 6_200, chipsEarned: 1_800 })
+        expect(rounds(id)).toMatchObject([{ stake: 900, stakeChips: 600, payout: 1_800, funding: 'coins' }])
+        const reasons = db.select({ reason: chipTransactions.reason }).from(chipTransactions).where(eq(chipTransactions.playerId, id)).all().map(row => row.reason)
+        expect(reasons).toEqual(['bet:blackjack', 'bet:blackjack', 'win:blackjack'])
+    })
+
+    it('stakes chips alone once the coins are gone, and refunds each part in its own currency', async () => {
+        const id = seedPlayer(250)
+        giveChips(id, 1_000)
+        stakeOne(id, 300, 'three-card-poker')
+        stakeOne(id, 200, 'three-card-poker')
+        expect([coinsOf(id).coins, chipsOf(id)]).toEqual([0, 750])
+        expect(openRows(id).map(row => row.amountChips).sort()).toEqual([200, 50])
+        await refundOrphanedWagers()
+        expect([coinsOf(id).coins, chipsOf(id)]).toEqual([250, 1_000])
+        expect(openRows(id)).toHaveLength(0)
+        expect(ledgerSum(id)).toBe(0)
+        expect(chipLedgerSum(id)).toBe(0)
+    })
+
+    it('never lets a burst of stakes spend more than coins and chips together', () => {
+        const id = seedPlayer(450)
+        giveChips(id, 550)
+        let landed = 0
+        for (let i = 0; i < 20; i++) {
+            try {
+                stakeOne(id, 100, 'baccarat')
+                landed++
+            } catch { /* over the bankroll */ }
+        }
+        expect(landed).toBe(10)
+        expect([coinsOf(id).coins, chipsOf(id)]).toEqual([0, 0])
+        expect(ledgerSum(id)).toBe(-450)
+        expect(chipLedgerSum(id)).toBe(-550)
     })
 
     it('refunds instead of paying when part of the round was already closed', () => {
@@ -108,8 +160,9 @@ describe('table escrow', () => {
 
 type AnyTable = LiveTable<unknown, unknown, unknown>
 
-function seat(table: AnyTable, index: number, coins = START) {
+function seat(table: AnyTable, index: number, coins = START, chips = 0) {
     const id = seedPlayer(coins)
+    if (chips) giveChips(id, chips)
     const inbox: ServerMessage[] = []
     const peer = { send: (data: string) => inbox.push(JSON.parse(data)) }
     openTableSocket(peer, { slug: table.config.slug, playerId: id, name: `P${index}`, image: null }, table)
@@ -117,11 +170,14 @@ function seat(table: AnyTable, index: number, coins = START) {
     return { id, peer, inbox, act: (action: unknown) => table.run(() => table.action(id, action)) }
 }
 
+/** Every round settled: coin stakes left the coins, every payout came as chips. */
 function settledCorrectly(id: string) {
     expect(openRows(id)).toHaveLength(0)
-    const net = rounds(id).reduce((sum, round) => sum + round.payout - round.stake, 0)
-    expect(coinsOf(id).coins).toBe(START + net)
-    expect(ledgerSum(id)).toBe(net)
+    const staked = sumCoins(rounds(id).filter(round => round.funding === 'coins').map(round => round.stake))
+    const paid = sumCoins(rounds(id).map(round => round.payout))
+    expect(coinsOf(id).coins).toBe(START - staked)
+    expect(ledgerSum(id)).toBe(-staked)
+    expect(chipLedgerSum(id)).toBe(paid)
 }
 
 describe('live tables', () => {
@@ -241,6 +297,110 @@ describe('live tables', () => {
     })
 })
 
+describe('live tables with chips', () => {
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
+    })
+    afterEach(() => {
+        vi.useRealTimers()
+    })
+
+    it('stakes coins first, then chips, pays chips and pushes both balances', () => {
+        const table = new BaccaratTable(seededRng(4)) as unknown as AnyTable
+        const a = seat(table, 0, 400, 5_000)
+        // A currency field from an older client is ignored.
+        a.act({ t: 'bet', spot: 'banker', amount: 1_000, currency: 'coins' })
+        vi.advanceTimersByTime(15_000)
+        expect(coinsOf(a.id).coins).toBe(0)
+        expect(chipsOf(a.id)).toBe(4_400)
+        expect(openRows(a.id)).toMatchObject([{ amount: 1_000, amountChips: 600 }])
+        expect(a.inbox.filter(m => m.t === 'balance').at(-1)).toEqual({ t: 'balance', balance: 0, chips: 4_400 })
+        vi.advanceTimersByTime(4_000 + 2_500)
+        const [round] = rounds(a.id)
+        expect(round).toMatchObject({ stake: 1_000, stakeChips: 600 })
+        expect(chipsOf(a.id)).toBe(4_400 + round!.payout)
+        expect(a.inbox.filter(m => m.t === 'balance').at(-1)).toEqual({ t: 'balance', balance: 0, chips: 4_400 + round!.payout })
+    })
+
+    it('an abandoned round hands each part back in its own currency', () => {
+        const table = new CasinoHoldemTable(seededRng(21)) as unknown as AnyTable
+        const a = seat(table, 0, 1_500, 5_000)
+        a.act({ t: 'bet', spot: 'ante', amount: 1_000 })
+        vi.advanceTimersByTime(3_000 + 2_400)
+        // The call (2× the ante) takes the last 500 coins, then 1,500 chips.
+        a.act({ t: 'decide', call: true })
+        expect([coinsOf(a.id).coins, chipsOf(a.id)]).toEqual([0, 3_500])
+        table.run(() => table.abortRound())
+        expect([coinsOf(a.id).coins, chipsOf(a.id)]).toEqual([1_500, 5_000])
+        expect(openRows(a.id)).toHaveLength(0)
+    })
+
+    it('seats a player whose coins and chips together cover the table, and refuses one without', () => {
+        const table = new BlackjackTable(seededRng(2)) as unknown as AnyTable
+        const mixed = seedPlayer(60)
+        giveChips(mixed, 40)
+        table.run(() => table.sit(mixed, 'Mixed', null, 0))
+        expect(table.seatIndexOf(mixed)).toBe(0)
+        const broke = seedPlayer(50)
+        giveChips(broke, 40)
+        expect(() => table.run(() => table.sit(broke, 'Broke', null, 1))).toThrow('coins or chips to sit')
+        table.run(() => table.leave(mixed))
+    })
+
+    it('seats a visitor at the host\'s table: their casino is made, the win pays and the hand counts as a visit', () => {
+        const host = seedPlayer(0)
+        // Never opened their own casino, and has nothing built.
+        const visitor = seedPlayer(START, START, { casino: 'none' })
+        const day = amsterdamDay(new Date())
+        db.insert(dailyMissions).values([
+            { playerId: visitor, day, mission: 'visit', slot: 0, target: 3, reward: 500 },
+            { playerId: visitor, day, mission: 'table-hands', slot: 1, target: 5, reward: 500 },
+            { playerId: visitor, day, mission: 'collects', slot: 2, target: 2, reward: 500 },
+            { playerId: visitor, day, mission: BONUS_MISSION, slot: 3, target: 3, reward: 1_000 }
+        ]).run()
+        const table = new BaccaratTable(seededRng(11)) as unknown as AnyTable
+        openTableSocket({ send: () => {} }, { slug: table.config.slug, playerId: visitor, name: 'V', image: null }, table)
+        expect(() => table.run(() => table.sit(visitor, 'V', null, 0))).toThrow('Build')
+        table.run(() => table.sit(visitor, 'V', null, 0, host))
+        expect(db.select().from(casinoProfiles).where(eq(casinoProfiles.playerId, visitor)).get()).toBeTruthy()
+        table.run(() => table.action(visitor, { t: 'bet', spot: 'banker', amount: 1_000 }))
+        table.run(() => table.action(visitor, { t: 'bet', spot: 'player', amount: 1_000 }))
+        vi.advanceTimersByTime(15_000 + 4_000 + 2_500)
+
+        // Settled, not refunded: one of banker and player wins (or a tie pushes), paid in chips.
+        expect(openRows(visitor)).toHaveLength(0)
+        const [round] = rounds(visitor)
+        expect(round).toMatchObject({ stake: 2_000 })
+        expect(round!.payout).toBeGreaterThan(0)
+        expect(chipsOf(visitor)).toBe(round!.payout)
+        expect(db.select().from(coinTransactions).where(and(eq(coinTransactions.playerId, visitor), eq(coinTransactions.refund, true))).all()).toHaveLength(0)
+        const progress = (mission: string) => db.select({ progress: dailyMissions.progress }).from(dailyMissions)
+            .where(and(eq(dailyMissions.playerId, visitor), eq(dailyMissions.day, day), eq(dailyMissions.mission, mission))).get()!.progress
+        expect(progress('visit')).toBe(1)
+        expect(progress('table-hands')).toBe(1)
+        table.run(() => table.leave(visitor))
+    })
+
+    it('does not count a hand at a table of your own as a visit', () => {
+        const owner = seedPlayer(START)
+        const day = amsterdamDay(new Date())
+        db.insert(dailyMissions).values([
+            { playerId: owner, day, mission: 'visit', slot: 0, target: 3, reward: 500 },
+            { playerId: owner, day, mission: BONUS_MISSION, slot: 3, target: 1, reward: 1_000 }
+        ]).run()
+        const table = new BaccaratTable(seededRng(11)) as unknown as AnyTable
+        openTableSocket({ send: () => {} }, { slug: table.config.slug, playerId: owner, name: 'O', image: null }, table)
+        // Naming yourself as the host is no visit.
+        table.run(() => table.sit(owner, 'O', null, 0, owner))
+        table.run(() => table.action(owner, { t: 'bet', spot: 'banker', amount: 1_000 }))
+        vi.advanceTimersByTime(15_000 + 4_000 + 2_500)
+        expect(rounds(owner)).toHaveLength(1)
+        expect(db.select({ progress: dailyMissions.progress }).from(dailyMissions)
+            .where(and(eq(dailyMissions.playerId, owner), eq(dailyMissions.mission, 'visit'))).get()!.progress).toBe(0)
+        table.run(() => table.leave(owner))
+    })
+})
+
 // ─── socket auth ─────────────────────────────────────────────────────────────
 
 async function sessionCookieFor(playerId: string) {
@@ -285,7 +445,7 @@ describe('table socket auth', () => {
         const inbox: ServerMessage[] = []
         const peer = { send: (data: string) => inbox.push(JSON.parse(data)) }
         openTableSocket(peer, { slug: 'baccarat', playerId: id, name: 'Sam', image: null })
-        expect(inbox[0]).toMatchObject({ t: 'you', playerId: id, seat: null, balance: START })
+        expect(inbox[0]).toMatchObject({ t: 'you', playerId: id, seat: null, balance: START, chips: 0 })
         tableSocketMessage(peer, JSON.stringify({ t: 'action', action: { t: 'bet', spot: 'player', amount: 100 } }))
         expect(inbox.at(-1)).toMatchObject({ t: 'error', message: 'Take a seat first' })
         tableSocketMessage(peer, JSON.stringify({ t: 'sit', seat: 4 }))

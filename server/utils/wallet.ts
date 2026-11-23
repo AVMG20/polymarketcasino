@@ -1,18 +1,16 @@
 import { and, eq, lt, sql } from 'drizzle-orm'
 import { db } from '../database'
-import { allowanceClaims, gemConversions, players } from '../database/schema'
+import { gemConversions, gemPurchases, players } from '../database/schema'
 import {
-    amsterdamDay,
     COINS_PER_GEM,
     CONVERT_MAX_GEMS,
-    CONVERT_MIN_GEMS,
-    DAILY_ALLOWANCE_COINS,
-    nextAmsterdamMidnight
+    CONVERT_MIN_GEMS
 } from '../../shared/economy'
 import { formatCoins } from '../../shared/money'
 import { coinTransaction, getCoins } from './ledger'
-import { hub, HubError } from './hub'
+import { hub, HubError, type HubSpendInput } from './hub'
 import { syncStars, type StarChange } from './stars'
+import { chipBalance } from './tycoon'
 import { CASINO_GAME_SLUG, starSummary, type StarSummary } from '../../shared/stars'
 
 type Conversion = typeof gemConversions.$inferSelect
@@ -46,6 +44,39 @@ export function spendNeverLanded(error: HubError, firstAttempt: boolean): boolea
     return error.statusCode === 400 || (firstAttempt && error.rejected)
 }
 
+/** A table of pending gem spends (gem_conversions, gem_purchases): the columns spendForRow touches. */
+type SpendTable = typeof gemConversions | typeof gemPurchases
+
+/**
+ * Spend gems at the hub for one pending row, no transaction open: counts the
+ * attempt, calls the hub with the row's idempotency key, and on a refusal
+ * that proves nothing was spent (`spendNeverLanded`) flips the row
+ * `pending → failed` and throws 400. Anything else (hub down, 5xx, a refusal
+ * on a retry) leaves it pending and throws 503 with `retryMessage`. The
+ * caller settles the row in its own guarded transaction.
+ */
+export async function spendForRow(input: { table: SpendTable, id: string, spend: HubSpendInput, retryMessage: string }): Promise<{ spendId: string, gems: number }> {
+    const table = input.table as typeof gemConversions
+    const counted = db.update(table)
+        .set({ attempts: sql`${table.attempts} + 1` })
+        .where(eq(table.id, input.id))
+        .returning({ attempts: table.attempts })
+        .get()
+    const firstAttempt = counted?.attempts === 1
+    try {
+        return await hub.spendGems(input.spend)
+    } catch (error) {
+        if (error instanceof HubError && spendNeverLanded(error, firstAttempt)) {
+            db.update(table)
+                .set({ status: 'failed', error: error.message, settledAt: new Date() })
+                .where(and(eq(table.id, input.id), eq(table.status, 'pending')))
+                .run()
+            throw createError({ statusCode: 400, statusMessage: error.message || 'Not enough gems' })
+        }
+        throw createError({ statusCode: 503, statusMessage: input.retryMessage })
+    }
+}
+
 /**
  * Settle one pending conversion in three steps, none of which holds a lock
  * across the network call:
@@ -58,32 +89,18 @@ export function spendNeverLanded(error: HubError, firstAttempt: boolean): boolea
  * else (hub down, 5xx, a refusal on a retry) leaves it pending for a retry.
  */
 export async function settleConversion(row: Conversion): Promise<ConvertResult> {
-    const counted = db.update(gemConversions)
-        .set({ attempts: sql`${gemConversions.attempts} + 1` })
-        .where(eq(gemConversions.id, row.id))
-        .returning({ attempts: gemConversions.attempts })
-        .get()
-    const firstAttempt = counted?.attempts === 1
-
-    let spend: { spendId: string, gems: number }
-    try {
-        spend = await hub.spendGems({
+    const spend = await spendForRow({
+        table: gemConversions,
+        id: row.id,
+        spend: {
             playerId: row.playerId,
             amount: row.gems,
             game: CASINO_GAME_SLUG,
             reason: `Convert ${row.gems} gems to ${formatCoins(row.coins)} coins`,
             idempotencyKey: row.idempotencyKey
-        })
-    } catch (error) {
-        if (error instanceof HubError && spendNeverLanded(error, firstAttempt)) {
-            db.update(gemConversions)
-                .set({ status: 'failed', error: error.message, settledAt: new Date() })
-                .where(and(eq(gemConversions.id, row.id), eq(gemConversions.status, 'pending')))
-                .run()
-            throw createError({ statusCode: 400, statusMessage: error.message || 'Not enough gems' })
-        }
-        throw createError({ statusCode: 503, statusMessage: 'The hub did not answer; your conversion finishes on its own once it is back' })
-    }
+        },
+        retryMessage: 'The hub did not answer; your conversion finishes on its own once it is back'
+    })
 
     const { value: balance, stars } = await coinTransaction((coins) => {
         const claimed = coins.tx.update(gemConversions)
@@ -148,42 +165,18 @@ export async function convertGems(playerId: string, gems: number): Promise<Conve
     return settleConversion(row)
 }
 
-/**
- * Pay today's allowance once. The (player, day) primary key is the guard: of
- * any number of parallel claims, one insert returns a row and only it pays.
- */
-export async function claimAllowance(playerId: string, at: Date = new Date()) {
-    const day = amsterdamDay(at)
-    const { value: balance, stars } = await coinTransaction((coins) => {
-        const claimed = coins.tx.insert(allowanceClaims)
-            .values({ playerId, day, amount: DAILY_ALLOWANCE_COINS })
-            .onConflictDoNothing()
-            .returning({ day: allowanceClaims.day })
-            .get()
-        if (!claimed) throw createError({ statusCode: 400, statusMessage: 'Allowance already claimed today' })
-        return coins.credit({ playerId, amount: DAILY_ALLOWANCE_COINS, category: 'allowance' })
-    })
-    return { day, amount: DAILY_ALLOWANCE_COINS, balance: balance.coins, stars: stars[0] ?? null, nextAt: nextAmsterdamMidnight(at).toISOString() }
-}
-
-export function allowanceState(playerId: string, at: Date = new Date()) {
-    const day = amsterdamDay(at)
-    const row = db.select({ day: allowanceClaims.day }).from(allowanceClaims)
-        .where(and(eq(allowanceClaims.playerId, playerId), eq(allowanceClaims.day, day)))
-        .get()
-    return { amount: DAILY_ALLOWANCE_COINS, available: !row, nextAt: nextAmsterdamMidnight(at).toISOString() }
-}
-
 export interface WalletState {
     coins: number
     peakCoins: number
+    /** My Casino chips: what wins pay and what the stars follow. */
+    chips: number
     /** Gems at the hub, or null when the hub could not be reached or the player has no hub account. */
     gems: number | null
     /** False for dev-login players: no gems, no convert, no star reports. */
     hubAccount: boolean
     coinsPerGem: number
     convert: { min: number, max: number }
-    allowance: ReturnType<typeof allowanceState>
+    /** The star level, from the chip balance. */
     stars: StarSummary
     /** A level change this read confirmed with the hub (a retried report). */
     starChange: StarChange | null
@@ -197,6 +190,7 @@ export async function getWallet(playerId: string): Promise<WalletState> {
     if (!balance) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
 
     const hubAccount = balance.origin === 'hub'
+    const chips = chipBalance(playerId)
     let gems: number | null = null
     if (hubAccount) {
         try {
@@ -209,12 +203,12 @@ export async function getWallet(playerId: string): Promise<WalletState> {
     return {
         coins: balance.coins,
         peakCoins: balance.peakCoins,
+        chips,
         gems,
         hubAccount,
         coinsPerGem: COINS_PER_GEM,
         convert: { min: CONVERT_MIN_GEMS, max: CONVERT_MAX_GEMS },
-        allowance: allowanceState(playerId),
-        stars: starSummary(balance.coins, starChange?.level ?? reportedLevel(playerId)),
+        stars: starSummary(chips, starChange?.level ?? reportedLevel(playerId)),
         starChange
     }
 }

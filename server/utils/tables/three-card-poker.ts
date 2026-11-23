@@ -119,7 +119,7 @@ export class ThreeCardPokerTable extends LiveTable<TcpSeat, TcpShared, TcpAction
 
     /** Playing costs a second ante, so the layout keeps room for it. */
     private affordable(player: Player, ante: number, pairPlus: number) {
-        if (ante * 2 + pairPlus > player.balance) fail('Not enough coins (playing costs another ante)')
+        if (ante * 2 + pairPlus > player.balance) fail(`${this.notEnough(player)} (playing costs another ante)`)
     }
 
     private placeBet(player: Player, spot: unknown, amount: unknown) {
@@ -198,7 +198,7 @@ export class ThreeCardPokerTable extends LiveTable<TcpSeat, TcpShared, TcpAction
                 seat.ante = seat.lastAnte = seat.pendingAnte
                 seat.pairPlus = seat.lastPairPlus = seat.pendingPairPlus
             } catch {
-                this.tell(player.playerId, 'Not enough coins: you sit this one out')
+                this.tell(player.playerId, `${this.notEnough(player)}: you sit this one out`)
             }
             seat.pendingAnte = 0
             seat.pendingPairPlus = 0

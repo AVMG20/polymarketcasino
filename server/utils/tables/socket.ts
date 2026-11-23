@@ -4,6 +4,7 @@ import { players } from '../../database/schema'
 import type { ClientMessage } from '#shared/tables/protocol'
 import { casinoEnv } from '../env'
 import { playerIdFromCookieHeader } from '../session'
+import { chipBalance } from '../tycoon'
 import type { TablePeer } from './bus'
 import { TableError, type LiveTable } from './table'
 import { TABLES } from './index'
@@ -65,7 +66,7 @@ export function openTableSocket(peer: TablePeer, context: TableSocketContext, ta
     if (!table.bus.isConnected(context.playerId)) table.bus.broadcast({ t: 'event', kind: 'watch', name: context.name, joined: true })
     table.bus.add(peer, { playerId: context.playerId, name: context.name, image: context.image })
     const balance = db.select({ coins: players.coins }).from(players).where(eq(players.id, context.playerId)).get()?.coins ?? 0
-    table.bus.sendTo(peer, { t: 'you', playerId: context.playerId, seat: table.seatIndexOf(context.playerId), balance })
+    table.bus.sendTo(peer, { t: 'you', playerId: context.playerId, seat: table.seatIndexOf(context.playerId), balance, chips: chipBalance(context.playerId) })
     // Reconnecting clears the seat's disconnect timer; the publish delivers the first snapshot.
     table.run(() => table.setConnected(context.playerId, true))
 }
@@ -93,7 +94,7 @@ export function tableSocketMessage(peer: TablePeer, text: string) {
     try {
         table.run(() => {
             switch (message.t) {
-                case 'sit': return table.sit(context.playerId, context.name, context.image, message.seat)
+                case 'sit': return table.sit(context.playerId, context.name, context.image, message.seat, message.host)
                 case 'leave': return table.leave(context.playerId)
                 case 'voteStart': return table.voteStart(context.playerId)
                 case 'chat': return table.chat(context.playerId, context.name, message.text)

@@ -55,8 +55,14 @@ export interface TableState<TSeat = unknown, TShared = unknown> {
     game: TShared
 }
 
+/**
+ * Every stake is paid from coins first, then chips for whatever coins don't
+ * cover; every payout is chips, and a refund hands each part back in its own
+ * currency. (A `currency` field on an action is ignored.)
+ */
 export type ClientMessage<TAction = unknown> =
-    | { t: 'sit', seat: number }
+    /** `host`: the casino the player is visiting (a player id), whose built table lets them sit. Optional. */
+    | { t: 'sit', seat: number, host?: string }
     | { t: 'leave' }
     | { t: 'voteStart' }
     | { t: 'chat', text: string }
@@ -79,8 +85,10 @@ export type TableEvent =
 
 export type ServerMessage<TSeat = unknown, TShared = unknown> =
     | { t: 'state', state: TableState<TSeat, TShared> }
-    | { t: 'you', playerId: string, seat: number | null, balance: number }
-    | { t: 'balance', balance: number }
+    /** `balance` is coins, `chips` the chip balance. */
+    | { t: 'you', playerId: string, seat: number | null, balance: number, chips?: number }
+    /** After a stake, payout or refund: `balance` is coins, `chips` the chip balance. */
+    | { t: 'balance', balance: number, chips?: number }
     | { t: 'stars', stars: TableStarChange }
     | { t: 'error', message: string }
     | TableEvent
@@ -90,7 +98,7 @@ export interface TablePayout {
     playerId: string
     /** Everything the player staked this round; must equal their open escrow. */
     staked: number
-    /** Everything returned, stakes included, in coins (four decimals at most); zero on a total loss. */
+    /** Everything returned, stakes included (four decimals at most), paid in chips; zero on a total loss. */
     payout: number
     /** Kept with the round in game_rounds. */
     summary: Record<string, unknown>

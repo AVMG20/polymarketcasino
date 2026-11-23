@@ -2,6 +2,12 @@ import { isCoinAmount, normalizeCoins, sameCoins, sumCoins } from '#shared/money
 import type { ScoreEntry, SeatView, ServerMessage, TablePayout, TableState } from '#shared/tables/protocol'
 import type { CommittedCoins } from '../ledger'
 import { getCoins } from '../ledger'
+import { avatarOf } from '../cosmetics'
+import { hostHasGame } from '../social'
+import { writeTx } from '../../database'
+import { chipBalance, ensureCasino, hasBuiltGame } from '../tycoon'
+import { findGame } from '#shared/games/registry'
+import { bankroll, type TableOccupancy } from '#shared/tycoon'
 import { TableBus } from './bus'
 import { refundWagers, settleWagers, stakeWagers } from './escrow'
 
@@ -29,6 +35,8 @@ export interface TablePlayer<TSeat> {
     name: string
     image: string | null
     seatIndex: number
+    /** The casino they sat down in when visiting (a player id), else null: its hands count toward the visit mission. */
+    host: string | null
     connected: boolean
     leaving: boolean
     votedStart: boolean
@@ -36,8 +44,15 @@ export interface TablePlayer<TSeat> {
     sessionNet: number
     winStreak: number
     roundsPlayed: number
-    /** The balance after this player's last stake or payout (or at sit-down): advisory only. */
+    /**
+     * What this player can stake (coins + chips) after their last stake or
+     * payout (or at sit-down, or their last action): advisory only, for the
+     * games' "can you cover it" checks. The debit is the guard.
+     */
     balance: number
+    /** Coin and chip balances as last seen (advisory). */
+    coins: number
+    chips: number
     /** Open escrow rows for this round. Non-empty means real money rides on it. */
     wagerIds: string[]
     /** What those rows add up to. */
@@ -62,7 +77,8 @@ const SCOREBOARD_ALUMNI = 12
  * The half of a live table that is the same in every game: seats, the phase
  * clock, escrow, settlement, chat, the scoreboard and per-viewer snapshots.
  * Games supply their rules and never touch coins themselves: they stake
- * through `stake()` and hand `settle()` a payout per player.
+ * through `stake()` and hand `settle()` a payout per player. A stake is paid
+ * from coins first, then chips; every payout is chips.
  *
  * Everything is synchronous. bun:sqlite commits in-line, so a socket message
  * or a timer runs start to finish without yielding, and no two mutations can
@@ -169,7 +185,8 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
         return this.players.get(playerId)?.seatIndex ?? null
     }
 
-    sit(playerId: string, name: string, image: string | null, index: unknown) {
+    /** `host`: the casino the player is visiting (a player id), whose built tables they may sit at too. */
+    sit(playerId: string, name: string, image: string | null, index: unknown, host?: unknown) {
         if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= this.config.seats) fail('Invalid seat')
         const existing = this.players.get(playerId)
         if (existing) {
@@ -179,9 +196,15 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
             return
         }
         if (this.seated().some(p => p.seatIndex === index)) fail('Seat is taken')
+        // Anyone may watch; sitting down needs the game built in My Casino, or in the casino being visited.
+        const viaHost = typeof host === 'string' && /^[\w-]{1,128}$/.test(host) && hostHasGame(host, this.config.slug)
+        if (!viaHost && !hasBuiltGame(playerId, this.config.slug)) fail(`Build ${findGame(this.config.slug)?.name ?? this.config.slug} in your casino first`)
+        // Every payout is chips, which need a casino profile: a visitor who never opened their own gets one now.
+        writeTx(tx => ensureCasino(tx, playerId))
         // Advisory: the debit is what really refuses a player who can't pay.
         const coins = getCoins(playerId)?.coins ?? 0
-        if (coins < this.config.minBet) fail(`You need ${this.config.minBet} coins to sit`)
+        const chips = chipBalance(playerId)
+        if (bankroll(coins, chips) < this.config.minBet) fail(`You need ${this.config.minBet} coins or chips to sit`)
 
         const record = this.scores.get(playerId)
         this.players.set(playerId, {
@@ -189,6 +212,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
             name,
             image,
             seatIndex: index,
+            host: viaHost && host !== playerId ? host as string : null,
             connected: this.bus.isConnected(playerId),
             leaving: false,
             votedStart: false,
@@ -196,7 +220,9 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
             sessionNet: 0,
             winStreak: record?.winStreak ?? 0,
             roundsPlayed: 0,
-            balance: coins,
+            balance: bankroll(coins, chips),
+            coins,
+            chips,
             wagerIds: [],
             staked: 0,
             releaseTimer: null,
@@ -262,9 +288,15 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
 
     // ─── money ───────────────────────────────────────────────────────────────
 
+    /** The refusal for a stake the player's coins and chips can't cover. */
+    protected notEnough(_player: TablePlayer<TSeat>): string {
+        return 'Not enough coins or chips'
+    }
+
     /**
-     * Escrow stakes for `player`, all or nothing. Throws `fail('Not enough
-     * coins')` when they can't cover the lot; the debit is the guard.
+     * Escrow stakes for `player`, all or nothing, each paid from coins first,
+     * then chips. Throws `fail('Not enough coins or chips')` when they can't
+     * cover the lot; the debits are the guard.
      */
     protected stake(player: TablePlayer<TSeat>, stakes: { amount: number, kind: string }[]) {
         for (const { amount } of stakes) {
@@ -274,12 +306,12 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
         try {
             committed = stakeWagers(player.playerId, this.config.slug, this.roundId, stakes)
         } catch (error) {
-            if ((error as { statusCode?: number }).statusCode === 400) fail('Not enough coins')
+            if ((error as { statusCode?: number }).statusCode === 400) fail(this.notEnough(player))
             throw error
         }
         player.wagerIds.push(...committed.value.wagerIds)
         player.staked = sumCoins([player.staked, ...stakes.map(s => s.amount)])
-        this.pushBalance(player, committed.value.balance, committed)
+        this.pushBalance(player, committed.value, committed)
     }
 
     /**
@@ -301,7 +333,8 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
                     wagerIds,
                     staked: normalizeCoins(result.staked),
                     payout: normalizeCoins(result.payout),
-                    summary: { round: this.roundId, ...result.summary }
+                    summary: { round: this.roundId, ...result.summary },
+                    host: player.host
                 })
                 player.wagerIds = []
                 player.staked = 0
@@ -309,10 +342,10 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
                 if (outcome.kind === 'closed') continue
                 if (outcome.kind === 'refunded') {
                     this.bus.sendToPlayer(player.playerId, { t: 'error', message: 'This round was cancelled; your bets came back' })
-                    if (outcome.balance !== null) this.pushBalance(player, outcome.balance, committed)
+                    this.pushBalance(player, outcome, committed)
                     continue
                 }
-                this.pushBalance(player, outcome.balance, committed)
+                this.pushBalance(player, outcome, committed)
                 const net = normalizeCoins(result.payout - result.staked)
                 this.recordResult(player, net)
             } catch (error) {
@@ -345,7 +378,8 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
         if (!wagerIds.length) return
         try {
             const committed = refundWagers(player.playerId, this.config.slug, wagerIds)
-            if (committed.value.balance !== null) this.pushBalance(player, committed.value.balance, committed)
+            const { balance, chips } = committed.value
+            if (balance !== null && chips !== null) this.pushBalance(player, { balance, chips }, committed)
         } catch (error) {
             // The rows stay open and no table holds them: the sweep refunds them.
             console.error(`[tables] ${this.config.slug}: refund for ${player.playerId} failed`, error)
@@ -365,14 +399,27 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
         if (this.players.size) this.onTableActive()
     }
 
+    /** Who sits here and how many watch, for the casino floor (GET /api/tables). */
+    occupancy(): TableOccupancy {
+        return {
+            slug: this.config.slug,
+            seated: this.seated().map(p => ({ name: p.name, image: p.image, avatar: avatarOf(p.playerId) })),
+            seats: this.config.seats,
+            watching: this.bus.count
+        }
+    }
+
     /** Escrow rows this table holds, so the periodic sweep leaves them alone. */
     heldWagerIds(): string[] {
         return this.seated().flatMap(player => player.wagerIds)
     }
 
-    private pushBalance(player: TablePlayer<TSeat>, balance: number, committed: CommittedCoins<unknown>) {
-        player.balance = balance
-        this.bus.sendToPlayer(player.playerId, { t: 'balance', balance })
+    /** Tell the player's sockets both balances (`balance` = coins, `chips`), then any star change. */
+    private pushBalance(player: TablePlayer<TSeat>, balances: { balance: number, chips: number }, committed: CommittedCoins<unknown>) {
+        player.coins = balances.balance
+        player.chips = balances.chips
+        player.balance = bankroll(player.coins, player.chips)
+        this.bus.sendToPlayer(player.playerId, { t: 'balance', balance: balances.balance, chips: balances.chips })
         const playerId = player.playerId
         void committed.stars.then((changes) => {
             for (const change of changes) {
@@ -409,7 +456,12 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
 
     action(playerId: string, action: unknown) {
         if (!action || typeof action !== 'object' || Array.isArray(action)) fail('Unknown action')
-        this.onAction(this.requirePlayer(playerId), action as TAction)
+        const player = this.requirePlayer(playerId)
+        // Fresh balances for the game's advisory checks (solo rounds may have moved them).
+        player.coins = getCoins(playerId)?.coins ?? 0
+        player.chips = chipBalance(playerId)
+        player.balance = bankroll(player.coins, player.chips)
+        this.onAction(player, action as TAction)
     }
 
     protected event(payload: unknown) {

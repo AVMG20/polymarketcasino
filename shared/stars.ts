@@ -1,8 +1,15 @@
 /**
  * The casino's star level, 0 to 10: how many of these thresholds the player's
- * CURRENT coin balance is at or above. Lose the coins and the stars go with
- * them. The level is reported to the hub whenever it changes
+ * CURRENT chip balance (My Casino chips, which only come from round payouts)
+ * is at or above. Spend or lose the chips and the stars go with them. Coins
+ * never count. The level is reported to the hub whenever it changes
  * (server/utils/stars.ts). Thresholds must ascend; tune them here.
+ *
+ * Sized against `bun scripts/tycoon-sim.ts` (the whole catalog is ~1.5M
+ * chips, a maxed casino wins ~100-200k chips a day): the first stars come in
+ * the first days, the middle ones while saving between builds (the Crew,
+ * the High Limit Room, the Penthouse), 8-9 around max and 10 one to two
+ * weeks of play after it.
  */
 export interface CasinoStar {
     key: string
@@ -14,24 +21,24 @@ export interface CasinoStar {
 export const CASINO_GAME_SLUG = 'casino'
 
 export const CASINO_STARS: readonly CasinoStar[] = [
-    { key: 'hold-10k', name: 'Pocket change', description: 'Hold 10k coins', threshold: 10_000 },
-    { key: 'hold-50k', name: 'Fat wallet', description: 'Hold 50k coins', threshold: 50_000 },
-    { key: 'hold-100k', name: 'High roller', description: 'Hold 100k coins', threshold: 100_000 },
-    { key: 'hold-250k', name: 'Whale watch', description: 'Hold 250k coins', threshold: 250_000 },
-    { key: 'hold-500k', name: 'Velvet rope', description: 'Hold 500k coins', threshold: 500_000 },
-    { key: 'hold-1m', name: 'First million', description: 'Hold 1M coins', threshold: 1_000_000 },
-    { key: 'hold-5m', name: 'Penthouse', description: 'Hold 5M coins', threshold: 5_000_000 },
-    { key: 'hold-10m', name: 'House money', description: 'Hold 10M coins', threshold: 10_000_000 },
-    { key: 'hold-50m', name: 'Casino royalty', description: 'Hold 50M coins', threshold: 50_000_000 },
-    { key: 'hold-100m', name: 'Nine figures', description: 'Hold 100M coins', threshold: 100_000_000 }
+    { key: 'hold-1k', name: 'Pocket change', description: 'Hold 1k chips', threshold: 1_000 },
+    { key: 'hold-2500', name: 'Fat wallet', description: 'Hold 2.5k chips', threshold: 2_500 },
+    { key: 'hold-5k', name: 'Chip stack', description: 'Hold 5k chips', threshold: 5_000 },
+    { key: 'hold-10k', name: 'High roller', description: 'Hold 10k chips', threshold: 10_000 },
+    { key: 'hold-20k', name: 'Whale watch', description: 'Hold 20k chips', threshold: 20_000 },
+    { key: 'hold-40k', name: 'Velvet rope', description: 'Hold 40k chips', threshold: 40_000 },
+    { key: 'hold-75k', name: 'Penthouse', description: 'Hold 75k chips', threshold: 75_000 },
+    { key: 'hold-150k', name: 'House money', description: 'Hold 150k chips', threshold: 150_000 },
+    { key: 'hold-300k', name: 'Casino royalty', description: 'Hold 300k chips', threshold: 300_000 },
+    { key: 'hold-1m', name: 'First million', description: 'Hold 1M chips', threshold: 1_000_000 }
 ]
 
 export const MAX_STARS = CASINO_STARS.length
 
-/** The star level (0-10) for a balance. Thresholds ascend, so it is a prefix count. */
-export function starLevel(coins: number): number {
+/** The star level (0-10) for a chip balance. Thresholds ascend, so it is a prefix count. */
+export function starLevel(chips: number): number {
     let level = 0
-    while (level < CASINO_STARS.length && coins >= CASINO_STARS[level]!.threshold) level++
+    while (level < CASINO_STARS.length && chips >= CASINO_STARS[level]!.threshold) level++
     return level
 }
 
@@ -46,7 +53,7 @@ export function nextStar(level: number): CasinoStar | null {
 }
 
 export interface StarSummary {
-    /** starLevel(coins): 0-10, follows the current balance. */
+    /** starLevel(chips): 0-10, follows the current chip balance. */
     level: number
     max: number
     /** The level the hub has confirmed; differs from `level` while a report is due. */
@@ -56,9 +63,9 @@ export interface StarSummary {
     next: { name: string, threshold: number } | null
 }
 
-/** What the wallet shows about stars for a balance (server and client alike). */
-export function starSummary(coins: number, reported: number): StarSummary {
-    const level = starLevel(coins)
+/** What the wallet shows about stars for a chip balance (server and client alike). */
+export function starSummary(chips: number, reported: number): StarSummary {
+    const level = starLevel(chips)
     const current = currentStar(level)
     const next = nextStar(level)
     return {

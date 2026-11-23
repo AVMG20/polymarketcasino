@@ -27,6 +27,13 @@ export interface GameInfo {
      * and `maxBet` are per betting spot.
      */
     live?: true
+    /**
+     * A multi-step round (Gem Dig, Card Climb): started with POST
+     * /api/games/<slug>/start, advanced with /act and ended by a bust or
+     * /cashout (server/utils/steps.ts) instead of one /play. `minBet` and
+     * `maxBet` are the stake.
+     */
+    steps?: true
 }
 
 /**
@@ -228,6 +235,42 @@ export const GAMES: readonly GameInfo[] = [
         volatility: 'medium',
         minBet: MIN_BET,
         maxBet: MAX_BET
+    },
+    {
+        slug: 'plinko',
+        name: 'Pegfall',
+        kind: 'original',
+        tagline: 'Drop balls through the pegs and land on up to 1.000×',
+        cover: '/images/games/plinko.svg',
+        rtp: 0.975,
+        volatility: 'medium',
+        // Per ball.
+        minBet: MIN_BET,
+        maxBet: MAX_BET
+    },
+    {
+        slug: 'mines',
+        name: 'Gem Dig',
+        kind: 'original',
+        tagline: 'Dig for gems, dodge the bombs and cash out whenever you like',
+        cover: '/images/games/mines.svg',
+        rtp: 0.975,
+        volatility: 'high',
+        minBet: MIN_BET,
+        maxBet: MAX_BET,
+        steps: true
+    },
+    {
+        slug: 'hilo',
+        name: 'Card Climb',
+        kind: 'original',
+        tagline: 'Higher or lower? Every right call multiplies, cash out any time',
+        cover: '/images/games/hilo.svg',
+        rtp: 0.975,
+        volatility: 'medium',
+        minBet: MIN_BET,
+        maxBet: MAX_BET,
+        steps: true
     },
     {
         slug: 'magichands',

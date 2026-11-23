@@ -7,21 +7,32 @@ export type StatsRange = typeof STATS_RANGES[number]
 export const RANGE_DAYS: Record<Exclude<StatsRange, 'all'>, number> = { '7d': 7, '30d': 30, '90d': 90 }
 
 /**
- * Ledger categories that move coins without a game: the daily allowance and
- * gem conversions. They are listed apart and never count toward wagered,
- * paid out or return.
+ * Ledger categories that move coins without a game: the daily allowance (old
+ * rows), gem conversions, the My Casino cashier cage (guest income) and daily
+ * mission rewards. They are listed apart and never count toward wagered, paid
+ * out or return.
  */
-export const FLOW_CATEGORIES = ['allowance', 'convert'] as const
+export const FLOW_CATEGORIES = ['allowance', 'convert', 'cage', 'mission'] as const
 export type FlowCategory = typeof FLOW_CATEGORIES[number]
 
 export function isStatsRange(value: unknown): value is StatsRange {
     return typeof value === 'string' && (STATS_RANGES as readonly string[]).includes(value)
 }
 
-/** Totals over a set of settled rounds. Coins. */
+/**
+ * Totals over a set of settled rounds. A stake is coins or chips; every
+ * payout is chips (economy v2), so `wagered` counts both currencies and
+ * `net` is what the rounds made or lost across them.
+ */
 export interface RoundTotals {
     rounds: number
+    /** Every stake, coins and chips. */
     wagered: number
+    /** The part of `wagered` staked with coins (coins only ever leave through rounds). */
+    wageredCoins?: number
+    /** The part staked with chips. */
+    wageredChips?: number
+    /** Payouts (chips). */
     paidOut: number
     /** paidOut − wagered. */
     net: number
@@ -70,7 +81,7 @@ export interface PlayerStats {
     /** Every game played in the range (ignores `game`), most wagered first. */
     games: GameStats[]
     days: StatsDay[]
-    /** Allowance and gem conversions: every flow category, zero when unused. */
+    /** Coins in without a game (allowance, converts, the cage, missions): every flow category, zero when unused. */
     flows: StatsFlow[]
     /** Balance before the first day and at the end of the last. */
     balance: { start: number, end: number }

@@ -24,7 +24,7 @@ import {
     type TrashPandaResult
 } from '../shared/slots/trashpanda'
 import { playRound } from '../server/utils/rounds'
-import { coinsOf, ledgerSum, seedPlayer } from './setup/players'
+import { chipsOf, coinsOf, ledgerSum, seedPlayer } from './setup/players'
 
 /** A grid from four rows of five symbols (top row first). */
 function gridOf(rows: TphSymbol[][]): TphSymbol[][] {
@@ -259,24 +259,30 @@ describe('trashpanda rounds', () => {
     it('settles spins and both buys through playRound', async () => {
         const id = seedPlayer(1_000_000)
         let expected = 1_000_000
+        let chips = 0
         for (let i = 0; i < 40; i++) {
             const round = await playRound(id, 'trashpanda', { bet: 100 })
             expect(round.stake).toBe(100)
             expect(round.payout).toBe((round.result as TrashPandaResult).payout)
-            expected = normalizeCoins(expected + round.payout - round.stake)
+            expected = normalizeCoins(expected - round.stake)
+            chips = normalizeCoins(chips + round.payout)
             expect(round.balance).toBe(expected)
         }
         const heist = await playRound(id, 'trashpanda', { bet: 200, options: { feature: 'buyFreeSpins' } })
         expect(heist.stake).toBe(200 * TPH_BUY_FREE_SPINS_COST)
         expect((heist.result as TrashPandaResult).freeSpins?.source).toBe('buy')
-        expected = normalizeCoins(expected + heist.payout - heist.stake)
+        expected = normalizeCoins(expected - heist.stake)
+            chips = normalizeCoins(chips + heist.payout)
         const dive = await playRound(id, 'trashpanda', { bet: 101, options: { feature: 'buyDive' } })
         expect(dive.stake).toBe(2_196.75)
         expect((dive.result as TrashPandaResult).dive).not.toBeNull()
-        expected = normalizeCoins(expected + dive.payout - dive.stake)
+        expected = normalizeCoins(expected - dive.stake)
+            chips = normalizeCoins(chips + dive.payout)
         expect(dive.balance).toBe(expected)
         expect(coinsOf(id).coins).toBe(expected)
         expect(ledgerSum(id)).toBe(normalizeCoins(expected - 1_000_000))
+        // Every payout is chips.
+        expect(chipsOf(id)).toBe(chips)
     })
 
     it('rejects bad bets and options without charging', async () => {

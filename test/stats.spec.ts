@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { db } from '../server/database'
 import { coinTransactions, gameRounds, players } from '../server/database/schema'
-import { claimAllowance } from '../server/utils/wallet'
+import { collectCage } from '../server/utils/tycoon'
 import { playRound } from '../server/utils/rounds'
 import { parseStatsQuery, playerStats } from '../server/utils/stats'
 import { addDays, amsterdamDayStart } from '../shared/economy'
@@ -16,8 +16,8 @@ const WEEK_START = new Date('2026-11-15T23:00:00Z')
 
 const at = (iso: string) => new Date(iso)
 
-function round(playerId: string, game: string, stake: number, payout: number, createdAt: Date) {
-    db.insert(gameRounds).values({ playerId, game, stake, payout, summary: {}, createdAt }).run()
+function round(playerId: string, game: string, stake: number, payout: number, createdAt: Date, stakeChips = 0) {
+    db.insert(gameRounds).values({ playerId, game, stake, stakeChips, payout, summary: {}, createdAt }).run()
 }
 
 function ledger(playerId: string, row: { category: string, type: 'credit' | 'debit', amount: number, balanceAfter: number, createdAt: Date, refund?: boolean }) {
@@ -54,7 +54,7 @@ describe('playerStats', () => {
         round(id, 'dice', 100, 196, at('2026-11-20T10:00:00Z'))
         round(id, 'dice', 100.0001, 0, at('2026-11-20T11:00:00Z'))
         round(id, 'spinata', 50, 0, at('2026-11-21T09:00:00Z'))
-        round(id, 'spinata', 50, 1000.5, at('2026-11-21T09:30:00Z'))
+        round(id, 'spinata', 50, 1000.5, at('2026-11-21T09:30:00Z'), 20)
         round(id, 'blackjack', 300, 400.25, at('2026-11-22T08:00:00Z'))
 
         const stats = playerStats(id, { range: '7d', game: null }, NOW)
@@ -63,6 +63,8 @@ describe('playerStats', () => {
         expect(stats.summary).toEqual({
             rounds: 5,
             wagered: 600.0001,
+            wageredCoins: 580.0001,
+            wageredChips: 20,
             paidOut: 1596.75,
             net: 996.7499,
             returnRate: expect.closeTo(1596.75 / 600.0001, 12),
@@ -170,7 +172,9 @@ describe('playerStats', () => {
         expect(stats.games.map(g => g.game)).toEqual(['blackjack'])
         expect(stats.flows).toEqual([
             { category: 'allowance', count: 1, amount: 2_500 },
-            { category: 'convert', count: 2, amount: 6_000 }
+            { category: 'convert', count: 2, amount: 6_000 },
+            { category: 'cage', count: 0, amount: 0 },
+            { category: 'mission', count: 0, amount: 0 }
         ])
         expect(stats.balance).toEqual({ start: 2_500, end: 8_600 })
     })
@@ -189,6 +193,16 @@ describe('playerStats', () => {
         expect(stats.days.map(d => d.balance)).toEqual([1_000, 1_200.5, 1_000.5, 1_000.5, 3_000, 3_000, 3_000])
     })
 
+    it('lists mission rewards as a flow, apart from the rounds', () => {
+        const id = seedPlayer()
+        ledger(id, { category: 'mission', type: 'credit', amount: 800, balanceAfter: 800, createdAt: at('2026-11-20T09:00:00Z') })
+        ledger(id, { category: 'mission', type: 'credit', amount: 600, balanceAfter: 1_400, createdAt: at('2026-11-21T09:00:00Z') })
+        const stats = playerStats(id, { range: '7d', game: null }, NOW)
+        expect(stats.flows.find(f => f.category === 'mission')).toEqual({ category: 'mission', count: 2, amount: 1_400 })
+        expect(stats.summary).toMatchObject({ rounds: 0, wagered: 0, paidOut: 0 })
+        expect(stats.balance.end).toBe(1_400)
+    })
+
     it('never counts another player', () => {
         const id = seedPlayer()
         const other = seedPlayer()
@@ -200,10 +214,11 @@ describe('playerStats', () => {
         expect(stats.balance).toEqual({ start: 0, end: 0 })
     })
 
-    it('matches what real rounds and an allowance claim wrote', async () => {
+    it('matches what real rounds and a cage collect wrote', async () => {
         const id = seedPlayer()
         db.update(players).set({ origin: 'dev' }).where(eq(players.id, id)).run()
-        await claimAllowance(id)
+        const { collected } = await collectCage(id)
+        expect(collected).toBeGreaterThan(0)
         const played = []
         for (let i = 0; i < 20; i++) played.push(await playRound(id, 'dice', { bet: 25.5, options: { chance: 50 } }))
 
@@ -211,7 +226,7 @@ describe('playerStats', () => {
         const paid = sumCoins(played.map(r => r.payout))
         expect(stats.summary).toMatchObject({ rounds: 20, wagered: 510, paidOut: paid })
         expect(stats.games.map(g => g.game)).toEqual(['dice'])
-        expect(stats.flows.find(f => f.category === 'allowance')).toEqual({ category: 'allowance', count: 1, amount: 2_500 })
+        expect(stats.flows.find(f => f.category === 'cage')).toEqual({ category: 'cage', count: 1, amount: collected })
         expect(stats.balance.end).toBe(coinsOf(id).coins)
         expect(stats.days.at(-1)!.balance).toBe(coinsOf(id).coins)
     })

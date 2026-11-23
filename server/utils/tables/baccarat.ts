@@ -57,7 +57,7 @@ export class BaccaratTable extends LiveTable<BacSeat, BacShared, BacAction> {
                 if (!isChip(action.amount)) fail('Invalid chip')
                 const next = seat.bets[action.spot] + action.amount
                 if (next > this.config.maxBet) fail('Table maximum reached')
-                if (bacTotal(seat.bets) + action.amount > player.balance) fail('Not enough coins')
+                if (bacTotal(seat.bets) + action.amount > player.balance) fail(this.notEnough(player))
                 seat.bets[action.spot] = next
                 seat.chips.push({ spot: action.spot, amount: action.amount })
                 return
@@ -96,7 +96,7 @@ export class BaccaratTable extends LiveTable<BacSeat, BacShared, BacAction> {
         const total = bacTotal(bets)
         if (!total) fail(`Minimum bet is ${this.config.minBet}`)
         for (const spot of BAC_SPOTS) if (bets[spot] > this.config.maxBet) fail('Table maximum reached')
-        if (total > player.balance) fail('Not enough coins')
+        if (total > player.balance) fail(this.notEnough(player))
         player.game.bets = { ...bets }
         player.game.chips = BAC_SPOTS.filter(spot => bets[spot] > 0).map(spot => ({ spot, amount: bets[spot] }))
     }
@@ -146,7 +146,7 @@ export class BaccaratTable extends LiveTable<BacSeat, BacShared, BacAction> {
                 seat.staked = { ...seat.bets }
                 seat.lastBets = { ...seat.bets }
             } catch {
-                this.tell(player.playerId, 'Not enough coins: you sit this one out')
+                this.tell(player.playerId, `${this.notEnough(player)}: you sit this one out`)
             }
             seat.bets = emptyBacBets()
             seat.chips = []

@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeCoins } from '../shared/money'
+import { normalizeCoins, sumCoins } from '../shared/money'
 import { GAMES } from '../shared/games/registry'
 import { TPH_BUY_FREE_SPINS_COST } from '../shared/slots/trashpanda'
 import { serverGame } from '../server/utils/games'
 import { playRound } from '../server/utils/rounds'
+import { stepGame } from '../server/utils/steps'
 import { TABLES } from '../server/utils/tables'
-import { coinsOf, ledgerSum, seedPlayer } from './setup/players'
+import { chipLedgerSum, chipsOf, coinsOf, ledgerSum, seedPlayer } from './setup/players'
 
 describe('playRound', () => {
     it('has a server implementation for every listed game, and a live table for every live one', () => {
         for (const game of GAMES) {
             if (game.live) {
                 expect(TABLES[game.slug]?.config.slug).toBe(game.slug)
+                expect(serverGame(game.slug)).toBeUndefined()
+            } else if (game.steps) {
+                expect(stepGame(game.slug)?.slug).toBe(game.slug)
                 expect(serverGame(game.slug)).toBeUndefined()
             } else {
                 expect(serverGame(game.slug)?.info.slug).toBe(game.slug)
@@ -20,17 +24,21 @@ describe('playRound', () => {
         for (const slug of Object.keys(TABLES)) expect(GAMES.find(game => game.slug === slug)?.live).toBe(true)
     })
 
-    it('debits the stake, credits the payout and returns the new balance', async () => {
+    it('debits the coin stake, pays the payout in chips and returns both balances', async () => {
         const id = seedPlayer(10_000)
-        let expected = 10_000
+        let chips = 0
         for (let i = 0; i < 30; i++) {
             const round = await playRound(id, 'dice', { bet: 100, options: { chance: 50 } })
-            expected = normalizeCoins(expected + round.payout - round.stake)
-            expect(round.balance).toBe(expected)
+            chips = normalizeCoins(chips + round.payout)
+            expect(round.balance).toBe(10_000 - 100 * (i + 1))
+            expect(round.chips).toBe(chips)
+            expect(round.chipsEarned).toBe(round.payout)
             expect(round.payout === 0 || round.payout === 196).toBe(true)
         }
-        expect(coinsOf(id).coins).toBe(expected)
-        expect(ledgerSum(id)).toBe(normalizeCoins(expected - 10_000))
+        expect(coinsOf(id).coins).toBe(7_000)
+        expect(ledgerSum(id)).toBe(-3_000)
+        expect(chipsOf(id)).toBe(chips)
+        expect(chipLedgerSum(id)).toBe(chips)
     })
 
     it('settles slot rounds and feature buys', async () => {
@@ -42,20 +50,23 @@ describe('playRound', () => {
         expect((buy.result as { freeSpins: { spins: unknown[] } }).freeSpins.spins.length).toBeGreaterThan(0)
     })
 
-    it('plays a decimal bet from the minimum of 10 and pays to 0.0001 coin', async () => {
+    it('plays a decimal bet from the minimum of 10 and pays to 0.0001 chip', async () => {
         const id = seedPlayer(100)
-        let expected = 100
-        for (let i = 0; i < 20; i++) {
+        let coins = 100
+        let chips = 0
+        for (let i = 0; i < 9; i++) {
             const round = await playRound(id, 'dice', { bet: 10.0001, options: { chance: 50 } })
             expect(round.stake).toBe(10.0001)
             // 10.0001 × 1.96 = 19.600196: rounded down to 19.6001.
             expect([0, 19.6001]).toContain(round.payout)
-            expected = normalizeCoins(expected - round.stake + round.payout)
-            expect(round.balance).toBe(expected)
-            if (expected < 10.0001) break
+            coins = normalizeCoins(coins - round.stake)
+            chips = normalizeCoins(chips + round.payout)
+            expect(round.balance).toBe(coins)
+            expect(round.chips).toBe(chips)
         }
-        expect(coinsOf(id).coins).toBe(expected)
-        expect(ledgerSum(id)).toBe(normalizeCoins(expected - 100))
+        expect(coinsOf(id).coins).toBe(coins)
+        expect(ledgerSum(id)).toBe(normalizeCoins(coins - 100))
+        expect(chipLedgerSum(id)).toBe(chips)
     })
 
     it('takes the roulette stake from the bets on the layout', async () => {
@@ -80,9 +91,10 @@ describe('playRound', () => {
             await expect(playRound(id, 'dice', { bet, options: { chance: 50 } })).rejects.toMatchObject({ statusCode: 400 })
         }
         await expect(playRound(id, 'dice', { bet: 100, options: ['chance'] })).resolves.toMatchObject({ stake: 100 })
-        // Only that last round moved coins: lost 100 or won 196 - 100.
-        expect([9_900, 10_096]).toContain(coinsOf(id).coins)
-        expect(ledgerSum(id)).toBe(normalizeCoins(coinsOf(id).coins - 10_000))
+        // Only that last round moved money: 100 coins staked, 0 or 196 chips paid.
+        expect(coinsOf(id).coins).toBe(9_900)
+        expect([0, 196]).toContain(chipsOf(id))
+        expect(ledgerSum(id)).toBe(-100)
     })
 
     it('rejects malformed roulette layouts without charging', async () => {
@@ -109,13 +121,15 @@ describe('playRound', () => {
 
     it('never lets parallel bets spend more than the balance', async () => {
         const id = seedPlayer(500)
-        // Win chance 1%: nearly every round loses, so payouts can't fund extra bets.
-        const results = await Promise.allSettled(Array.from({ length: 20 }, () => playRound(id, 'dice', { bet: 100, options: { chance: 1 } })))
-        const played = results.filter(r => r.status === 'fulfilled').length
-        const { coins } = coinsOf(id)
-        expect(coins).toBeGreaterThanOrEqual(0)
-        expect(ledgerSum(id)).toBe(normalizeCoins(coins - 500))
-        expect(played).toBeGreaterThanOrEqual(5)
+        // Wins pay chips, and chips stake once the coins are gone.
+        const results = await Promise.allSettled(Array.from({ length: 20 }, () => playRound(id, 'dice', { bet: 100, options: { chance: 50 } })))
+        const played = results.flatMap(r => r.status === 'fulfilled' ? [r.value] : [])
+        expect(played.length).toBeGreaterThanOrEqual(5)
+        expect(sumCoins(played.map(round => round.stakeCoins))).toBe(500)
+        expect(coinsOf(id).coins).toBe(0)
+        expect(ledgerSum(id)).toBe(-500)
+        expect(chipsOf(id)).toBeGreaterThanOrEqual(0)
+        expect(chipsOf(id)).toBe(normalizeCoins(sumCoins(played.map(round => round.payout)) - sumCoins(played.map(round => round.stakeChips))))
         for (const r of results) if (r.status === 'rejected') expect(r.reason).toMatchObject({ statusCode: 400 })
     })
 })

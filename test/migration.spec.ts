@@ -94,3 +94,43 @@ describe('0002_decimal_coins', () => {
         sqlite.close()
     })
 })
+
+describe('0004_tycoon', () => {
+    it('adds My Casino, marks old rounds as coin rounds and drops the prototype table', () => {
+        const { sqlite, db } = oldDatabase(2_400)
+        // A table an earlier, deleted prototype left in local databases.
+        sqlite.run('create table tycoon_profiles (player_id text primary key, data text)')
+        migrate(db, { migrationsFolder: DRIZZLE })
+
+        const tables = sqlite.query(`select name from sqlite_master where type = 'table'`).all().map(row => (row as { name: string }).name)
+        expect(tables).not.toContain('tycoon_profiles')
+        expect(tables).toEqual(expect.arrayContaining(['casino_profiles', 'casino_constructions', 'chip_transactions', 'gem_purchases']))
+        expect(sqlite.query('select funding from game_rounds').get()).toEqual({ funding: 'coins' })
+        sqlite.close()
+    })
+})
+
+describe('0006_economy_v2', () => {
+    it('records the chip part of old chip-funded rounds and gives escrow rows a chip part', () => {
+        const sqlite = new Database(join(scratch, `${crypto.randomUUID()}.sqlite`), { create: true, strict: true })
+        sqlite.exec('PRAGMA foreign_keys = ON')
+        const db = drizzle({ client: sqlite, schema })
+        // The folder as it was before economy v2.
+        const folder = join(scratch, `drizzle-${crypto.randomUUID()}`)
+        cpSync(DRIZZLE, folder, { recursive: true })
+        const journalPath = join(folder, 'meta/_journal.json')
+        const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: { tag: string }[] }
+        journal.entries = journal.entries.slice(0, journal.entries.findIndex(entry => entry.tag === '0006_economy_v2'))
+        writeFileSync(journalPath, JSON.stringify(journal))
+        migrate(db, { migrationsFolder: folder })
+
+        sqlite.run(`insert into players (id, name) values ('p1', 'Old')`)
+        sqlite.run(`insert into game_rounds (id, player_id, game, stake, payout, summary, funding) values ('r1', 'p1', 'dice', 1000000, 0, '{}', 'chips'), ('r2', 'p1', 'dice', 2000000, 0, '{}', 'coins')`)
+        sqlite.run(`insert into table_wagers (id, player_id, game, round_id, amount, kind) values ('w1', 'p1', 'blackjack', 1, 5000000, 'bet')`)
+        migrate(db, { migrationsFolder: DRIZZLE })
+
+        expect(sqlite.query('select id, stake_chips as chips from game_rounds order by id').all()).toEqual([{ id: 'r1', chips: 1_000_000 }, { id: 'r2', chips: 0 }])
+        expect(sqlite.query('select amount_chips as chips from table_wagers').get()).toEqual({ chips: 0 })
+        sqlite.close()
+    })
+})

@@ -2,6 +2,7 @@ import { candyMadnessStake, parseCandyMadnessOptions, playCandyMadness } from '#
 import { parseDiceOptions, playDice } from '#shared/games/dice'
 import { parseLimboOptions, playLimbo } from '#shared/games/limbo'
 import { parseMagicHandsOptions, playMagicHands } from '#shared/games/magichands'
+import { parsePlinkoOptions, playPlinko } from '#shared/games/plinko'
 import { parsePolyMastersOptions, playPolyMasters } from '#shared/games/polymasters'
 import { GAMES, type GameInfo } from '#shared/games/registry'
 import { parseRouletteBets, playRoulette, totalStake } from '#shared/games/roulette'
@@ -204,6 +205,23 @@ const implementations: Record<string, ServerGame> = {
         }
     },
 
+    plinko: {
+        info: info('plinko'),
+        // `bet` is one ball; the stake is a bet per ball.
+        play({ bet, options, rng }) {
+            const parsed = parsePlinkoOptions(options)
+            const stake = costFor(bet, parsed.balls)
+            if (stake > this.info.maxBet) throw new RangeError(`At most ${formatCoins(this.info.maxBet)} coins per drop`)
+            const result = playPlinko(rng, parsed)
+            return {
+                stake,
+                payout: payFor(bet, result.multiplier),
+                result,
+                summary: { bet, rows: parsed.rows, risk: parsed.risk, balls: parsed.balls, slots: result.balls.map(ball => ball.slot), win: result.multiplier }
+            }
+        }
+    },
+
     dice: {
         info: info('dice'),
         play({ bet, options, rng }) {
@@ -240,10 +258,12 @@ const implementations: Record<string, ServerGame> = {
 }
 
 // Every registry entry has an implementation and vice versa. Live tables
-// live in server/utils/tables/ instead (and must not have a play endpoint).
+// live in server/utils/tables/ and multi-step games in server/utils/steps.ts
+// instead (and must not have a play endpoint).
 for (const game of GAMES) {
-    if (!game.live && !implementations[game.slug]) throw new Error(`No server implementation for ${game.slug}`)
-    if (game.live && implementations[game.slug]) throw new Error(`${game.slug} is a live table and has no round endpoint`)
+    const elsewhere = game.live || game.steps
+    if (!elsewhere && !implementations[game.slug]) throw new Error(`No server implementation for ${game.slug}`)
+    if (elsewhere && implementations[game.slug]) throw new Error(`${game.slug} is a ${game.live ? 'live table' : 'multi-step game'} and has no round endpoint`)
 }
 for (const slug of Object.keys(implementations)) {
     if (!GAMES.some(game => game.slug === slug)) throw new Error(`${slug} is implemented but not in the registry`)

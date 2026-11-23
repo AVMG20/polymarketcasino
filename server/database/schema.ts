@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { customType, index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { customType, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 import { fromUnits, toUnits } from '../../shared/money'
 
 /**
@@ -37,8 +37,10 @@ export const players = sqliteTable('players', {
     // Highest balance ever held (a stat), raised in the same statement as the
     // credit that beats it.
     peakCoins: coins('peak_coins').notNull().default(0),
-    // The star level the hub last confirmed, and the ledger row id (`seq`) it
-    // was reported with. When starLevel(coins) differs, a report is due.
+    // The star level the hub last confirmed, and the `seq` it was reported
+    // with (STAR_SEQ_BASE + a chip ledger id, server/utils/stars.ts; coin
+    // ledger ids before economy v2). Stars follow the chip balance
+    // (casino_profiles.chips): when starLevel(chips) differs, a report is due.
     starsReported: integer('stars_reported').notNull().default(0),
     starsSeq: integer('stars_seq').notNull().default(0),
     createdAt: createdAt(),
@@ -123,11 +125,17 @@ export const gameRounds = sqliteTable(
         stake: coins('stake').notNull(),
         payout: coins('payout').notNull(),
         summary: text('summary', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+        // The part of `stake` paid with My Casino chips; the rest was coins
+        // (economy v2: coins first, then chips). The payout is always chips.
+        stakeChips: coins('stake_chips').notNull().default(0),
+        // Legacy (rounds before economy v2 picked one currency): 'chips' when
+        // the whole stake was chips, else 'coins'. stake_chips is the truth.
+        funding: text('funding', { enum: ['coins', 'chips'] }).notNull().default('coins'),
         createdAt: createdAt()
     },
     // Covers the stats page: a player's rounds of one game over a day are one
     // range of this index, summed without reading the rows (or their JSON).
-    table => [index('game_rounds_player_game_idx').on(table.playerId, table.game, table.createdAt, table.stake, table.payout)]
+    table => [index('game_rounds_player_game_idx').on(table.playerId, table.game, table.createdAt, table.stake, table.stakeChips, table.payout)]
 )
 
 /**
@@ -149,9 +157,225 @@ export const tableWagers = sqliteTable(
         amount: coins('amount').notNull(),
         // What the stake was for: 'bet', 'double', 'split', 'ante', 'call', …
         kind: text('kind').notNull(),
+        // The part of `amount` paid with chips (coins first, then chips); a
+        // refund hands each part back in its own currency. The payout is
+        // always chips.
+        amountChips: coins('amount_chips').notNull().default(0),
         status: text('status', { enum: ['open', 'settled', 'refunded'] }).notNull().default('open'),
         createdAt: createdAt(),
         closedAt: integer('closed_at', { mode: 'timestamp_ms' })
     },
     table => [index('table_wagers_status_idx').on(table.status, table.createdAt)]
+)
+
+/**
+ * My Casino: one row per player, created on first use (shared/tycoon.ts).
+ * `chips` only moves through server/utils/chips.ts, in the same transaction
+ * as its chip_transactions row; the star level follows it. The cage holds
+ * `cage_stored` **coins** (guest income) at `cage_at`; guest income since
+ * then is worked out on read. Finished
+ * constructions are applied on every read and action (server/utils/tycoon.ts).
+ */
+export const casinoProfiles = sqliteTable('casino_profiles', {
+    playerId: text('player_id').primaryKey().references(() => players.id, { onDelete: 'cascade' }),
+    chips: coins('chips').notNull().default(0),
+    zones: text('zones', { mode: 'json' }).$type<string[]>().notNull(),
+    games: text('games', { mode: 'json' }).$type<Record<string, number>>().notNull(),
+    upgrades: text('upgrades', { mode: 'json' }).$type<Record<string, number>>().notNull(),
+    golden: text('golden', { mode: 'json' }).$type<string[]>().notNull(),
+    /** 1, or 2 with the gem builder hired. The Construction Crew (upgrades.crew) adds its builder on top on read. */
+    builders: integer('builders').notNull().default(1),
+    cageStored: coins('cage_stored').notNull().default(0),
+    cageAt: integer('cage_at', { mode: 'timestamp_ms' }).notNull(),
+    rushUntil: integer('rush_until', { mode: 'timestamp_ms' }),
+    /** The running ad campaign (flyers, billboard, tv) and when it ends. */
+    campaign: text('campaign'),
+    campaignUntil: integer('campaign_until', { mode: 'timestamp_ms' }),
+    /** What the avatar wears, { hat, outfit, accessory } item ids (shared/cosmetics.ts); {} = the defaults. */
+    avatar: text('avatar', { mode: 'json' }).$type<Record<string, string>>().notNull().default({}),
+    /** The skin on each zone, { zone: skin }; missing = classic. */
+    skins: text('skins', { mode: 'json' }).$type<Record<string, string>>().notNull().default({}),
+    /**
+     * When the owner last read their casino, and what it looked like then
+     * (server/utils/welcome.ts): the "while you were away" card replays the
+     * guest income from this snapshot. Null until the first read.
+     */
+    lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }),
+    lastSeen: text('last_seen', { mode: 'json' }).$type<Record<string, unknown>>(),
+    createdAt: createdAt()
+})
+
+/**
+ * Running constructions. One per player and thing being built (the unique
+ * index is the guard against building it twice); deleting a finished row is
+ * the guard that applies it once.
+ */
+export const casinoConstructions = sqliteTable(
+    'casino_constructions',
+    {
+        id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        kind: text('kind', { enum: ['zone', 'game', 'upgrade'] }).notNull(),
+        target: text('target').notNull(),
+        // The level it reaches when done (1 for a zone or a new game).
+        level: integer('level').notNull(),
+        startedAt: integer('started_at', { mode: 'timestamp_ms' }).notNull(),
+        readyAt: integer('ready_at', { mode: 'timestamp_ms' }).notNull()
+    },
+    table => [
+        uniqueIndex('casino_constructions_target_idx').on(table.playerId, table.kind, table.target),
+        index('casino_constructions_ready_idx').on(table.playerId, table.readyAt)
+    ]
+)
+
+/**
+ * The chip ledger: one row per chip change. `reason` says what moved them:
+ * 'bet:dice', 'win:dice', 'refund:blackjack', 'build:zone:main',
+ * 'campaign:flyers' (and from before economy v2: 'housecut:dice', 'cage',
+ * 'gems:chips'). Its id (plus an offset) is the `seq` star reports use.
+ */
+export const chipTransactions = sqliteTable(
+    'chip_transactions',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        // Always positive; `type` says which way it moved.
+        amount: coins('amount').notNull(),
+        type: text('type', { enum: ['credit', 'debit'] }).notNull(),
+        reason: text('reason').notNull(),
+        balanceAfter: coins('balance_after').notNull(),
+        createdAt: createdAt()
+    },
+    table => [index('chip_transactions_player_idx').on(table.playerId, table.id)]
+)
+
+/**
+ * Gem purchases in My Casino (skips, rushes, the second builder, golden
+ * skins, cosmetics; 'chips' is a chip pack from before economy v2, no longer sold).
+ * Same flow as gem_conversions: a `pending` row before the hub spends,
+ * settled in its own guarded transaction, retried with the same key.
+ * `target` is '' when the item has none; one pending purchase per player,
+ * item and target (the partial unique index) keeps a double tap from paying
+ * twice for one thing. A purchase with nothing left to deliver (a skip that
+ * finished on its own, an item owned already) goes `done → refund_due`, then
+ * `refunded` once the hub confirms the refund (retried by the sweep), or
+ * `refund_failed` when the hub refuses it.
+ */
+export const gemPurchases = sqliteTable(
+    'gem_purchases',
+    {
+        id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        item: text('item', { enum: ['skip', 'rush', 'builder', 'chips', 'golden', 'cosmetic'] }).notNull(),
+        target: text('target').notNull().default(''),
+        gems: integer('gems').notNull(),
+        status: text('status', { enum: ['pending', 'done', 'failed', 'refund_due', 'refunded', 'refund_failed'] }).notNull().default('pending'),
+        idempotencyKey: text('idempotency_key').notNull().unique(),
+        spendId: text('spend_id'),
+        error: text('error'),
+        attempts: integer('attempts').notNull().default(0),
+        createdAt: createdAt(),
+        settledAt: integer('settled_at', { mode: 'timestamp_ms' })
+    },
+    table => [
+        index('gem_purchases_status_idx').on(table.status, table.createdAt),
+        uniqueIndex('gem_purchases_pending_idx').on(table.playerId, table.item, table.target).where(sql`status = 'pending'`)
+    ]
+)
+
+/**
+ * Multi-step rounds (Gem Dig, Card Climb; server/utils/steps.ts). The stake
+ * is debited in the transaction that inserts the `open` row; every move
+ * rewrites `state` guarded by `status = 'open' AND step = <the step read>`,
+ * and the round ends by flipping `open → settled` (paying the cash-out in
+ * chips, or nothing on a bust) or `open → refunded` (an abandoned round with
+ * no progress: each part of the stake back in its own currency), in the same
+ * transaction as the money. The flip is the guard: a round pays once. One
+ * open round per player and game (the partial unique index). `state` holds
+ * the secrets (the bomb tiles) and never leaves the server whole.
+ */
+export const stepRounds = sqliteTable(
+    'step_rounds',
+    {
+        id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        game: text('game').notNull(),
+        bet: coins('bet').notNull(),
+        // The part of `bet` paid with chips (coins first, then chips).
+        stakeChips: coins('stake_chips').notNull().default(0),
+        status: text('status', { enum: ['open', 'settled', 'refunded'] }).notNull().default('open'),
+        state: text('state', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+        // Moves made so far: each move bumps it, and its update is guarded by the old value.
+        step: integer('step').notNull().default(0),
+        payout: coins('payout').notNull().default(0),
+        createdAt: createdAt(),
+        updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(sql`(unixepoch('subsec') * 1000)`),
+        settledAt: integer('settled_at', { mode: 'timestamp_ms' })
+    },
+    table => [
+        uniqueIndex('step_rounds_open_idx').on(table.playerId, table.game).where(sql`status = 'open'`),
+        index('step_rounds_status_idx').on(table.status, table.updatedAt)
+    ]
+)
+
+/**
+ * Hearts visitors leave on a casino (GET /api/tycoon/visit/:id, POST …/like):
+ * one per visitor, casino and Amsterdam day. The primary key is the guard
+ * (insert … on conflict do nothing). Hearts are only a count: no coins,
+ * chips or gems ever move between players.
+ */
+export const casinoLikes = sqliteTable(
+    'casino_likes',
+    {
+        ownerId: text('owner_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        visitorId: text('visitor_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        day: text('day').notNull(),
+        createdAt: createdAt()
+    },
+    table => [primaryKey({ columns: [table.ownerId, table.visitorId, table.day] })]
+)
+
+/**
+ * Cosmetics a player bought (avatar items, zone skins; shared/cosmetics.ts):
+ * one row per player and item key, for good. The primary key is the guard
+ * (insert … on conflict do nothing), so a burst of buys pays once. Free
+ * items are never stored. What is worn lives on casino_profiles.
+ */
+export const casinoCosmetics = sqliteTable(
+    'casino_cosmetics',
+    {
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        item: text('item').notNull(),
+        /** How it was paid: 'chips' or 'gems'. */
+        paid: text('paid', { enum: ['chips', 'gems'] }).notNull(),
+        createdAt: createdAt()
+    },
+    table => [primaryKey({ columns: [table.playerId, table.item] })]
+)
+
+/**
+ * Daily missions (shared/missions.ts, server/utils/missions.ts): three per
+ * player and Amsterdam day plus the bonus for clearing all three (`mission`
+ * = 'bonus'), assigned on the first read or event of the day. Progress is
+ * bumped in the same transaction as the event that made it (a settled round,
+ * a collect, a build, a campaign), capped at `target`. The reward (coins) is
+ * fixed at assignment. Claiming flips `claimed_at` from null, guarded by
+ * `progress >= target`, in the same transaction as the coin credit: a
+ * mission pays once.
+ */
+export const dailyMissions = sqliteTable(
+    'daily_missions',
+    {
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        day: text('day').notNull(),
+        mission: text('mission').notNull(),
+        /** Display order: 0-2 the missions, 3 the bonus. */
+        slot: integer('slot').notNull(),
+        target: integer('target').notNull(),
+        progress: integer('progress').notNull().default(0),
+        reward: coins('reward').notNull(),
+        claimedAt: integer('claimed_at', { mode: 'timestamp_ms' }),
+        createdAt: createdAt()
+    },
+    table => [primaryKey({ columns: [table.playerId, table.day, table.mission] })]
 )

@@ -1,17 +1,28 @@
 import { and, eq, lt, sql } from 'drizzle-orm'
 import { db } from '../database'
-import { coinTransactions, players } from '../database/schema'
+import { casinoProfiles, chipTransactions, players } from '../database/schema'
 import { CASINO_GAME_SLUG, starLevel } from '../../shared/stars'
 import { hub, HubError } from './hub'
 
 /**
- * Star levels at the hub. A player's level is starLevel(current coins), 0-10,
- * and it goes down as well as up. Whenever it differs from what the hub last
- * confirmed (`players.stars_reported`), we set it at the hub with the latest
- * ledger row id as `seq`: ids only grow, so the hub can drop a stale set that
- * arrives after a newer one. Unconfirmed levels retry lazily (next balance
- * change, next wallet read, boot sweep).
+ * Star levels at the hub. A player's level is starLevel(current **chips**),
+ * 0-10, and it goes down as well as up. Whenever it differs from what the hub
+ * last confirmed (`players.stars_reported`), we set it at the hub with
+ * `seq = STAR_SEQ_BASE + the player's latest chip_transactions id`: ids only
+ * grow, so the hub can drop a stale set that arrives after a newer one.
+ * Unconfirmed levels retry lazily (next coin or chip change, next wallet
+ * read, the ten-minute sweep).
  */
+
+/**
+ * Added to every chip ledger id used as `seq`. Before economy v2 stars
+ * followed coins and `seq` was the coin ledger id; the hub applies a set only
+ * when its seq beats the stored one, and the chip ledger's ids are far
+ * smaller than the coin ledger's. The offset puts every chip-based seq above
+ * every coin id ever sent (a billion coin rows away), and it stays well under
+ * the hub's 2^53 − 1 limit.
+ */
+export const STAR_SEQ_BASE = 1_000_000_000
 
 export interface StarChange {
     playerId: string
@@ -30,17 +41,20 @@ export interface StarChange {
  */
 export async function syncStars(playerId: string): Promise<StarChange | null> {
     const row = db.select({
-        coins: players.coins,
+        chips: casinoProfiles.chips,
         origin: players.origin,
         reported: players.starsReported,
         reportedSeq: players.starsSeq,
-        seq: sql<number | null>`(select max(${coinTransactions.id}) from ${coinTransactions} where ${coinTransactions.playerId} = ${playerId})`
-    }).from(players).where(eq(players.id, playerId)).get()
+        seq: sql<number | null>`(select max(${chipTransactions.id}) from ${chipTransactions} where ${chipTransactions.playerId} = ${playerId})`
+    }).from(players)
+        .leftJoin(casinoProfiles, eq(casinoProfiles.playerId, players.id))
+        .where(eq(players.id, playerId))
+        .get()
     // Dev-login players don't exist at the hub: nothing to report.
     if (!row || row.origin !== 'hub') return null
 
-    const level = starLevel(row.coins)
-    const seq = row.seq ?? 0
+    const level = starLevel(row.chips ?? 0)
+    const seq = STAR_SEQ_BASE + (row.seq ?? 0)
     if (level === row.reported || seq <= row.reportedSeq) return null
 
     try {
@@ -62,13 +76,14 @@ export async function syncStars(playerId: string): Promise<StarChange | null> {
     }
 }
 
-/** Report every hub player whose level may be out of date (boot sweep). */
+/** Report every hub player whose level may be out of date (boot and ten-minute sweep). */
 export async function syncAllStars() {
-    const due = db.select({ id: players.id, coins: players.coins, reported: players.starsReported })
+    const due = db.select({ id: players.id, chips: casinoProfiles.chips, reported: players.starsReported })
         .from(players)
+        .leftJoin(casinoProfiles, eq(casinoProfiles.playerId, players.id))
         .where(eq(players.origin, 'hub'))
         .all()
-        .filter(row => starLevel(row.coins) !== row.reported)
+        .filter(row => starLevel(row.chips ?? 0) !== row.reported)
     let synced = 0
     for (const row of due) if (await syncStars(row.id)) synced++
     return synced

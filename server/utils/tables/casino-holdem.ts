@@ -139,7 +139,7 @@ export class CasinoHoldemTable extends LiveTable<ChSeat, ChShared, ChAction> {
     private check(player: Player, ante: number, aa: number) {
         if (ante > this.config.maxBet) fail('Table maximum reached')
         if (aa > ante) fail('The AA bonus can\'t exceed your ante')
-        if (ante + aa + ante * CH_CALL_MULTIPLIER > player.balance) fail(`Not enough coins (the call costs ${CH_CALL_MULTIPLIER}× your ante)`)
+        if (ante + aa + ante * CH_CALL_MULTIPLIER > player.balance) fail(`${this.notEnough(player)} (the call costs ${CH_CALL_MULTIPLIER}× your ante)`)
     }
 
     private setLayout(player: Player, ante: number, aa: number) {
@@ -205,7 +205,7 @@ export class CasinoHoldemTable extends LiveTable<ChSeat, ChShared, ChAction> {
                 try {
                     this.stake(player, [{ amount: seat.pendingAnte, kind: 'ante' }])
                 } catch {
-                    this.tell(player.playerId, 'Not enough coins: you sit this one out')
+                    this.tell(player.playerId, `${this.notEnough(player)}: you sit this one out`)
                     seat.pendingAnte = 0
                 }
             }
