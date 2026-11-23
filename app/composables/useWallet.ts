@@ -10,19 +10,21 @@ export interface StarChange {
 
 export interface WalletState {
     coins: number
+    /** My Casino chips: what wins pay and what the stars follow. */
+    chips: number
     peakCoins: number
     gems: number | null
     hubAccount: boolean
     coinsPerGem: number
     convert: { min: number, max: number }
-    allowance: { amount: number, available: boolean, nextAt: string }
     stars: StarSummary
     starChange: StarChange | null
 }
 
 /**
- * Gems, conversion, the daily allowance and the star level. Coins live in
- * useCasinoSession; anything that returns a balance updates them there.
+ * Gems, conversion and the star level. Coins live in
+ * useCasinoSession and chips in useTycoon; anything that returns a balance
+ * updates them there. The star level follows the chip balance.
  * A confirmed star rise gets its celebration, a drop just updates the track,
  * and the hub hears about both.
  */
@@ -46,11 +48,16 @@ export function useWallet() {
         if (!gemsKnown && change.bounty > 0 && wallet.value?.gems != null) setGems(wallet.value.gems + change.bounty)
     }
 
-    /** Recompute the local star summary for a new balance (thresholds are shared). */
+    /** Keep the wallet's coin copy in step with the session. */
     function followCoins(coins: number) {
+        if (wallet.value) wallet.value.coins = coins
+    }
+
+    /** Recompute the local star summary for a new chip balance (thresholds are shared). */
+    function followChips(chips: number) {
         if (!wallet.value) return
-        wallet.value.coins = coins
-        wallet.value.stars = starSummary(coins, wallet.value.stars.reported)
+        wallet.value.chips = chips
+        wallet.value.stars = starSummary(chips, wallet.value.stars.reported)
     }
 
     function setGems(gems: number | null) {
@@ -83,18 +90,5 @@ export function useWallet() {
         return result
     }
 
-    async function claimAllowance() {
-        try {
-            const result = await $fetch<{ balance: number, nextAt: string, stars: StarChange | null }>('/api/wallet/allowance', { method: 'POST' })
-            session.setCoins(result.balance)
-            if (wallet.value) wallet.value.allowance = { ...wallet.value.allowance, available: false, nextAt: result.nextAt }
-            applyStars(result.stars)
-            return true
-        } catch (error) {
-            if (!session.handleUnauthorized(error)) toast.error(apiErrorMessage(error, 'Could not claim the allowance'))
-            return false
-        }
-    }
-
-    return { wallet, level, loading, celebrations, refresh, convert, claimAllowance, applyStars, followCoins, setGems }
+    return { wallet, level, loading, celebrations, refresh, convert, applyStars, followCoins, followChips, setGems }
 }

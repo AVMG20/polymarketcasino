@@ -53,7 +53,7 @@ const lineValues = computed(() => {
     let run = 0
     return props.days.map(d => (run += d.net))
 })
-const lineLabel = computed(() => (props.cumulative ? 'Running net' : 'Balance'))
+const lineLabel = computed(() => (props.cumulative ? 'Running net' : 'Coin balance'))
 const lineDomain = computed(() => {
     const up = niceCeil(Math.max(0, ...lineValues.value))
     const down = niceCeil(Math.max(0, ...lineValues.value.map(v => -v)))
@@ -160,7 +160,7 @@ const tooltipStyle = computed(() => {
 const summary = computed(() => {
     const net = props.days.reduce((s, d) => s + d.net, 0)
     const last = lineValues.value.at(-1) ?? 0
-    return `Per day over ${n.value} ${n.value === 1 ? 'day' : 'days'}: net ${formatSignedCoins(net)} coins, ${lineLabel.value.toLowerCase()} ${props.cumulative ? formatSignedCoins(last) : formatCoins(last)} at the end.`
+    return `Per day over ${n.value} ${n.value === 1 ? 'day' : 'days'}: net ${formatSignedCoins(net)}, ${lineLabel.value.toLowerCase()} ${props.cumulative ? formatSignedCoins(last) : formatCoins(last)} at the end.`
 })
 </script>
 

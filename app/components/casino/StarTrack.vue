@@ -4,8 +4,8 @@ import { formatCoins } from '#shared/money'
 import { CASINO_STARS } from '#shared/stars'
 
 /**
- * Ten rounded squares, the first `level` filled amber. Stars follow the
- * current balance, so the tooltip says what it takes to hold each one.
+ * Ten rounded squares, the first `level` filled amber. Stars follow the chip
+ * balance, so the tooltip says how many chips it takes to hold each one.
  */
 const props = withDefaults(defineProps<{ level: number, size?: 'sm' | 'md' }>(), { size: 'md' })
 const stars = computed(() => CASINO_STARS.map((star, i) => ({ ...star, on: i < props.level })))
@@ -29,7 +29,7 @@ const stars = computed(() => CASINO_STARS.map((star, i) => ({ ...star, on: i < p
       </TooltipTrigger>
       <TooltipContent>
         <p class="font-semibold">{{ star.name }}</p>
-        <p class="text-xs opacity-80">Hold {{ formatCoins(star.threshold) }} coins</p>
+        <p class="text-xs opacity-80">Hold {{ formatCoins(star.threshold) }} chips</p>
       </TooltipContent>
     </Tooltip>
   </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Coins, Gem, Gift, TriangleAlert, X } from 'lucide-vue-next'
+import { Coins, Gem, Gift, ListChecks, TriangleAlert, Vault, X } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatCoins, formatCoinsExact } from '#shared/money'
@@ -36,16 +36,24 @@ const tiles = computed(() => {
     const s = stats.value?.summary
     if (!s) return []
     const winGame = s.biggestWinGame ? stats.value!.games.find(g => g.game === s.biggestWinGame)?.name ?? s.biggestWinGame : null
+    // Stakes are paid coins first, then chips; every payout is chips.
+    const coins = s.wageredCoins ?? s.wagered
+    const chips = s.wageredChips ?? 0
     return [
-        { label: 'Net', value: signedShort(s.net), title: `${formatCoinsExact(s.net)} coins`, note: '' },
-        { label: 'Wagered', value: short(s.wagered), title: `${formatCoinsExact(s.wagered)} coins`, note: '' },
-        { label: 'Paid out', value: short(s.paidOut), title: `${formatCoinsExact(s.paidOut)} coins`, note: '' },
+        { label: 'Net', value: signedShort(s.net), title: `${formatCoinsExact(s.net)}: chips paid out minus coins and chips wagered`, note: '' },
+        {
+            label: 'Wagered',
+            value: short(s.wagered),
+            title: `${formatCoinsExact(coins)} coins + ${formatCoinsExact(chips)} chips`,
+            note: chips > 0 ? `${short(coins)} coins · ${short(chips)} chips` : 'coins'
+        },
+        { label: 'Paid out', value: short(s.paidOut), title: `${formatCoinsExact(s.paidOut)} chips`, note: 'chips' },
         { label: 'Return', value: formatReturn(s.returnRate), title: 'Paid out ÷ wagered', note: '' },
         { label: 'Rounds', value: short(s.rounds), title: formatCoinsExact(s.rounds), note: '' },
         {
             label: 'Best win',
             value: s.biggestWin ? short(s.biggestWin) : '–',
-            title: s.biggestWin ? `${formatCoinsExact(s.biggestWin)} coins profit on one round` : 'Biggest profit on one round',
+            title: s.biggestWin ? `${formatCoinsExact(s.biggestWin)} chips profit on one round` : 'Biggest profit on one round',
             note: winGame && s.biggestWinDay ? `${game.value ? '' : `${winGame} · `}${formatDay(s.biggestWinDay)}` : ''
         }
     ]
@@ -53,10 +61,13 @@ const tiles = computed(() => {
 
 const FLOW_LABELS = {
     allowance: { label: 'Daily allowance', icon: Gift },
-    convert: { label: 'Gems converted', icon: Gem }
+    convert: { label: 'Gems converted', icon: Gem },
+    cage: { label: 'Cashier cage', icon: Vault },
+    mission: { label: 'Daily missions', icon: ListChecks }
 } as const
 
-const flows = computed(() => (stats.value?.flows ?? []).map(f => ({
+// The daily allowance is gone: it only shows for a range that still has old claims in it.
+const flows = computed(() => (stats.value?.flows ?? []).filter(f => f.category !== 'allowance' || f.count > 0).map(f => ({
     ...f,
     ...FLOW_LABELS[f.category],
     detail: f.category === 'convert' ? `${formatCoins(f.amount / COINS_PER_GEM)} gems` : `${f.count}×`
@@ -125,7 +136,7 @@ const flows = computed(() => (stats.value?.flows ?? []).map(f => ({
                 <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
                   <Coins class="size-4" aria-hidden="true" />
                 </span>
-                <span class="min-w-0 flex-1 truncate text-sm">Balance</span>
+                <span class="min-w-0 flex-1 truncate text-sm">Coin balance</span>
                 <span class="text-right font-semibold tabular-nums" :title="`${formatCoinsExact(stats.balance.start)} → ${formatCoinsExact(stats.balance.end)} coins`">
                   <span class="text-muted-foreground">{{ short(stats.balance.start) }} →</span> {{ short(stats.balance.end) }}
                 </span>

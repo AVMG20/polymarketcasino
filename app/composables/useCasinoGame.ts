@@ -5,12 +5,11 @@
 // finishes: the page's `setBalance(data.balance)` at that point is the
 // round's settle (balance and stars). Leaving mid-round settles on its own
 // (useGameRound).
-import { findGame } from '#shared/games/registry'
 
 export interface PlayResponse<TResult> {
     gameData: TResult
     balance: number
-    /** Coins staked and paid this round (the old results carried the payout in gameData). */
+    /** Staked (coins first, then chips) and paid (chips) this round (the old results carried the payout in gameData). */
     stake: number
     payout: number
 }
@@ -19,14 +18,14 @@ export function useCasinoGame<TResult, THistory extends Record<string, unknown> 
     game: string,
     opts?: { historyLimit?: number }
 ) {
-    const session = useCasinoSession()
     const round = useGameRound<TResult>(game)
-    const balance = session.coins
+    /** The playable bankroll: coins first, then chips. Wins pay chips. */
+    const bankroll = useBankroll()
+    const balance = bankroll.total
     const historyLimit = opts?.historyLimit ?? 8
 
-    // The old site started at 10 with a 1-coin minimum; the casino's bets
-    // start at the game's minimum.
-    const bet = ref(findGame(game)?.minBet ?? 100)
+    // The last bet chosen in this game, else about 1% of the bankroll on a chip value.
+    const bet = useGameBet(game, balance)
     const isPlaying = ref(false)
     const isFetching = ref(false)
     const lastBet = ref(0)
@@ -36,14 +35,11 @@ export function useCasinoGame<TResult, THistory extends Record<string, unknown> 
 
     let unsettled = false
 
-    /** Settles the round that is waiting (balance and stars), or writes the balance. */
-    function setBalance(value: number) {
-        if (unsettled) {
-            unsettled = false
-            round.settle()
-            return
-        }
-        session.setCoins(value)
+    /** Settles the round that is waiting (both balances and stars). Any other write is stale and ignored. */
+    function setBalance(_value?: number) {
+        if (!unsettled) return
+        unsettled = false
+        round.settle()
     }
 
     function pushHistory(entry: THistory) {

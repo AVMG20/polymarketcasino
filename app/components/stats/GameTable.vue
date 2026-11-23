@@ -15,7 +15,7 @@ type SortKey = 'name' | 'rounds' | 'wagered' | 'paidOut' | 'net' | 'returnRate' 
 const columns: { key: SortKey, label: string, title?: string, wide?: boolean }[] = [
     { key: 'rounds', label: 'Rounds', wide: true },
     { key: 'wagered', label: 'Wagered' },
-    { key: 'paidOut', label: 'Paid out', wide: true },
+    { key: 'paidOut', label: 'Paid out', wide: true, title: 'Paid in chips' },
     { key: 'net', label: 'Net' },
     { key: 'returnRate', label: 'Return', title: 'Paid out ÷ wagered' },
     { key: 'biggestWin', label: 'Best win', title: 'Biggest profit on one round', wide: true }

@@ -5,7 +5,7 @@ withDefaults(defineProps<{ amount: number, compact?: boolean }>(), { compact: fa
 </script>
 
 <template>
-  <span class="inline-flex items-center gap-1.5 rounded-full bg-coin/15 px-2.5 py-1 font-mono text-sm font-semibold tabular-nums" :title="`${formatCoinsExact(amount)} coins`">
+  <span class="inline-flex items-center gap-1.5 rounded-full bg-coin/15 px-2.5 py-1 font-game text-[0.95rem] tracking-wide tabular-nums" :title="`${formatCoinsExact(amount)} coins`">
     <CasinoCoinIcon class="size-4" />
     {{ formatCoins(amount, compact) }}
   </span>

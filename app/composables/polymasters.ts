@@ -13,6 +13,7 @@ import {
     type PmRoundOutcome
 } from '#shared/games/polymasters'
 import { findGame } from '#shared/games/registry'
+import { costFor, roundCoins } from '#shared/money'
 import { sfx } from '~/utils/polymasters/audio'
 import type { GameScene } from '~/utils/polymasters/scene'
 
@@ -27,7 +28,6 @@ export const PM_SPEEDS = [
     { id: 4, label: 'Ultra Turbo', mult: 4.0625 }
 ]
 export const PM_AUTO_OPTIONS = [10, 25, 50, 100]
-export const PM_TIERS = ['WIN', 'BIG WIN', 'MEGA WIN', 'EPIC WIN', 'MAX WIN'] as const
 
 const BET_LADDER: number[] = []
 for (let e = 0; e <= 11; e++) for (const m of [1, 2, 5]) if (m * 10 ** e >= PM_MIN_BET && m * 10 ** e <= PM_MAX_BET) BET_LADDER.push(m * 10 ** e)
@@ -69,11 +69,13 @@ function loadPrefs(): Partial<PmPrefs> {
 
 function clampBet(v: number) {
     if (!Number.isFinite(v) || v < PM_MIN_BET) return PM_MIN_BET
-    return Math.min(PM_MAX_BET, Math.floor(v))
+    return Math.min(PM_MAX_BET, roundCoins(v))
 }
 
 function createPolyMastersGame() {
-    const { coins: balance, setCoins: setBalance } = useCasinoSession()
+    const bankroll = useBankroll()
+    /** The playable bankroll: a stake is paid from coins first, then chips. Wins pay chips. */
+    const balance = bankroll.total
     const round = useGameRound<PmRoundOutcome>('polymasters')
     const prefs = loadPrefs()
 
@@ -95,7 +97,6 @@ function createPolyMastersGame() {
         auto: { active: false, left: 0 },
         sfx: prefs.sfx ?? true,
         music: prefs.music ?? true,
-        showRules: false,
         toast: '',
         roundId: 0
     })
@@ -106,7 +107,8 @@ function createPolyMastersGame() {
     let resultTimer = 0
 
     const money = (v: number) => formatNumber(v)
-    const stake = () => state.bet * (state.safe ? PM_SAFE_LANDING_COST : 1)
+    const stake = () => (state.safe ? costFor(state.bet, PM_SAFE_LANDING_COST) : state.bet)
+
 
     function persist() {
         try {
@@ -216,7 +218,7 @@ function createPolyMastersGame() {
         const safe = state.safe
         const cost = stake()
         if (cost > balance.value) {
-            toast('Not enough coins for this bet')
+            toast('Not enough coins or chips for this bet')
             stopAuto()
             return
         }
@@ -224,13 +226,14 @@ function createPolyMastersGame() {
         // Lock the controls before the request so a double click can't send two rounds.
         state.phase = 'flying'
         state.result = null
-        const before = balance.value
-        setBalance(before - cost)
+        // The stake leaves the balances at take-off (coins first, then chips); settle() writes the real ones on landing.
+        const revert = bankroll.take(cost)
 
         const data = await round.play({ bet, options: { mode: safe ? 'safe' : 'normal' } })
         if (!data) {
+            // Undo the take-off debit even if the game closed meanwhile.
+            revert?.()
             if (disposed) return
-            setBalance(before)
             state.phase = 'idle'
             toast(round.error.value || 'The plane could not take off')
             stopAuto()

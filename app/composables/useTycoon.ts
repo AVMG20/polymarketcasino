@@ -1,0 +1,418 @@
+import { toast } from 'vue-sonner'
+import type { CosmeticBuyBody } from '#shared/cosmetics'
+import { normalizeCoins } from '#shared/money'
+import type { MissionKey, MissionView, WelcomeBack } from '#shared/missions'
+import {
+    activeCampaign, buildBlocker, cageAt, campaignBlocker, campaignBoost, campaignCost, CAMPAIGNS, findCampaign, findTycoonGame, findUpgrade, findZone,
+    floorSeats, guestsPerHour, levelOf, nextCost, occupancy, RUSH_GEMS, rushGems, skipGems, TYCOON_GAMES, UPGRADES, visitorCount, visitorDemand, visitorQueue, ZONES,
+    type BuildBody, type BuildKind, type CampaignDef, type CampaignId, type Construction, type Cost, type GemBody, type GemItem,
+    type TycoonActionResponse, type TycoonState, type ZoneId
+} from '#shared/tycoon'
+
+export interface QueuedConstruction extends Construction {
+    leftMs: number
+    total: number
+}
+
+/** Everything the build UI shows about one item, from the live state. */
+export interface BuildView {
+    kind: BuildKind
+    id: string
+    name: string
+    /** Current level (0 = not built; a zone is 0 or 1). */
+    level: number
+    maxLevel: number
+    /** Next step's cost, or null when maxed. */
+    cost: Cost | null
+    running: QueuedConstruction | null
+    /** Name of the zone that must be opened first, or null. */
+    lockZone: string | null
+    /** Every builder is busy (and this item is not one of them). */
+    buildersFull: boolean
+    maxed: boolean
+    missingChips: number
+    affordable: boolean
+    /** Can start right now (not counting a request already in flight). */
+    canStart: boolean
+}
+
+/** The ad campaign running now. */
+export interface RunningCampaign {
+    def: CampaignDef
+    until: number
+    leftMs: number
+    /** Time left as a share of one run (a campaign extended past one run reads 1). */
+    fuel: number
+}
+
+/** Everything the campaign picker shows about one campaign, from the live state. */
+export interface CampaignView {
+    def: CampaignDef
+    /** Price now, chips. */
+    cost: number
+    /** Demand multiplier at the current Marketing level. */
+    boost: number
+    /** Marketing level it needs, when it is still locked; else null. */
+    lockedAt: number | null
+    /** This one is running (buying it again extends it). */
+    running: boolean
+    /** Why it can't start now (locked, another one running), or null. */
+    blocker: string | null
+    affordable: boolean
+    /** Visitors and guest coins an hour while it runs. */
+    visitors: number
+    perHour: number
+}
+
+/** Every buildable item, in menu order. */
+export const BUILD_ITEMS: readonly { kind: BuildKind, id: string }[] = [
+    ...ZONES.filter(zone => zone.requires !== null).map(zone => ({ kind: 'zone' as const, id: zone.id })),
+    ...TYCOON_GAMES.map(game => ({ kind: 'game' as const, id: game.slug })),
+    ...UPGRADES.map(upgrade => ({ kind: 'upgrade' as const, id: upgrade.id }))
+]
+
+let ticker: ReturnType<typeof setInterval> | null = null
+let refreshing: Promise<void> | null = null
+let inflight: Promise<unknown> | null = null
+let lastRefresh = 0
+/**
+ * The next read asks for "while you were away": the first read after the app
+ * loads (whoever makes it), and the first after the tab comes back.
+ */
+let askWelcome = true
+let roundTimer: ReturnType<typeof setTimeout> | null = null
+/** While the page is open and visible, read the casino this often: the server counts it as a visit. */
+const HEARTBEAT_MS = 4 * 60_000
+
+/**
+ * My Casino's state: chips, built games, zones, the construction queue and the
+ * cage. One copy shared through useState. Timers and the cage are computed
+ * live from the server clock (state.serverNow + a clock offset), so the HUD
+ * counts down without polling; when a construction's time is up the state is
+ * re-read (the server applies finished builds on every read) and the floor
+ * hears about it.
+ */
+export function useTycoon() {
+    const session = useCasinoSession()
+    const wallet = useWallet()
+    const floorEvents = useFloorEvents()
+    const state = useState<TycoonState | null>('tycoon:state', () => null)
+    const offset = useState('tycoon:offset', () => 0)
+    const clock = useState('tycoon:clock', () => Date.now())
+    const busy = useState('tycoon:busy', () => false)
+    /** The first read failed and there is nothing to show yet: pages offer "Try again". */
+    const loadFailed = useState('tycoon:load-failed', () => false)
+    const lastBuilt = useState<{ kind: BuildKind, id: string, level: number, at: number } | null>('tycoon:last-built', () => null)
+    /** "While you were away", until the card is closed. */
+    const welcome = useState<WelcomeBack | null>('tycoon:welcome', () => null)
+    /** The latest mission that just reached its target (for a chime and a nudge). */
+    const missionDone = useState<{ id: MissionKey, at: number } | null>('tycoon:mission-done', () => null)
+    const sound = useTycoonSound()
+
+    /** Server time now (ms). */
+    const serverTime = computed(() => clock.value + offset.value)
+    const chips = computed(() => state.value?.chips ?? 0)
+    const ready = computed(() => state.value !== null)
+    const gems = computed(() => wallet.wallet.value?.gems ?? null)
+
+    /** Coins in the cage right now: what the server stored plus what has come in since. */
+    const cageStored = computed(() => (state.value ? cageAt(state.value, serverTime.value) : 0))
+    const cageFill = computed(() => {
+        const s = state.value
+        return s && s.cage.capacity > 0 ? Math.min(1, cageStored.value / s.cage.capacity) : 0
+    })
+    const rushActive = computed(() => !!state.value?.rushUntil && state.value.rushUntil > serverTime.value)
+    const rushLeftMs = computed(() => (state.value?.rushUntil ? Math.max(0, state.value.rushUntil - serverTime.value) : 0))
+    /** Gems a guest rush costs now (priced from the casino, like the server does at purchase). */
+    const rushPrice = computed(() => (state.value ? rushGems(state.value) : RUSH_GEMS))
+
+    // Visitors, live: a campaign or rush running out changes them without a new state.
+    const seats = computed(() => (state.value ? floorSeats(state.value) : 0))
+    const visitors = computed(() => (state.value ? visitorCount(state.value, serverTime.value) : 0))
+    /** Visitors waiting at the door (more want in than there are seats). */
+    const waiting = computed(() => (state.value ? visitorQueue(state.value, serverTime.value) : 0))
+    const demand = computed(() => (state.value ? visitorDemand(state.value, serverTime.value) : 0))
+    /** Share of the seats in use, 0..1. */
+    const occupied = computed(() => (state.value ? occupancy(state.value, serverTime.value) : 0))
+    /** Guest coins an hour right now (the state's own rate is only right at serverNow). */
+    const perHour = computed(() => (state.value ? guestsPerHour(state.value, serverTime.value) : 0))
+    const campaign = computed<RunningCampaign | null>(() => {
+        const s = state.value
+        const def = s ? activeCampaign(s, serverTime.value) : null
+        if (!s?.campaign || !def) return null
+        const leftMs = Math.max(0, s.campaign.until - serverTime.value)
+        return { def, until: s.campaign.until, leftMs, fuel: Math.min(1, leftMs / def.ms) }
+    })
+
+    function campaignView(def: CampaignDef): CampaignView {
+        const s = state.value
+        const now = serverTime.value
+        const marketing = s?.upgrades.marketing ?? 0
+        const cost = s ? campaignCost(s, def.id, serverTime.value) : 0
+        const running = campaign.value?.def.id === def.id
+        // While it runs: what the casino has from it; else what it would have with it.
+        const withIt = s ? { ...s, campaign: { id: def.id, until: Math.max(now + def.ms, s.campaign?.until ?? 0) } } : null
+        return {
+            def,
+            cost,
+            boost: campaignBoost(def.id, marketing),
+            lockedAt: marketing < def.requiresMarketing ? def.requiresMarketing : null,
+            running,
+            blocker: s ? campaignBlocker(s, def.id, now) : 'Loading',
+            affordable: chips.value >= cost,
+            visitors: withIt ? visitorCount(withIt, now) : 0,
+            perHour: withIt ? guestsPerHour(withIt, now) : 0
+        }
+    }
+    const campaigns = computed(() => CAMPAIGNS.map(campaignView))
+
+    /** The queue with the time left on each, soonest first. */
+    const queue = computed<QueuedConstruction[]>(() => (state.value?.constructions ?? [])
+        .map(c => ({ ...c, leftMs: Math.max(0, c.readyAt - serverTime.value), total: Math.max(1, c.readyAt - c.startedAt) }))
+        .sort((a, b) => a.readyAt - b.readyAt))
+
+    function apply(next: TycoonState) {
+        const previous = state.value
+        offset.value = next.serverNow - Date.now()
+        clock.value = Date.now()
+        state.value = next
+        wallet.followChips(next.chips)
+        if (next.welcome) welcome.value = next.welcome
+        if (previous) {
+            // Back after a while: the welcome card lists what finished instead.
+            if (!next.welcome) announceFinished(previous.constructions, next)
+            announceMissions(previous, next)
+        }
+    }
+
+    /** A mission that was short of its target and now isn't (same day): chime. */
+    function announceMissions(before: TycoonState, next: TycoonState) {
+        const was = before.missions
+        const now = next.missions
+        if (!was || !now || was.day !== now.day) return
+        const done = (m: MissionView) => m.progress >= m.target && !m.claimed
+        for (const m of now.missions) {
+            const old = was.missions.find(o => o.id === m.id)
+            if (old && !done(old) && !old.claimed && done(m)) {
+                missionDone.value = { id: m.id, at: Date.now() }
+                sound.play('mission')
+                return
+            }
+        }
+    }
+
+    const missions = computed(() => state.value?.missions ?? null)
+    /** Missions (and the bonus) ready to claim. */
+    const claimable = computed(() => {
+        const m = missions.value
+        if (!m) return 0
+        return m.missions.filter(x => x.progress >= x.target && !x.claimed).length + (m.bonus.progress >= m.bonus.target && !m.bonus.claimed ? 1 : 0)
+    })
+
+    /** Constructions that were running and are gone (and now built) just finished. */
+    function announceFinished(before: Construction[], next: TycoonState) {
+        for (const c of before) {
+            if (next.constructions.some(n => n.kind === c.kind && n.id === c.id && n.level === c.level)) continue
+            const done = c.kind === 'zone' ? next.zones.includes(c.id as never)
+                : c.kind === 'game' ? (next.games[c.id] ?? 0) >= c.level
+                    : (next.upgrades[c.id as keyof typeof next.upgrades] ?? 0) >= c.level
+            if (!done) continue
+            const event = { kind: c.kind, id: c.id, level: c.level }
+            lastBuilt.value = { ...event, at: Date.now() }
+            floorEvents.emitBuilt(event)
+        }
+    }
+
+    /** Read the casino. `welcome`: also ask what happened while the player was away. */
+    async function refresh(options: { welcome?: boolean } = {}): Promise<void> {
+        if (options.welcome) askWelcome = true
+        if (refreshing) {
+            // A read already on its way may not carry the welcome flag: read again after it.
+            if (options.welcome) return refreshing.then(() => (askWelcome ? refresh() : undefined))
+            return refreshing
+        }
+        refreshing = (async () => {
+            lastRefresh = Date.now()
+            const query = askWelcome ? { welcome: '1' } : undefined
+            askWelcome = false
+            try {
+                apply(await $fetch<TycoonState>('/api/tycoon', { query }))
+                loadFailed.value = false
+            } catch (error) {
+                if (!session.handleUnauthorized(error) && !state.value) {
+                    loadFailed.value = true
+                    toast.error(apiErrorMessage(error, 'Could not load your casino'))
+                }
+            } finally {
+                refreshing = null
+            }
+        })()
+        return refreshing
+    }
+
+    async function act(path: string, body?: BuildBody | GemBody | { id: CampaignId | MissionKey } | CosmeticBuyBody): Promise<TycoonActionResponse | null> {
+        if (busy.value) return null
+        busy.value = true
+        const run = (async () => {
+            try {
+                const response = await $fetch<TycoonActionResponse>(path, { method: 'POST', body })
+                apply(response.state)
+                if (response.coins !== null) session.setCoins(response.coins)
+                if (response.gems !== null) wallet.setGems(response.gems)
+                // Stars follow chips: a build or campaign can drop a level.
+                wallet.applyStars(response.stars)
+                return response
+            } catch (error) {
+                if (!session.handleUnauthorized(error)) toast.error(apiErrorMessage(error, 'That did not go through'))
+                void refresh()
+                return null
+            } finally {
+                busy.value = false
+            }
+        })()
+        inflight = run
+        return run
+    }
+
+    /**
+     * Empty the cage into the coins. A tap while another action is running waits
+     * for it and then collects (the buttons that start builds are disabled while busy).
+     * Resolves with the coins collected (0 when it failed).
+     */
+    async function collect(): Promise<number> {
+        if (busy.value && inflight) await inflight.catch(() => null)
+        const response = await act('/api/tycoon/collect')
+        return response?.collected ?? 0
+    }
+
+    async function build(kind: BuildKind, id: string) {
+        const response = await act('/api/tycoon/build', { kind, id })
+        if (response) sound.play('hammer')
+        return response
+    }
+    const buyGem = (item: GemItem, target?: string) => act('/api/tycoon/gems', { item, target })
+    /** Buy a cosmetic priced in chips (a zone skin), with `zone` also putting it on that zone. */
+    const buyCosmetic = (key: string, zone?: ZoneId) => act('/api/tycoon/cosmetics/buy', { key, zone })
+    /** Wear an owned avatar item, or put an owned skin on `zone` (free). */
+    const equipCosmetic = (key: string, zone?: ZoneId) => act('/api/tycoon/cosmetics/equip', { key, zone })
+    /** Run (or extend) an ad campaign for chips. */
+    async function startCampaign(id: CampaignId) {
+        if (!findCampaign(id)) return null
+        const response = await act('/api/tycoon/campaign', { id })
+        if (response) sound.play('campaign')
+        return response
+    }
+    /** Claim a finished mission (or the bonus): coins. Resolves with the coins paid (0 when it failed). */
+    async function claimMission(id: MissionKey): Promise<number> {
+        if (busy.value && inflight) await inflight.catch(() => null)
+        const response = await act('/api/tycoon/mission', { id })
+        if (response?.reward) sound.play('collect')
+        return response?.reward ?? 0
+    }
+
+    /**
+     * A round just settled somewhere: mission progress moved on the server.
+     * Read it a moment after the last round of a burst, and only while a
+     * mission is still short of its target.
+     */
+    function refreshSoon() {
+        const m = missions.value
+        if (!m || !m.missions.some(x => !x.claimed && x.progress < x.target)) return
+        if (roundTimer) clearTimeout(roundTimer)
+        roundTimer = setTimeout(() => {
+            roundTimer = null
+            void refresh()
+        }, 2_500)
+    }
+
+    /** The chip balance after a round, a table payout or an optimistic stake. */
+    function setChips(next: number) {
+        const value = normalizeCoins(Math.max(0, next))
+        if (state.value && state.value.chips !== value) state.value = { ...state.value, chips: value }
+        wallet.followChips(value)
+    }
+
+    const blocker = (kind: BuildKind, id: string): string | null => (state.value ? buildBlocker(state.value, kind, id) : 'Loading')
+    const cost = (kind: BuildKind, id: string): Cost | null => (state.value ? nextCost(state.value, kind, id) : null)
+    const skipPrice = (leftMs: number) => skipGems(leftMs)
+
+    /** The zone `kind:id` waits for, or null. */
+    function requiredZone(s: TycoonState, kind: BuildKind, id: string): ZoneId | null {
+        if (kind === 'zone') return findZone(id)?.requires ?? null
+        if (kind === 'game') return findTycoonGame(id)?.zone ?? null
+        const upgrade = findUpgrade(id)
+        return upgrade ? upgrade.requiresZone[s.upgrades[upgrade.id] ?? 0] ?? null : null
+    }
+
+    /**
+     * One build item as the menus show it. `live` reads the ticking clock for
+     * the running countdown; pass false where only "is it running" matters, so
+     * the computed doesn't recompute four times a second.
+     */
+    function view(kind: BuildKind, id: string, live = true): BuildView {
+        const s = state.value
+        const level = s ? levelOf(s, kind, id) : 0
+        const maxLevel = kind === 'game' ? findTycoonGame(id)?.levels.length ?? 1
+            : kind === 'upgrade' ? findUpgrade(id)?.levels.length ?? 1 : 1
+        const cost = s ? nextCost(s, kind, id) : null
+        const running = live
+            ? queue.value.find(c => c.kind === kind && c.id === id) ?? null
+            : (() => {
+                    const c = s?.constructions.find(row => row.kind === kind && row.id === id)
+                    return c ? { ...c, leftMs: 0, total: Math.max(1, c.readyAt - c.startedAt) } : null
+                })()
+        const zone = s ? requiredZone(s, kind, id) : null
+        const lockZone = s && zone && !s.zones.includes(zone) ? findZone(zone)?.name ?? zone : null
+        const buildersFull = !!s && !running && s.constructions.length >= s.builders
+        const missingChips = cost ? Math.max(0, cost.chips - chips.value) : 0
+        const affordable = missingChips === 0
+        return {
+            kind, id, name: buildName(kind, id), level, maxLevel, cost, running, lockZone, buildersFull,
+            maxed: !cost && !running,
+            missingChips, affordable,
+            canStart: !!s && !!cost && affordable && !running && !buildBlocker(s, kind, id)
+        }
+    }
+
+    /** Items that can start right now, cheapest first. */
+    const startable = computed(() => BUILD_ITEMS
+        .map(item => view(item.kind, item.id, false))
+        .filter(item => item.canStart)
+        .sort((a, b) => (a.cost?.chips ?? 0) - (b.cost?.chips ?? 0)))
+    /** The item the menu nudges toward: the cheapest one that can start. */
+    const suggestion = computed(() => {
+        const first = startable.value[0]
+        return first ? `${first.kind}:${first.id}` : null
+    })
+
+    function start() {
+        if (!import.meta.client || ticker) return
+        // Back from another tab or app: say what happened while the player was away.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && state.value) void refresh({ welcome: true })
+        })
+        ticker = setInterval(() => {
+            clock.value = Date.now()
+            const s = state.value
+            if (!s || refreshing || Date.now() - lastRefresh < 1500) return
+            // Still here: a read now and then keeps "last seen" honest.
+            if (document.visibilityState === 'visible' && Date.now() - lastRefresh > HEARTBEAT_MS) void refresh()
+            // A build whose time is up: the server applies it on the next read.
+            if (s.constructions.some(c => c.readyAt <= serverTime.value - 200)) void refresh()
+            // The rush ran out: the server's rate (and cage) no longer include it.
+            else if (s.rushUntil && s.rushUntil <= serverTime.value - 200 && s.serverNow < s.rushUntil) void refresh()
+            // Same for a campaign: its visitors go home.
+            else if (s.campaign && s.campaign.until <= serverTime.value - 200 && s.serverNow < s.campaign.until) void refresh()
+        }, 250)
+    }
+
+    onMounted(start)
+
+    return {
+        state, ready, loadFailed, chips, gems, busy, lastBuilt, serverTime, offset, welcome, missions, claimable, missionDone,
+        cageStored, cageFill, rushActive, rushLeftMs, rushPrice, queue,
+        seats, visitors, waiting, demand, occupied, perHour, campaign, campaigns,
+        startable, suggestion,
+        refresh, refreshSoon, collect, build, buyGem, buyCosmetic, equipCosmetic, startCampaign, claimMission, setChips, blocker, cost, skipPrice, view
+    }
+}
