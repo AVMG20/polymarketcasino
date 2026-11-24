@@ -23,7 +23,7 @@ watch(tab, () => (selected.value = null))
 const TABS = [
     { value: 'zones', label: 'Zones', icon: Store, color: '#ff9f1c', kind: 'zone' as BuildKind },
     { value: 'games', label: 'Games', icon: LayoutGrid, color: '#4aa6ff', kind: 'game' as BuildKind },
-    { value: 'upgrades', label: 'Boosts', icon: ArrowBigUpDash, color: '#ff5470', kind: 'upgrade' as BuildKind },
+    { value: 'upgrades', label: 'Upgrades', icon: ArrowBigUpDash, color: '#ff5470', kind: 'upgrade' as BuildKind },
     { value: 'gems', label: 'Gems', icon: null, color: '#2fe0d0', kind: null }
 ]
 
@@ -93,7 +93,7 @@ async function openItem(kind: BuildKind, id: string) {
     </div>
 
     <TycoonGemShop v-if="tab === 'gems'" />
-    <TycoonBuildDetail v-else-if="selected" :kind="selected.kind" :id="selected.id" back @back="selected = null" @started="selected = null" @play="slug => emit('play', slug)" />
+    <TycoonBuildDetail v-else-if="selected" :kind="selected.kind" :id="selected.id" back @back="selected = null" @started="selected = null" @play="slug => emit('play', slug)" @open="openItem" />
     <div v-else class="grid grid-cols-3 gap-2 px-3 pb-4 sm:gap-2.5">
       <TycoonBuildTile
         v-for="item in items"

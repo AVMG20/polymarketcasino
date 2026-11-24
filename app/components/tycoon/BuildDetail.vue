@@ -9,7 +9,7 @@ import { findUpgrade, type BuildKind, type ZoneId } from '#shared/tycoon'
  * with the cost and the time on it. The only place with a line of description.
  */
 const props = defineProps<{ kind: BuildKind, id: string, back?: boolean }>()
-const emit = defineEmits<{ back: [], started: [], play: [slug: string] }>()
+const emit = defineEmits<{ back: [], started: [], play: [slug: string], open: [kind: BuildKind, id: string] }>()
 
 const tycoon = useTycoon()
 const v = computed(() => tycoon.view(props.kind, props.id))
@@ -78,9 +78,17 @@ async function start() {
       <TycoonSkipButton class="h-12 shrink-0 rounded-xl px-3.5 text-lg" :left-ms="v.running.leftMs" :target="`${v.running.kind}:${v.running.id}`" />
     </div>
     <div v-else-if="v.maxed" class="g-btn g-gold h-14 w-full rounded-2xl text-xl" aria-disabled="true"><Crown class="size-6" :stroke-width="3" /> MAX</div>
-    <div v-else-if="v.lockZone" class="g-well flex h-14 items-center justify-center gap-2 rounded-2xl text-lg font-semibold text-[#ffc93a]">
-      <Lock class="size-5" :stroke-width="3" /> {{ v.lockZone }}
-    </div>
+    <button
+      v-else-if="v.lockZone && v.lockZoneId"
+      type="button"
+      class="g-btn g-dark h-14 w-full rounded-2xl px-4 text-lg"
+      :title="`Open the ${v.lockZone} first: see its build card`"
+      @click="emit('open', 'zone', v.lockZoneId)"
+    >
+      <Lock class="size-5 shrink-0 text-[#ffc93a]" :stroke-width="3" />
+      <span class="truncate">Needs {{ v.lockZone }}</span>
+      <ArrowRight class="ml-auto size-5 shrink-0" :stroke-width="3" />
+    </button>
     <template v-else-if="v.cost">
       <button
         :key="shake"

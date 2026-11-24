@@ -6,7 +6,7 @@ import type { IlloName } from '~/utils/tycoon-art'
 
 /**
  * Today's three missions and the bonus for clearing them: a progress bar
- * each, a Claim button once done (the reward is coins), and a Go button that
+ * and the coin reward each, a Claim button once done, and a Go button that
  * takes the player to where the mission is done.
  */
 const emit = defineEmits<{ go: [id: MissionId] }>()
@@ -65,6 +65,7 @@ async function claim(m: MissionView) {
               <span class="block h-full rounded-full bg-gradient-to-r transition-[width] duration-500" :class="done(m) ? 'from-[#1fb84a] to-[#7ef09a]' : 'from-[#f08a00] to-[#ffe066]'" :style="{ width: `${(m.progress / m.target) * 100}%` }" />
             </span>
             <span class="g-num shrink-0 text-xs leading-none">{{ m.progress }}/{{ m.target }}</span>
+            <span class="g-num flex shrink-0 items-center gap-0.5 text-sm leading-none text-[#ffe066]" :title="`Pays ${formatCoins(m.reward)} coins`"><CasinoCoinIcon class="size-4" />+{{ formatCoins(m.reward) }}</span>
           </span>
         </span>
         <span v-if="m.claimed" class="grid h-11 w-[5.5rem] shrink-0 place-items-center rounded-xl bg-black/25" title="Claimed">
@@ -78,17 +79,17 @@ async function claim(m: MissionView) {
           :title="`Claim ${formatCoins(m.reward)} coins`"
           @click="claim(m)"
         >
-          <CasinoCoinIcon class="size-5 shrink-0" />{{ formatCoins(m.reward) }}
+          Claim
         </button>
         <button
           v-else
           type="button"
           class="g-btn g-dark h-11 w-[5.5rem] shrink-0 rounded-xl px-1 text-[15px]"
-          :title="`Pays ${formatCoins(m.reward)} coins · go`"
+          title="Take me there"
           :aria-label="`${m.title}: go`"
           @click="emit('go', m.id as MissionId)"
         >
-          <CasinoCoinIcon class="size-5 shrink-0" /><span>{{ formatCoins(m.reward) }}</span><ArrowRight class="size-3.5 shrink-0 opacity-70" :stroke-width="3.5" />
+          Go<ArrowRight class="size-4 shrink-0" :stroke-width="3.5" />
         </button>
       </li>
     </ul>
@@ -102,6 +103,7 @@ async function claim(m: MissionView) {
         <span class="g-title block truncate text-[15px] leading-5 sm:text-base">{{ missions.bonus.title }}</span>
         <span class="mt-1 flex items-center gap-1">
           <span v-for="i in missions.bonus.target" :key="i" class="block h-2.5 flex-1 rounded-full" :class="i <= missions.bonus.progress ? 'bg-gradient-to-r from-[#f08a00] to-[#ffe066]' : 'g-well'" />
+          <span class="g-num ml-1 flex shrink-0 items-center gap-0.5 text-sm leading-none text-[#ffe066]" :title="`Pays ${formatCoins(missions.bonus.reward)} coins`"><CasinoCoinIcon class="size-4" />+{{ formatCoins(missions.bonus.reward) }}</span>
         </span>
       </span>
       <span v-if="missions.bonus.claimed" class="grid h-11 w-[5.5rem] shrink-0 place-items-center rounded-xl bg-black/25" title="Claimed">
@@ -117,7 +119,7 @@ async function claim(m: MissionView) {
         :title="done(missions.bonus) ? `Claim ${formatCoins(missions.bonus.reward)} coins` : 'Claim all three missions first'"
         @click="claim(missions.bonus)"
       >
-        <CasinoCoinIcon class="size-5 shrink-0" />{{ formatCoins(missions.bonus.reward) }}
+        Claim
       </button>
     </div>
   </div>

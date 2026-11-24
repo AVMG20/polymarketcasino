@@ -311,7 +311,7 @@ useHead({ title: 'My Casino' })
     </template>
 
     <TycoonBuildMenu :open="buildOpen" :tab="buildTab" @close="buildOpen = false" @play="openGame" />
-    <TycoonBuildCard :target="card" @close="card = null" @play="openGame" @menu="openMenu(card?.kind === 'zone' ? 'zones' : card?.kind === 'upgrade' ? 'upgrades' : 'games')" />
+    <TycoonBuildCard :target="card" @close="card = null" @play="openGame" @open="openCard" @menu="openMenu(card?.kind === 'zone' ? 'zones' : card?.kind === 'upgrade' ? 'upgrades' : 'games')" />
     <TycoonGamesDirectory :open="gamesOpen" @close="gamesOpen = false" @walk="walkToGame" @play="openGame" @build="slug => openCard('game', slug)" />
     <TycoonDrawer :open="campaignsOpen" card dismissable title="Marketing" :icon="Megaphone" color="#4aa6ff" height="80dvh" @close="campaignsOpen = false">
       <TycoonCampaigns />

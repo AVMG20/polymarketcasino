@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Footprints, Hammer, LayoutGrid, ListChecks, Megaphone, Plus, Timer, TrendingUp, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
+import { Hammer, LayoutGrid, ListChecks, Megaphone, Plus, Timer, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import type { BuildKind, ZoneId } from '#shared/tycoon'
 
@@ -49,10 +49,6 @@ const fullInMs = computed(() => {
 const SOON_MS = 2 * 3_600_000
 const info = ref(false)
 watch(info, open => emit('popover', open))
-function tapCage() {
-    if (full.value) emit('cage')
-    else info.value = !info.value
-}
 function collect() {
     info.value = false
     emit('cage')
@@ -195,17 +191,17 @@ useEventListener('keydown', (event: KeyboardEvent) => {
 
     <!-- The cage -->
     <div class="mt-3 flex items-start" :class="fold">
-    <!-- The cage: one widget. Tap for the details; a full cage collects at once. -->
+    <!-- The cage: one widget. Tap for the details and the Collect button. -->
     <div class="pointer-events-auto relative z-20 inline-block">
       <button
         type="button"
         data-tip="cage"
         class="cage relative flex items-center gap-2 rounded-[22px] py-1.5 pr-3.5 pl-1.5 transition-transform active:scale-95"
         :class="full ? 'cage-full' : ''"
-        :title="`Cage: ${formatCoins(stored)} / ${formatCoins(state?.cage.capacity ?? 0)} coins · +${formatCoins(perHour)}/h · visitors ${visitors} / ${visitorMax}`"
-        :aria-label="full ? 'Collect the coins in the cage' : 'Cage details'"
-        :aria-expanded="full ? undefined : info"
-        @click="tapCage"
+        :title="full ? 'Cage full: income stopped. Collect your coins' : `Cage: ${formatCoins(stored)} / ${formatCoins(state?.cage.capacity ?? 0)} coins · +${formatCoins(perHour)} coins/h`"
+        :aria-label="full ? 'Collect the full cage' : 'Cage details'"
+        :aria-expanded="info"
+        @click="full ? collect() : (info = !info)"
       >
         <span class="relative grid size-12 place-items-center rounded-2xl bg-black/30" :class="full && !reducedMotion ? 'g-bounce' : ''">
           <TycoonChipJar :fill="tycoon.cageFill.value" class="h-11 w-10" />
@@ -217,8 +213,9 @@ useEventListener('keydown', (event: KeyboardEvent) => {
             <span class="block h-full rounded-full bg-gradient-to-r from-[#f08a00] to-[#ffe066] transition-[width] duration-500" :style="{ width: `${tycoon.cageFill.value * 100}%` }" />
           </span>
           <span class="flex items-center gap-1 text-[11px] leading-none font-semibold text-[var(--g-muted)]">
-            <span class="text-[#7ee08f]">+{{ formatCoins(perHour) }}/h</span>
-            <span v-if="tycoon.rushActive.value" class="g-num rounded-full bg-[#ff9a2e] px-1 text-[9px] leading-[14px] text-white" title="High Rollers: guest income ×2">×2</span>
+            <span v-if="full" class="text-[#ffb35c]">Income stopped</span>
+            <span v-else class="flex items-center gap-0.5 text-[#7ee08f]"><CasinoCoinIcon class="size-3" />+{{ formatCoins(perHour) }}/h</span>
+            <span v-if="tycoon.rushActive.value && !full" class="g-num rounded-full bg-[#ff9a2e] px-1 text-[9px] leading-[14px] text-white" title="High Rollers: guest income ×2">×2</span>
             <template v-if="fullInMs !== null && fullInMs < SOON_MS"><Timer class="ml-0.5 size-3" :stroke-width="3" />{{ formatDuration(fullInMs) }}</template>
           </span>
         </span>
@@ -227,7 +224,7 @@ useEventListener('keydown', (event: KeyboardEvent) => {
       <Transition name="pop">
         <div v-if="info" class="g-panel absolute top-full left-0 z-10 mt-2.5 w-60 space-y-1.5 rounded-2xl p-3 text-sm">
           <p class="stat-row"><CasinoCoinIcon class="size-4" /> Coins <span class="g-num ml-auto">{{ formatCoins(stored) }} / {{ formatCoins(state?.cage.capacity ?? 0) }}</span></p>
-          <p class="stat-row"><TrendingUp class="size-4 text-[#3fd25a]" :stroke-width="3" /> Per hour <span class="g-num ml-auto">+{{ formatCoins(perHour) }}</span></p>
+          <p class="stat-row"><CasinoCoinIcon class="size-4" /> Per hour <span class="g-num ml-auto" :class="full ? 'text-[#ffb35c]' : ''">{{ full ? 'Stopped: full' : `+${formatCoins(perHour)}/h` }}</span></p>
           <p class="stat-row"><Timer class="size-4 text-[#ffc93a]" :stroke-width="3" /> Full in <span class="g-num ml-auto">{{ fullInMs !== null ? formatDuration(fullInMs) : '–' }}</span></p>
           <p v-if="campaign" class="stat-row">
             <span class="size-5 shrink-0"><TycoonCampaignArt :id="campaign.def.id" plain /></span>
@@ -236,8 +233,8 @@ useEventListener('keydown', (event: KeyboardEvent) => {
           </p>
           <p v-if="tycoon.rushActive.value" class="stat-row"><Zap class="size-4 text-[#ff9a2e]" :stroke-width="3" /> High Rollers ×2 <span class="g-num ml-auto">{{ formatCountdown(tycoon.rushLeftMs.value) }}</span></p>
           <div class="flex gap-2 pt-1">
-            <button type="button" class="g-btn g-green h-11 flex-1 rounded-xl text-base" @click="collect">
-              <Footprints class="size-4" :stroke-width="3" /> Collect
+            <button type="button" class="g-btn g-green h-11 flex-1 rounded-xl text-base" title="Walk to the cage and collect" @click="collect">
+              <CasinoCoinIcon class="size-5" /> Collect
             </button>
           </div>
         </div>

@@ -6,8 +6,8 @@ import type { BuildKind } from '#shared/tycoon'
 /**
  * The next goal while the player saves up: the cheapest build they can't
  * afford yet, under a "goal" flag, with a ring of chips held against its
- * price and the chips still missing (or "Play!" / "Collect!" when the coins
- * in hand or in the cage should win the rest). The rough time to it is in
+ * price and the chips still missing ("Win …" when the coins in hand could
+ * win them, "Collect!" when the cage's coins could). The rough time to it is in
  * the tooltip. Tap to open its build card.
  */
 const emit = defineEmits<{ open: [kind: BuildKind, id: string] }>()
@@ -42,7 +42,7 @@ const etaHours = computed(() => {
 })
 
 const eta = computed(() => {
-    if (source.value === 'play') return 'Play!'
+    if (source.value === 'play') return 'Win chips'
     if (source.value === 'collect') return 'Collect!'
     const h = etaHours.value
     if (h === null) return null
@@ -56,8 +56,8 @@ const title = computed(() => {
     const g = goal.value
     if (!g) return ''
     const head = `Next: ${g.name} · ${formatCoins(tycoon.chips.value)} / ${formatCoins(price.value)} chips`
-    if (source.value === 'play') return `${head} · your coins should win the rest: play!`
-    if (source.value === 'collect') return `${head} · the coins in your cage should win the rest: collect and play!`
+    if (source.value === 'play') return `${head} · your coins could win the rest: bet them`
+    if (source.value === 'collect') return `${head} · with the coins in your cage you could win the rest: collect, then bet`
     return eta.value
         ? `${head} · ${eta.value} (an estimate: your coins and the cage's income, won back at about ${Math.round(RTP * 100)}%)`
         : head
@@ -86,7 +86,7 @@ const title = computed(() => {
         class="g-num absolute -bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-full border-2 border-black/50 px-1.5 text-[11px] leading-4 whitespace-nowrap"
         :class="source === 'play' ? 'bg-[#3fd25a] text-[#0b3a17]' : source === 'collect' ? 'bg-[#ffc93a] text-[#4a2a00]' : 'bg-[#1b1329]'"
       >
-        <template v-if="source === 'play'">Play!</template>
+        <template v-if="source === 'play'">Win<CasinoChipIcon class="ml-0.5 size-3" />{{ formatCoins(goal.missingChips, true) }}</template>
         <template v-else-if="source === 'collect'">Collect!</template>
         <template v-else><CasinoChipIcon class="size-3" />{{ formatCoins(goal.missingChips, true) }}</template>
       </span>
@@ -96,7 +96,7 @@ const title = computed(() => {
         <span class="g-title block truncate text-base leading-tight">{{ goal.name }}</span>
         <span class="mt-1 flex items-center gap-1 text-sm"><TycoonCost :amount="tycoon.chips.value" compact /><span class="text-white/50">/</span><TycoonCost :amount="price" compact /></span>
         <span v-if="source === 'wait' && eta" class="mt-1 flex items-center gap-1 text-xs text-white/75"><Hourglass class="size-3.5 text-[#ffc93a]" :stroke-width="3" />{{ eta }} of cage income</span>
-        <span v-else-if="source" class="mt-1 block text-xs text-white/75">{{ source === 'play' ? 'Your coins should win the rest' : 'Collect your cage, then play' }}</span>
+        <span v-else-if="source" class="mt-1 block text-xs text-white/75">{{ source === 'play' ? 'Your coins could win the rest' : 'Collect your cage, then play' }}</span>
       </span>
     </button>
   </Transition>

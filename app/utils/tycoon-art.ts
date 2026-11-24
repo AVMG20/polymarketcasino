@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { Castle, Cherry, Coins, Crown, DoorClosed, HardHat, LayoutGrid, LockOpen, Megaphone, Spade, Sparkles, Store, Users, Vault } from 'lucide-vue-next'
+import { Castle, Cherry, Crown, DoorClosed, HardHat, LayoutGrid, LockOpen, Megaphone, Spade, Sparkles, Store, Users, Vault } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import { formatCoins } from '#shared/money'
 import {
@@ -7,6 +7,7 @@ import {
     visitorDemand, type BuildKind, type CampaignId, type TycoonState, type UpgradeId
 } from '#shared/tycoon'
 import { formatFixed } from '~/utils/format-decimal'
+import CasinoCoinIcon from '~/components/casino/CoinIcon.vue'
 
 /** The hand-drawn pictures of TycoonIllo (zones, upgrades, gem shop items). */
 export type IlloName =
@@ -95,18 +96,26 @@ export interface BuildEffect {
 }
 
 /** What the next level of `kind:id` (now at `level`) adds. */
-export function buildEffects(kind: BuildKind, id: string, level: number): BuildEffect[] {
+export function buildEffects(kind: BuildKind, id: string, level: number, state: StatState | null = null, now = Date.now()): BuildEffect[] {
     const next = level + 1
     if (kind === 'zone') {
         const games = TYCOON_GAMES.filter(game => game.zone === id).length
         return games ? [{ icon: LayoutGrid, text: `+${games}`, title: `Room for ${games} games`, color: '#ffc93a' }] : []
     }
     if (kind === 'game') {
-        const def = findTycoonGame(id)
-        const now = level > 0 ? def?.guestsPerHour[level - 1] ?? 0 : 0
-        const then = def?.guestsPerHour[next - 1]
-        if (then === undefined) return []
-        return [{ icon: Coins, text: `+${formatCoins(Math.round((then - now) * 100) / 100)}/h`, title: 'More coins an hour for your cage (with every seat taken)', color: '#ffc93a' }]
+        if (!findTycoonGame(id)) return []
+        // Built: what it earns the cage now. Not built yet: what it would once built.
+        const built = level > 0
+        const at = built ? level : 1
+        const earns = state
+            ? gameIncomePerHour({ ...state, games: { ...state.games, [id]: at } }, id, at, now)
+            : fullIncomePerHour({ games: { [id]: at } })
+        return [{
+            icon: CasinoCoinIcon,
+            text: `${built ? '' : '+'}${formatCoins(earns)}/h`,
+            title: built ? `This game earns your cage ${formatCoins(earns)} coins an hour` : `Once built, this game earns your cage about ${formatCoins(earns)} coins an hour`,
+            color: '#ffc93a'
+        }]
     }
     switch (id) {
         case 'cage':
@@ -136,9 +145,22 @@ export interface BuildStat {
     next: string
     color: string
     title?: string
+    /** Whether `next` is more (1) or less (-1) than `now`; colours the change. */
+    trend?: number
 }
 
 type StatState = Pick<TycoonState, 'games' | 'upgrades' | 'rushUntil' | 'campaign'> & Partial<Pick<TycoonState, 'builders'>>
+
+/**
+ * What one game earns the cage an hour at `level` (which `state.games` must
+ * hold): its full income × how full the floor is (× a rush). The games'
+ * incomes add up to the cage's.
+ */
+export function gameIncomePerHour(state: StatState, id: string, level: number, now: number): number {
+    const full = fullIncomePerHour(state)
+    if (level < 1 || full <= 0) return 0
+    return Math.round(guestsPerHour(state, now) * fullIncomePerHour({ games: { [id]: level } }) / full * 100) / 100
+}
 
 /** The detail card's rows for the next level of `kind:id` (now at `level`), against the live state. */
 export function buildStats(kind: BuildKind, id: string, level: number, state: StatState | null, now: number): BuildStat[] {
@@ -152,13 +174,18 @@ export function buildStats(kind: BuildKind, id: string, level: number, state: St
         if (!def || next > def.levels.length) return []
         if (!state) {
             const income = (l: number) => (l > 0 ? `+${formatCoins(fullIncomePerHour({ games: { [id]: l } }))}/h` : null)
-            return [{ icon: Coins, label: 'Income, full', now: income(level), next: income(next)!, color: '#ffc93a', title: 'Coins an hour this game earns with every seat taken' }]
+            return [{ icon: CasinoCoinIcon, label: 'Income, full', now: income(level), next: income(next)!, color: '#ffc93a', title: 'Coins an hour this game earns with every seat taken' }]
         }
-        // What the player cares about: the coins the cage earns an hour, now and after.
+        // What the player cares about: the coins this game and the whole cage earn an hour, now and after.
         // Seats ride along with the visitors (12/14): a visitor needs a seat, and a full floor needs more seats.
         const after = { ...state, games: { ...state.games, [id]: next } }
+        const gameNow = level > 0 ? gameIncomePerHour(state, id, level, now) : 0
+        const gameNext = gameIncomePerHour(after, id, next, now)
+        const cageNow = guestsPerHour(state, now)
+        const cageNext = guestsPerHour(after, now)
         const rows: BuildStat[] = [
-            { icon: Coins, label: 'Cage income', now: `+${formatCoins(guestsPerHour(state, now))}/h`, next: `+${formatCoins(guestsPerHour(after, now))}/h`, color: '#ffc93a', title: 'Coins your cashier cage earns an hour, now and after this step' },
+            { icon: CasinoCoinIcon, label: 'This game', now: level > 0 ? `${formatCoins(gameNow)}/h` : null, next: `${formatCoins(gameNext)}/h`, trend: Math.sign(gameNext - gameNow), color: '#ffc93a', title: 'Coins an hour this game earns your cage, now and after this step' },
+            { icon: CasinoCoinIcon, label: 'Cage total', now: `${formatCoins(cageNow)}/h`, next: `${formatCoins(cageNext)}/h`, trend: Math.sign(cageNext - cageNow), color: '#ffc93a', title: 'Coins an hour your cashier cage earns from every game, now and after this step' },
             { icon: Users, label: 'Visitors / seats', now: `${visitorCount(state, now)}/${floorSeats(state)}`, next: `${visitorCount(after, now)}/${floorSeats(after)}`, color: '#7dd3fc', title: 'Visitors on your floor / seats for them. Every visitor needs a seat to play, and only visitors who play earn coins: more seats let more visitors in. Ads, Marketing and Decor bring more visitors.' }
         ]
         return rows
@@ -190,6 +217,9 @@ export function buildLine(kind: BuildKind, id: string, level: number): string | 
     if (kind === 'game') return level === 0 ? 'A new machine on your floor' : 'A bigger machine on your floor'
     if (id === 'decor') return 'Carpet, lights and chandeliers'
     if (id === 'crew') return 'A second crew for good: one more builder'
-    if (id === 'marketing') return CAMPAIGNS.filter(c => c.requiresMarketing > level).map(c => `${c.name} at ${c.requiresMarketing}`).join(' · ') || null
+    if (id === 'marketing') {
+        const unlocks = CAMPAIGNS.filter(c => c.requiresMarketing > level).map(c => `${c.name} at Lv ${c.requiresMarketing}`).join(', ')
+        return unlocks ? `More visitors and stronger ads · ${unlocks}` : 'More visitors and stronger ads'
+    }
     return null
 }

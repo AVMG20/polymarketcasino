@@ -9,7 +9,7 @@ const emit = defineEmits<{ open: [] }>()
 
 const tycoon = useTycoon()
 const v = computed(() => tycoon.view(props.kind, props.id))
-const effect = computed(() => buildEffects(props.kind, props.id, v.value.level)[0] ?? null)
+const effect = computed(() => buildEffects(props.kind, props.id, v.value.level, tycoon.state.value, tycoon.serverTime.value)[0] ?? null)
 /** A new build shows the hard hat, a level-up the up arrow. */
 const actionIcon = computed(() => (isNewBuild(props.kind, props.id, v.value.level) ? HardHat : ArrowBigUp))
 const costTitle = computed(() => {
@@ -59,18 +59,21 @@ async function tap() {
       <span v-else-if="v.maxed" class="absolute top-1 right-1 grid size-7 place-items-center rounded-full border-2 border-black/50 bg-[#ffc93a]"><Crown class="size-4 text-[#7a4a00]" :stroke-width="3" /></span>
       <!-- Hover: the numbers this step changes -->
       <Transition name="stats-flip">
-        <span v-if="hovered && v.cost && !v.lockZone && !v.running" class="absolute inset-0 flex flex-col justify-center gap-1.5 bg-[#140d20]/94 p-2 text-left">
-          <span v-for="stat in stats" :key="stat.label" class="flex min-w-0 items-center gap-1.5" :title="stat.title ?? stat.label">
-            <component :is="stat.icon" class="size-4 shrink-0" :style="{ color: stat.color }" :stroke-width="2.75" />
-            <span class="g-num ml-auto flex min-w-0 items-center gap-1 truncate text-[13px] leading-none">
-              <template v-if="stat.now !== null"><span class="text-white/55">{{ stat.now.replace(/\/h$/, '') }}</span><span class="text-white/40">→</span></template>
-              <span class="text-[#6ee787]">{{ stat.next }}</span>
+        <span v-if="hovered && v.cost && !v.lockZone && !v.running" class="absolute inset-0 flex flex-col justify-center gap-2 bg-[#140d20]/97 px-2.5 py-2 text-left">
+          <span v-for="stat in stats" :key="stat.label" class="flex min-w-0 flex-col gap-1" :title="stat.title ?? stat.label">
+            <span class="flex min-w-0 items-center gap-1 text-[10.5px] leading-none font-bold tracking-wide text-white/75 uppercase">
+              <component :is="stat.icon" class="size-3.5 shrink-0" :style="{ color: stat.color }" :stroke-width="2.75" /><span class="truncate">{{ stat.label }}</span>
+            </span>
+            <span class="g-num flex min-w-0 items-center gap-1 text-[14px] leading-none whitespace-nowrap">
+              <template v-if="stat.now !== null && stat.now !== stat.next"><span class="text-white/85">{{ stat.now.replace(/\/h$/, '') }}</span><span class="text-white/50">→</span></template>
+              <span :class="(stat.trend ?? 1) < 0 ? 'text-[#ff8a8a]' : stat.trend === 0 ? 'text-white' : 'text-[#6ee787]'">{{ stat.next }}</span>
             </span>
           </span>
           <!-- How long this step takes to build -->
-          <span class="flex min-w-0 items-center gap-1.5" :class="stats.length ? 'mt-0.5 border-t border-white/10 pt-1.5' : ''" :title="`Takes ${formatDuration(v.cost.buildMs)} to build`">
-            <Clock class="size-4 shrink-0 text-[#ffc93a]" :stroke-width="2.75" />
-            <span class="g-num ml-auto truncate text-[13px] leading-none text-[#ffc93a]">{{ formatDuration(v.cost.buildMs) }}</span>
+          <span class="flex min-w-0 items-center gap-1" :class="stats.length ? 'border-t border-white/15 pt-2' : ''" :title="`Takes ${formatDuration(v.cost.buildMs)} to build`">
+            <Clock class="size-3.5 shrink-0 text-[#ffc93a]" :stroke-width="2.75" />
+            <span class="text-[10.5px] leading-none font-bold tracking-wide text-white/75 uppercase">Build</span>
+            <span class="g-num ml-auto truncate text-[14px] leading-none text-[#ffc93a]">{{ formatDuration(v.cost.buildMs) }}</span>
           </span>
         </span>
       </Transition>
@@ -79,7 +82,7 @@ async function tap() {
     <p class="mt-1 flex h-[30px] items-center justify-center px-0.5 text-center text-[12.5px] leading-[15px] font-semibold sm:text-[13px]" :title="v.name"><span class="line-clamp-2">{{ v.name }}</span></p>
 
     <span v-if="v.lockZone" class="state-pill mt-1 text-[#ffc93a]" :title="`Open the ${v.lockZone} first`">
-      <Lock class="size-3.5 shrink-0" :stroke-width="3" /><span class="line-clamp-2 text-[11px] leading-[13px] sm:text-xs">{{ v.lockZone }}</span>
+      <Lock class="size-3.5 shrink-0" :stroke-width="3" /><span class="line-clamp-2 text-[11px] leading-[13px] sm:text-xs">Needs {{ v.lockZone }}</span>
     </span>
     <TycoonSkipButton v-else-if="v.running" class="mt-1 h-11 w-full rounded-xl px-1 text-[15px]" :left-ms="v.running.leftMs" :target="`${kind}:${id}`" />
     <span v-else-if="v.maxed" class="state-pill mt-1 text-[#ffc93a]"><span class="g-num">MAX</span></span>

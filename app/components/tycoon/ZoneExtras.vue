@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, Coins, PaintRoller } from 'lucide-vue-next'
+import { Check, PaintRoller } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import { findGame } from '#shared/games/registry'
 import { fullIncomePerHour, TYCOON_GAMES, type ZoneId } from '#shared/tycoon'
@@ -27,7 +27,7 @@ const owned = computed(() => !!tycoon.state.value?.zones.includes(props.id))
     <div class="g-well rounded-2xl p-2">
       <div class="mb-1.5 flex items-center justify-between px-1">
         <span class="text-[11px] font-semibold tracking-wider text-[var(--g-muted)] uppercase">{{ games.length }} games</span>
-        <span class="g-num flex items-center gap-1 text-sm text-[#ffc93a]" :title="`Up to ${formatCoins(income)} more coins an hour for your cage with every game here built`"><Coins class="size-4" :stroke-width="2.75" />+{{ formatCoins(income) }}/h</span>
+        <span class="g-num flex items-center gap-1 text-sm text-[#ffc93a]" :title="`Up to ${formatCoins(income)} more coins an hour for your cage with every game here built`"><CasinoCoinIcon class="size-4" />+{{ formatCoins(income) }}/h</span>
       </div>
       <div class="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
         <div

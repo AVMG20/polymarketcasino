@@ -27,6 +27,8 @@ export interface BuildView {
     running: QueuedConstruction | null
     /** Name of the zone that must be opened first, or null. */
     lockZone: string | null
+    /** Id of that zone, or null. */
+    lockZoneId: ZoneId | null
     /** Every builder is busy (and this item is not one of them). */
     buildersFull: boolean
     maxed: boolean
@@ -62,6 +64,9 @@ export interface CampaignView {
     /** Visitors and guest coins an hour while it runs. */
     visitors: number
     perHour: number
+    /** What it adds over the floor without a campaign: visitors (0 when every seat is taken) and coins an hour. */
+    gainVisitors: number
+    gainPerHour: number
 }
 
 /** Every buildable item, in menu order. */
@@ -152,6 +157,9 @@ export function useTycoon() {
         const running = campaign.value?.def.id === def.id
         // While it runs: what the casino has from it; else what it would have with it.
         const withIt = s ? { ...s, campaign: { id: def.id, until: Math.max(now + def.ms, s.campaign?.until ?? 0) } } : null
+        const without = s ? { ...s, campaign: null } : null
+        const visitors = withIt ? visitorCount(withIt, now) : 0
+        const perHour = withIt ? guestsPerHour(withIt, now) : 0
         return {
             def,
             cost,
@@ -160,8 +168,10 @@ export function useTycoon() {
             running,
             blocker: s ? campaignBlocker(s, def.id, now) : 'Loading',
             affordable: chips.value >= cost,
-            visitors: withIt ? visitorCount(withIt, now) : 0,
-            perHour: withIt ? guestsPerHour(withIt, now) : 0
+            visitors,
+            perHour,
+            gainVisitors: without ? Math.max(0, visitors - visitorCount(without, now)) : 0,
+            gainPerHour: without ? Math.max(0, normalizeCoins(perHour - guestsPerHour(without, now))) : 0
         }
     }
     const campaigns = computed(() => CAMPAIGNS.map(campaignView))
@@ -362,12 +372,13 @@ export function useTycoon() {
                     return c ? { ...c, leftMs: 0, total: Math.max(1, c.readyAt - c.startedAt) } : null
                 })()
         const zone = s ? requiredZone(s, kind, id) : null
-        const lockZone = s && zone && !s.zones.includes(zone) ? findZone(zone)?.name ?? zone : null
+        const lockZoneId = s && zone && !s.zones.includes(zone) ? zone : null
+        const lockZone = lockZoneId ? findZone(lockZoneId)?.name ?? lockZoneId : null
         const buildersFull = !!s && !running && s.constructions.length >= s.builders
         const missingChips = cost ? Math.max(0, cost.chips - chips.value) : 0
         const affordable = missingChips === 0
         return {
-            kind, id, name: buildName(kind, id), level, maxLevel, cost, running, lockZone, buildersFull,
+            kind, id, name: buildName(kind, id), level, maxLevel, cost, running, lockZone, lockZoneId, buildersFull,
             maxed: !cost && !running,
             missingChips, affordable,
             canStart: !!s && !!cost && affordable && !running && !buildBlocker(s, kind, id)

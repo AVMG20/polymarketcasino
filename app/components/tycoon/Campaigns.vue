@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { Armchair, Clock, Lock, Megaphone, Plus, Timer, TrendingUp, Users } from 'lucide-vue-next'
+import { Armchair, Clock, Lock, Megaphone, Plus, Timer, Users } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import { CAMPAIGN_STACK_FACTOR, MAX_CAMPAIGN_QUEUE_MS } from '#shared/tycoon'
 import type { CampaignView } from '~/composables/useTycoon'
 
 /**
  * The ad campaign picker: how full the floor is, then one big tile per
- * campaign (art, visitor boost, how long it runs, the chip price on the
- * button). The running one extends; locked ones show the Marketing level
+ * campaign (art, the visitors and coins an hour it adds, how long it runs,
+ * the chip price on the button, and why it can't start when it can't). The running one extends; locked ones show the Marketing level
  * they need. Every run already queued makes the next extension dearer
  * (×1,5 each), and the queue stops at a week.
  */
@@ -65,11 +65,12 @@ function buttonTitle(c: CampaignView): string {
     <div class="g-well space-y-1.5 rounded-2xl px-3 py-2">
       <div class="flex items-center gap-2">
         <Users class="size-5 shrink-0 text-[#7dd3fc]" :stroke-width="2.75" />
+        <span class="text-[11px] font-semibold tracking-wide text-[var(--g-muted)] uppercase">Visitors / seats</span>
         <span :key="visitorPop" class="g-num text-xl leading-none" :class="visitorPop ? 'g-pop' : ''" title="Visitors on your floor / seats">{{ tycoon.visitors.value }}<span class="text-base text-[var(--g-muted)]"> / {{ seats }}</span></span>
         <span v-if="tycoon.waiting.value" class="g-num flex items-center gap-1 rounded-full bg-[#ff9a2e]/20 px-2 text-sm leading-6 text-[#ffb35c]" title="Waiting at the door: build games or level them up for more seats">
           +{{ tycoon.waiting.value }} <Armchair class="size-3.5" :stroke-width="3" />
         </span>
-        <span class="g-num ml-auto flex items-center gap-1 text-base text-[#7ee08f]" title="Guest coins an hour (into the cage)"><TrendingUp class="size-4" :stroke-width="3" />+{{ formatCoins(tycoon.perHour.value) }}/h</span>
+        <span class="g-num ml-auto flex items-center gap-1 text-base text-[#7ee08f]" title="Guest coins an hour (into the cage)"><CasinoCoinIcon class="size-4" />+{{ formatCoins(tycoon.perHour.value) }}/h</span>
       </div>
       <span class="block h-2.5 overflow-hidden rounded-full bg-black/50" :title="`${Math.round(fill * 100)}% of the seats taken`">
         <span class="block h-full rounded-full bg-gradient-to-r from-[#4aa6ff] to-[#7dd3fc] transition-[width] duration-500" :style="{ width: `${fill * 100}%` }" />
@@ -96,9 +97,16 @@ function buttonTitle(c: CampaignView): string {
         </button>
 
         <p class="g-title mt-1 truncate text-center text-[15px] leading-5">{{ c.def.name }}</p>
-        <p class="g-num flex items-center justify-center gap-1 text-sm leading-5" :title="`Visitors ${formatBoost(c.boost)}: ${tycoon.visitors.value} → ${c.visitors} · +${formatCoins(c.perHour)}/h`">
-          <Users class="size-3.5 text-[#7dd3fc]" :stroke-width="3" /><span class="text-[#7dd3fc]">{{ formatBoost(c.boost) }}</span>
+        <p
+          v-if="c.gainVisitors > 0"
+          class="g-num flex items-center justify-center gap-1 text-sm leading-5 whitespace-nowrap"
+          :title="`+${c.gainVisitors} visitors and +${formatCoins(c.gainPerHour)} coins an hour while it runs (visitors ${formatBoost(c.boost)})`"
+        >
+          <Users class="size-3.5 shrink-0 text-[#7dd3fc]" :stroke-width="3" /><span class="text-[#7dd3fc]">+{{ c.gainVisitors }}</span>
+          <span class="text-white/40">·</span>
+          <CasinoCoinIcon class="size-3.5" /><span class="text-[#7ee08f]">+{{ formatCoins(c.gainPerHour) }}/h</span>
         </p>
+        <p v-else class="text-center text-[11px] leading-[14px] font-semibold text-[#ffb35c]" title="Every seat is taken: more visitors would have nowhere to sit. Build games or level them up first.">Floor full: build seats first</p>
 
         <span v-if="c.lockedAt !== null" class="state-pill mt-1 text-[#ffc93a]" :title="`Needs Marketing level ${c.lockedAt}`">
           <Megaphone class="size-3.5 shrink-0" :stroke-width="3" /><span class="truncate text-[11px] leading-[13px] sm:text-xs">Marketing {{ c.lockedAt }}</span>
@@ -126,6 +134,7 @@ function buttonTitle(c: CampaignView): string {
         >
           then <TycoonCost :amount="nextCost(c)" compact />
         </p>
+        <p v-else-if="c.blocker && c.lockedAt === null && !weekFull(c)" class="mt-0.5 text-center text-[11px] leading-[14px] font-semibold text-[var(--g-muted)]">{{ c.blocker }}</p>
       </div>
     </div>
 
