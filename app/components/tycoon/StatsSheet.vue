@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChartArea, ChartNoAxesColumn, ChevronRight, RotateCcw, Users } from 'lucide-vue-next'
+import { ChartArea, RotateCcw, Users } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import { VISITOR_TIERS, type HistoryHour, type HistoryResponse } from '#shared/visitors'
 
@@ -111,9 +111,6 @@ const empty = computed(() => !hours.value.some(h => guestsOf(h) > 0 || h.income 
             </section>
           </template>
 
-          <NuxtLink to="/stats" class="g-btn g-dark h-11 w-full rounded-xl text-[15px]" @click="stats.close()">
-            <ChartNoAxesColumn class="size-4.5" :stroke-width="2.75" /> Game stats <ChevronRight class="ml-auto size-4.5" :stroke-width="3" />
-          </NuxtLink>
         </div>
       </TycoonDrawer>
     </div>
