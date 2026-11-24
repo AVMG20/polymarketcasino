@@ -1,9 +1,10 @@
 import { eq } from 'drizzle-orm'
 import type { Tx } from '../database'
 import { casinoProfiles } from '../database/schema'
+import { placedSpecials, specialBonus } from '../../shared/decor'
 import { WELCOME_AFTER_MS, type WelcomeBack } from '../../shared/missions'
 import { DEFAULT_RULES, DOOR_RULES, runFloor, seatedTotal, type HouseRules, type NotableGuest } from '../../shared/visitors'
-import { campaignsOf, type BuildKind, type RunningCampaignRef, type TycoonState, type UpgradeId } from '../../shared/tycoon'
+import { campaignsOf, findTycoonGame, findUpgrade, findZone, type BuildKind, type RunningCampaignRef, type TycoonState, type UpgradeId } from '../../shared/tycoon'
 import { historyHours, type Casino } from './tycoon'
 
 /**
@@ -29,6 +30,8 @@ interface Snapshot {
     rushUntil: number | null
     campaigns: RunningCampaignRef[]
     rules: HouseRules
+    /** The specials standing on the floor (shared/decor.ts). */
+    specials: string[]
 }
 
 function snapshotOf(state: TycoonState, rules: HouseRules): Snapshot {
@@ -41,7 +44,8 @@ function snapshotOf(state: TycoonState, rules: HouseRules): Snapshot {
         constructions: state.constructions.map(c => ({ kind: c.kind, id: c.id, level: c.level, readyAt: c.readyAt })),
         rushUntil: state.rushUntil,
         campaigns: campaignsOf(state),
-        rules: { ...rules }
+        rules: { ...rules },
+        specials: placedSpecials(state.decor ?? []).sort()
     }
 }
 
@@ -64,10 +68,12 @@ function readSnapshot(raw: unknown): Snapshot | null {
         zones: Array.isArray(s.zones) ? s.zones : null,
         games: s.games,
         upgrades: s.upgrades,
-        constructions: s.constructions,
+        // Only what is still in the catalog (a Decor level from before it left is refunded, not finished).
+        constructions: s.constructions.filter(c => (c.kind === 'zone' ? findZone(c.id) : c.kind === 'game' ? findTycoonGame(c.id) : findUpgrade(c.id))),
         rushUntil: s.rushUntil ?? null,
         campaigns: campaignsOf(s as { campaign?: RunningCampaignRef | null, campaigns?: RunningCampaignRef[] }),
-        rules: readRules(s.rules)
+        rules: readRules(s.rules),
+        specials: Array.isArray(s.specials) ? s.specials.filter(t => typeof t === 'string') : []
     }
 }
 
@@ -81,7 +87,8 @@ function replay(snap: Snapshot, seed: number, to: number): { income: number, not
         rushUntil: snap.rushUntil,
         campaign: null,
         campaigns: snap.campaigns,
-        rules: snap.rules
+        rules: snap.rules,
+        specials: specialBonus(snap.specials)
     }
     let at = snap.at
     let income = 0
@@ -140,6 +147,7 @@ export function noteVisit(tx: Tx, casino: Casino, state: TycoonState, welcome: b
         && JSON.stringify(snap.games) === JSON.stringify(next.games)
         && JSON.stringify(snap.upgrades) === JSON.stringify(next.upgrades)
         && JSON.stringify(snap.rules) === JSON.stringify(next.rules)
+        && JSON.stringify(snap.specials) === JSON.stringify(next.specials)
         && next.cage >= snap.cage
     if (!welcome && same && row?.lastSeenAt && now - row.lastSeenAt.getTime() < LAST_SEEN_EVERY_MS) return null
     tx.update(casinoProfiles)

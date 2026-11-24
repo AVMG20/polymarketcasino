@@ -29,6 +29,9 @@
  */
 
 import type { AvatarLook, CosmeticsState } from './cosmetics'
+import { casinoLevel, gameUnlockLevel } from './casino-level'
+import { ownedSpecials, placedSpecials, specialBonus, type DecorType, type OwnedDecor, type SpecialBonus } from './decor'
+import { buildSpot, layoutOf, layoutStateOf } from './floor/placement'
 import { COINS_PER_GEM } from './economy'
 import type { MissionsState, WelcomeBack } from './missions'
 import { findGame } from './games/registry'
@@ -40,10 +43,12 @@ import {
     fullFloorPerHour,
     DEFAULT_RULES,
     seatedTotal,
+    tierOdds,
     type FloorNow,
     type FloorView,
     type HouseRules,
-    type HouseState
+    type HouseState,
+    type VisitorCounts
 } from './visitors'
 
 // ── Zones ────────────────────────────────────────────────────────────────
@@ -97,7 +102,8 @@ export interface TycoonGameDef {
 
 // ── Casino upgrades ──────────────────────────────────────────────────────
 
-export type UpgradeId = 'cage' | 'marketing' | 'decor' | 'hospitality' | 'crew'
+/** The Decor upgrade is gone (its levels were refunded): rich guests come with Hospitality, the rooms and the specials. */
+export type UpgradeId = 'cage' | 'marketing' | 'hospitality' | 'crew'
 
 export interface UpgradeDef {
     id: UpgradeId
@@ -177,6 +183,14 @@ export interface TycoonState {
     campaigns?: RunningCampaignRef[]
     /** Games with the golden skin. */
     golden: string[]
+    /**
+     * Where every game on the floor stands (its origin tile): built or under
+     * construction, home spots included (shared/floor/placement.ts). Missing on
+     * old payloads = every game at its home spot.
+     */
+    placements?: Record<string, { x: number, y: number }>
+    /** Decorations the casino owns (shared/decor.ts); put-away ones have x = y = null. Visitors see only placed ones. */
+    decor?: OwnedDecor[]
     /** Share of everything buildable that is built, 0..1. */
     progress: number
     /** False for dev-login players (no hub, no gems). */
@@ -187,6 +201,10 @@ export interface TycoonState {
     missions?: MissionsState
     /** "While you were away": on GET /api/tycoon?welcome=1 after ten minutes or more away, else null. */
     welcome?: WelcomeBack | null
+    /** Chips the removed Decor upgrade was refunded with, on the one owner's read that paid it (show a notice), else missing. */
+    decorRefund?: number
+    /** GET /api/tycoon only: the star level change the read's chip move caused (the one-time Decor refund), once the hub confirmed it, else null. */
+    stars?: TycoonStarChange | null
 }
 
 // ── API bodies and responses ─────────────────────────────────────────────
@@ -377,6 +395,36 @@ export const TYCOON_GAMES: readonly TycoonGameDef[] = [
     { slug: 'hilo', zone: 'penthouse', archetype: 'hilo', accent: '#8b5cf6', levels: gameLevels(1_200, 135 * MIN) }
 ]
 
+/** What each Hospitality level brings (index = level - 1), for the build menu. */
+export const HOSPITALITY_LEVELS: readonly string[] = [
+    'Free drinks', 'Snacks', 'Buffet', 'Live music', 'Fine dining', 'Cocktail bar', 'Champagne', 'Private chef'
+]
+
+/** Hospitality levels: chips (before CHIP_SCALE), build time, the room it needs. */
+const HOSPITALITY_TUNING: readonly [number, number, ZoneId][] = [
+    [400, 30 * MIN, 'main'],
+    [1_200, 2 * HOUR, 'pit'],
+    [2_400, 4 * HOUR, 'pit'],
+    [3_600, 5 * HOUR, 'lounge'],
+    [5_000, 6 * HOUR, 'highlimit'],
+    [6_500, 7 * HOUR, 'highlimit'],
+    [8_000, 8 * HOUR, 'penthouse'],
+    [9_600, 9 * HOUR, 'penthouse']
+]
+
+/**
+ * What the Decor upgrade (removed) cost per level (index = level - 1), at its
+ * last catalog prices: a casino that had built it gets these chips back once
+ * (server/utils/tycoon.ts `refundDecor`).
+ */
+export const DECOR_REFUND_CHIPS: readonly number[] = [150, 300, 500, 750, 1_000, 1_350, 1_700, 2_100, 2_500, 2_900, 3_300, 3_700].map(chips => roundChips(chips * CHIP_SCALE))
+
+/** Chips the removed Decor upgrade cost up to `level`. */
+export function decorRefund(level: number): number {
+    const n = Number.isFinite(level) ? Math.max(0, Math.min(DECOR_REFUND_CHIPS.length, Math.floor(level))) : 0
+    return DECOR_REFUND_CHIPS.slice(0, n).reduce((sum, chips) => sum + chips, 0)
+}
+
 export const UPGRADES: readonly UpgradeDef[] = [
     {
         id: 'cage',
@@ -393,25 +441,12 @@ export const UPGRADES: readonly UpgradeDef[] = [
         requiresZone: [null, 'main', 'pit', 'lounge', 'highlimit']
     },
     {
-        id: 'decor',
-        name: 'Decor',
-        description: 'Richer guests: carpet, lights and chandeliers draw more High Rollers and Whales, fewer Tourists.',
-        // Twelve smaller steps, gated by the rooms: the main way to richer guests.
-        levels: [
-            cost(150, 3 * MIN), cost(300, 20 * MIN),
-            cost(500, 45 * MIN), cost(750, 90 * MIN),
-            cost(1_000, 2 * HOUR), cost(1_350, 3 * HOUR),
-            cost(1_700, 4 * HOUR), cost(2_100, 5 * HOUR), cost(2_500, 6 * HOUR),
-            cost(2_900, 7 * HOUR), cost(3_300, 8 * HOUR), cost(3_700, 9 * HOUR)
-        ],
-        requiresZone: ['main', 'main', 'pit', 'pit', 'lounge', 'lounge', 'highlimit', 'highlimit', 'highlimit', 'penthouse', 'penthouse', 'penthouse']
-    },
-    {
         id: 'hospitality',
         name: 'Hospitality',
-        description: 'More and richer guests: free drinks, then snacks, a buffet, fine dining and a champagne bar.',
-        levels: [cost(900, 2 * HOUR), cost(1_800, 4 * HOUR), cost(3_200, 6 * HOUR), cost(5_000, 8 * HOUR), cost(7_500, 9 * HOUR)],
-        requiresZone: ['pit', 'lounge', 'highlimit', 'highlimit', 'penthouse']
+        description: 'More and richer guests: free drinks, snacks, a buffet, live music, fine dining, a cocktail bar, champagne and a private chef.',
+        // The ladder to richer guests (with the rooms, the top machines and the prestige specials), gated by the rooms.
+        levels: HOSPITALITY_TUNING.map(([chips, ms]) => cost(chips, ms)),
+        requiresZone: HOSPITALITY_TUNING.map(([, , zone]) => zone)
     },
     {
         id: 'crew',
@@ -469,12 +504,6 @@ function levelIndex(level: number, max: number): number {
 
 export function cageCapacity(level: number): number {
     return CAGE_CAPACITY[levelIndex(level, CAGE_CAPACITY.length - 1)]!
-}
-
-/** The Decor level as the floor draws it (0-5: its carpet, lights and chandeliers), from the upgrade's 0-12. */
-export function decorLook(level: number): number {
-    const max = findUpgrade('decor')?.levels.length ?? MAX_LEVEL
-    return Math.max(0, Math.min(MAX_LEVEL, Math.round(Math.max(0, level) * MAX_LEVEL / max)))
 }
 
 /** Builders a casino has: 1, +1 with the Construction Crew built, +1 with the gem builder hired. */
@@ -548,12 +577,18 @@ const SEATS: Readonly<Record<Archetype, number>> = { slot: 2, dice: 3, rocket: 2
 /** Each Marketing level makes a campaign this much stronger. */
 const MARKETING_CAMPAIGN = 0.1
 
-/** What the visitor helpers read of a state: the build, the rush and campaign, and (when known) the zones and the rules. */
+/** Decorations as the visitor helpers read them: only the specials count. */
+type DecorView = readonly Pick<OwnedDecor, 'type' | 'x' | 'y'>[]
+
+/** What the visitor helpers read of a state: the build, the rush and campaign, and (when known) the zones, the rules and the decorations. */
 export type VisitorView = Pick<TycoonState, 'games' | 'upgrades' | 'rushUntil' | 'campaign'> & {
     campaigns?: readonly RunningCampaignRef[]
     zones?: readonly string[]
     rules?: HouseRules
     house?: Pick<HouseState, 'rules'>
+    /** The casino's decorations: the specials standing on the floor lift it (`specials` wins when given). */
+    decor?: DecorView
+    specials?: SpecialBonus
 }
 
 /** A state as the visitor model reads it. */
@@ -565,11 +600,27 @@ export function floorView(state: VisitorView): FloorView {
         rushUntil: state.rushUntil,
         campaign: state.campaign,
         campaigns: state.campaigns,
-        rules: state.rules ?? state.house?.rules ?? DEFAULT_RULES
+        rules: state.rules ?? state.house?.rules ?? DEFAULT_RULES,
+        specials: state.specials ?? specialBonus(placedSpecials(state.decor ?? []))
     }
 }
 
-type FullView = Pick<TycoonState, 'games'> & { zones?: readonly string[], upgrades?: Partial<Record<UpgradeId, number>> }
+/**
+ * The tier odds without and with one special standing on the floor (the
+ * other placed specials as they are, wealth ads running at `at`): what
+ * placing it changes. For a special already placed, `without` is the floor
+ * once it is put away.
+ */
+export function specialOdds(state: VisitorView, type: DecorType, at?: number): { without: VisitorCounts, with: VisitorCounts } {
+    const others = placedSpecials(state.decor ?? []).filter(t => t !== type)
+    const view = floorView(state)
+    return {
+        without: tierOdds({ ...view, specials: specialBonus(others) }, at),
+        with: tierOdds({ ...view, specials: specialBonus([...others, type]) }, at)
+    }
+}
+
+type FullView = Pick<TycoonState, 'games'> & { zones?: readonly string[], upgrades?: Partial<Record<UpgradeId, number>>, decor?: DecorView }
 
 export function findCampaign(id: string): CampaignDef | undefined {
     return CAMPAIGNS.find(campaign => campaign.id === id)
@@ -597,11 +648,13 @@ export function floorSeats(state: Pick<TycoonState, 'games'>): number {
 
 /**
  * What the floor spends an hour with every seat taken, at the expected tier
- * mix and the default rules (no rush, no costs): what campaigns and mission
- * rewards are priced from. Without zones they are read from the built games.
+ * mix and the default rules (no rush, no costs), with every special the
+ * casino owns as if placed (putting one away must not make prices cheaper):
+ * what campaigns and mission rewards are priced from. Without zones they are
+ * read from the built games.
  */
 export function fullIncomePerHour(state: FullView): number {
-    return fullFloorPerHour({ zones: state.zones, games: state.games, upgrades: state.upgrades ?? {} }, DEFAULT_RULES)
+    return fullFloorPerHour({ zones: state.zones, games: state.games, upgrades: state.upgrades ?? {}, specials: specialBonus(ownedSpecials(state.decor ?? [])) }, DEFAULT_RULES)
 }
 
 type CampaignHolder = { campaign?: RunningCampaignRef | null, campaigns?: readonly RunningCampaignRef[] }
@@ -725,13 +778,15 @@ export const MAX_CAMPAIGN_QUEUE_MS = 7 * 24 * HOUR
  * The most extra guest coins a rush can bring: what a full floor spends over
  * RUSH_MS at the richest mix any of the casino's unlocked rules lets in (a
  * rush doubles what guests spend), as if every seat were taken (a campaign
- * started after the rush can fill them). Priced from the occupancy at
- * purchase instead, a rush bought before a campaign would come out cheaper
- * than converting. Not capped by the cage: collecting during the rush takes
- * more than one cage.
+ * started after the rush can fill them) and every special the casino owns
+ * stood on the floor (one put away can be placed during the rush). Priced
+ * from the occupancy at purchase instead, a rush bought before a campaign
+ * would come out cheaper than converting. Not capped by the cage: collecting
+ * during the rush takes more than one cage.
  */
 export function rushExtraCoins(state: FullView): number {
-    return roundCoins(bestFullFloorPerHour({ zones: state.zones, games: state.games, upgrades: state.upgrades ?? {} }) * RUSH_MS / HOUR)
+    const specials = specialBonus(ownedSpecials(state.decor ?? []))
+    return roundCoins(bestFullFloorPerHour({ zones: state.zones, games: state.games, upgrades: state.upgrades ?? {}, specials }) * RUSH_MS / HOUR)
 }
 
 /**
@@ -790,12 +845,19 @@ function zoneName(id: ZoneId | null): string {
     return findZone(id ?? '')?.name ?? 'the zone'
 }
 
+/** What `buildBlocker` reads of a state (`placements` and `decor`: where a new game would stand). */
+export type BlockerView = Pick<TycoonState, 'zones' | 'games' | 'upgrades' | 'constructions' | 'builders' | 'placements' | 'decor'>
+
 /**
  * Why `kind:id` can't start building now, or null when it can. Affordability
- * is not checked here (the debit is the guard).
+ * is not checked here (the debit is the guard). A new game needs the casino
+ * level (shared/casino-level.ts) and a free spot in an owned room
+ * (shared/floor/placement.ts `buildSpot`); rooms need the room before them,
+ * upgrades their room.
  */
-export function buildBlocker(state: TycoonState, kind: BuildKind, id: string): string | null {
+export function buildBlocker(state: BlockerView, kind: BuildKind, id: string): string | null {
     let requires: ZoneId | null = null
+    let newGame = false
     if (kind === 'zone') {
         const zone = findZone(id)
         if (!zone) return 'Unknown zone'
@@ -805,7 +867,7 @@ export function buildBlocker(state: TycoonState, kind: BuildKind, id: string): s
         const game = findTycoonGame(id)
         if (!game) return 'Unknown game'
         if ((state.games[id] ?? 0) >= game.levels.length) return `${findGame(id)?.name ?? id} is at the top level`
-        requires = game.zone
+        newGame = (state.games[id] ?? 0) < 1
     } else if (kind === 'upgrade') {
         const upgrade = findUpgrade(id)
         if (!upgrade) return 'Unknown upgrade'
@@ -817,8 +879,26 @@ export function buildBlocker(state: TycoonState, kind: BuildKind, id: string): s
     }
     if (state.constructions.some(c => c.kind === kind && c.id === id)) return 'Already under construction'
     if (requires && !state.zones.includes(requires)) return `Open the ${zoneName(requires)} first`
+    if (newGame) {
+        const needs = gameUnlockLevel(id)
+        if (casinoLevel(state).level < needs) return `Reach casino level ${needs}`
+    }
     if (state.constructions.length >= state.builders) return state.builders > 1 ? 'Every builder is busy' : 'Your builder is busy'
+    if (newGame && !hasRoomFor(state, id)) return NO_ROOM_BLOCKER
     return null
+}
+
+/** `buildBlocker`'s refusal when no owned room has a free spot for a new game. */
+export const NO_ROOM_BLOCKER = 'No room for it: open a room or move things'
+
+/** Whether a game that isn't on the floor yet has a free spot in the owned rooms (false: build nothing, or move things first). */
+export function hasRoomFor(state: Pick<BlockerView, 'zones' | 'games' | 'constructions' | 'placements' | 'decor'>, slug: string): boolean {
+    return newGameSpot(state, slug) !== null
+}
+
+/** Where a game that isn't on the floor yet would stand when built (null: no free spot in the owned rooms). */
+export function newGameSpot(state: Pick<BlockerView, 'zones' | 'games' | 'constructions' | 'placements' | 'decor'>, slug: string): { x: number, y: number } | null {
+    return buildSpot(layoutOf(layoutStateOf(state)), slug)
 }
 
 /**

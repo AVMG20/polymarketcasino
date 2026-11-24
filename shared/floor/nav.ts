@@ -1,15 +1,20 @@
 import type { ZoneId } from '../tycoon'
-import { CAGE, DESK, GRID_H, GRID_W, PLOTS, PORCH, PROPS, areaAt, doorwayBetween, inGrid, type Rect, type Tile } from './layout'
+import { GRID_H, GRID_W, PORCH, areaAt, doorwayBetween, inGrid, type Rect, type Tile } from './layout'
+import type { LayoutInput } from './placement'
 
 /**
- * Walkable tiles and A* for the floor. Plots block whatever their status (an
- * empty plot is still reserved floor), so the grid only changes when a zone
- * is bought or decor adds furniture.
+ * Walkable tiles and A* for the floor, from what stands on it
+ * (`layoutOf` in placement.ts): the owned zones and the porch are floor,
+ * every blocking piece (games built or under construction, the cage, the
+ * desk, decorations but rugs) blocks. An unbuilt game takes no floor.
  */
 export class NavGrid {
     readonly walkable: Uint8Array
+    readonly owned: ReadonlySet<ZoneId>
 
-    constructor(readonly owned: ReadonlySet<ZoneId>, readonly decor: number) {
+    constructor(layout: LayoutInput) {
+        const owned = new Set<ZoneId>(layout.zones)
+        this.owned = owned
         this.walkable = new Uint8Array(GRID_W * GRID_H)
         for (let y = 0; y < GRID_H; y++) {
             for (let x = 0; x < GRID_W; x++) {
@@ -23,10 +28,7 @@ export class NavGrid {
                 for (let y = r.y; y < r.y + r.h; y++) if (inGrid(x, y)) this.walkable[y * GRID_W + x] = 0
             }
         }
-        for (const plot of Object.values(PLOTS)) block(plot.rect)
-        block(CAGE.rect)
-        block(DESK.rect)
-        for (const p of PROPS) if (p.decor <= decor) block(p.rect)
+        for (const piece of layout.pieces) if (piece.blocks) block(piece.rect)
     }
 
     isWalkable(x: number, y: number): boolean {

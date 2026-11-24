@@ -13,6 +13,7 @@
 
 import type { FloorNow } from './visitors'
 import type { AvatarLook, ZoneSkins } from './cosmetics'
+import type { OwnedDecor } from './decor'
 import { TYCOON_GAMES, UPGRADES, ZONES, type CampaignId, type ZoneId } from './tycoon'
 
 /** What the value reads: owned zones, game levels and upgrade levels (missing = 0). */
@@ -84,7 +85,8 @@ export const LEADERBOARD_SIZE = 50
 
 /**
  * GET /api/tycoon/visit/:playerId: what anyone may see of a casino. No
- * balances (coins, chips, the cage), no constructions, no gem purchases.
+ * balances (coins, chips, the cage), no gem purchases; of the constructions only
+ * the games being built for the first time (`building`: they take floor space).
  */
 export interface CasinoVisit {
     serverNow: number
@@ -97,8 +99,16 @@ export interface CasinoVisit {
     games: Record<string, number>
     /** Games with the golden skin. */
     golden: string[]
-    /** Decor upgrade level 0..5. */
-    decor: number
+    /** The casino level (shared/casino-level.ts). Missing on old payloads. */
+    level?: number
+    /** The room look the floor draws (0-5, `roomLook` of the level: carpet, walls, lights, chandeliers). Missing on old payloads. */
+    look?: number
+    /** Where each game on the floor stands (its origin tile): built ones and `building` ones, home spots included. Missing on old payloads = every game at home. */
+    placements?: Record<string, { x: number, y: number }>
+    /** Games under their first construction: they stand on the floor already (draw them as building). Missing on old payloads. */
+    building?: string[]
+    /** The decorations standing on the floor (put-away ones are private). Missing on old payloads. */
+    decorations?: OwnedDecor[]
     /** The skin on each owned zone (missing = classic). */
     skins?: ZoneSkins
     /** Visitors on the floor now, the seats they fill and the queue at the door. */

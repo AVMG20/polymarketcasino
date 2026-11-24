@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PLOTS } from '#shared/floor/layout'
 import { TYCOON_GAMES, ZONES, type ZoneId } from '#shared/tycoon'
 import CasinoFloor from '~/components/tycoon/CasinoFloor.vue'
 import type { FloorApi, FloorPlot, FloorScene, FloorTarget } from '~/utils/floor/types'
@@ -54,6 +55,7 @@ const scene = computed<FloorScene>(() => {
             accent: g.accent,
             zone: g.zone,
             status,
+            rect: PLOTS[g.slug]?.rect ?? null,
             level: status === 'built' || status === 'building' ? (isBuilding ? Math.max(0, lv - 1) : lv) : 0,
             golden: golden.value && i % 2 === 0,
             construction: isBuilding ? { startedAt: now - 20_000, readyAt: now + 60_000 * (1 + i) } : null,
@@ -63,6 +65,7 @@ const scene = computed<FloorScene>(() => {
     return {
         zones,
         plots,
+        decorations: [],
         cage: { fill: cageFill.value, stored: Math.round(cageFill.value * 1200) },
         decor: decor.value,
         guestsPerHour: guestsPerHour.value,

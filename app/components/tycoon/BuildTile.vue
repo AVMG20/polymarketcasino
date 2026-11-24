@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowBigUp, Crown, Gem, HardHat, Lock, Clock } from 'lucide-vue-next'
+import { ArrowBigUp, Crown, Gem, HardHat, Lock, Clock, Move } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import type { BuildKind } from '#shared/tycoon'
 
@@ -12,6 +12,8 @@ const v = computed(() => tycoon.view(props.kind, props.id))
 // The expected model only changes with a new state (a campaign or rush ending re-reads it): read it at the state's clock, not every tick.
 const at = computed(() => tycoon.state.value?.serverNow ?? 0)
 const level = computed(() => v.value.level)
+/** Waiting for a room (upgrades) or the casino level (games). */
+const locked = computed(() => !!v.value.lockZone || !!v.value.lockLevel)
 /** The badge: a game shows what it earns (the number its card shows); the gem on the button marks a richer-guests level. */
 const effect = computed(() => {
     const effects = buildEffects(props.kind, props.id, level.value, tycoon.state.value, at.value)
@@ -20,7 +22,7 @@ const effect = computed(() => {
 /** The next level is a top machine level: it draws richer guests (a gem on the button). */
 const richer = computed(() => richerStep(props.kind, v.value.level))
 /** An upgrade's one purpose, under its name. */
-const PURPOSE: Record<string, string> = { cage: 'Holds more coins', marketing: 'More guests', decor: 'Richer guests', hospitality: 'More + richer', crew: '+1 builder' }
+const PURPOSE: Record<string, string> = { cage: 'Holds more coins', marketing: 'More guests', hospitality: 'More + richer', crew: '+1 builder' }
 const purpose = computed(() => (props.kind === 'upgrade' ? PURPOSE[props.id] ?? null : null))
 /** A new build shows the hard hat, a level-up the up arrow. */
 const actionIcon = computed(() => (isNewBuild(props.kind, props.id, v.value.level) ? HardHat : ArrowBigUp))
@@ -33,7 +35,7 @@ const costTitle = computed(() => {
 
 /** Hovering the build/upgrade button flips the art to the numbers that step changes (desktop). */
 const hovered = ref(false)
-const stats = computed(() => (hovered.value && !v.value.lockZone && !v.value.running && !v.value.maxed
+const stats = computed(() => (hovered.value && !locked.value && !v.value.running && !v.value.maxed
     ? buildStats(props.kind, props.id, v.value.level, tycoon.state.value, at.value).slice(0, 3)
     : []))
 
@@ -51,9 +53,9 @@ async function tap() {
       :aria-label="`${v.name} details`"
       @click="emit('open')"
     >
-      <TycoonItemArt :kind="kind" :id="id" :dim="!!v.lockZone" />
+      <TycoonItemArt :kind="kind" :id="id" :dim="locked" />
       <!-- Effect badge and coin fee -->
-      <span v-if="effect && !v.lockZone && (!v.maxed || kind === 'game')" class="badge absolute top-1 right-1" :title="effect.title">
+      <span v-if="effect && !locked && (!v.maxed || kind === 'game')" class="badge absolute top-1 right-1" :title="effect.title">
         <component :is="effect.icon" class="size-3" :style="{ color: effect.color }" :stroke-width="3" />{{ effect.text }}
       </span>
       <!-- Pips -->
@@ -61,7 +63,7 @@ async function tap() {
         <TycoonPips :level="v.level" :max="v.maxLevel" :marks="kind === 'game' ? RICHER_LEVELS : undefined" />
       </span>
       <!-- Locked -->
-      <span v-if="v.lockZone" class="absolute inset-0 grid place-items-center">
+      <span v-if="locked" class="absolute inset-0 grid place-items-center">
         <span class="grid size-10 place-items-center rounded-full border-2 border-black/50 bg-[#1b1329]/90 shadow-[0_3px_0_rgb(0_0_0/0.4)]"><Lock class="size-5 text-[#ffc93a]" :stroke-width="3" /></span>
       </span>
       <!-- Building: the progress bar with the time left, over the art -->
@@ -71,7 +73,7 @@ async function tap() {
       <span v-else-if="v.maxed" class="absolute top-1 left-1 grid size-7 place-items-center rounded-full border-2 border-black/50 bg-[#ffc93a]"><Crown class="size-4 text-[#7a4a00]" :stroke-width="3" /></span>
       <!-- Hover: the numbers this step changes -->
       <Transition name="stats-flip">
-        <span v-if="hovered && v.cost && !v.lockZone && !v.running" class="absolute inset-0 flex flex-col justify-center gap-2 bg-[#140d20]/97 px-2.5 py-2 text-left">
+        <span v-if="hovered && v.cost && !locked && !v.running" class="absolute inset-0 flex flex-col justify-center gap-2 bg-[#140d20]/97 px-2.5 py-2 text-left">
           <span v-for="stat in stats" :key="stat.label" class="flex min-w-0 flex-col gap-1" :title="stat.title ?? stat.label">
             <span class="flex min-w-0 items-center gap-1 text-[10.5px] leading-none font-bold tracking-wide text-white/75 uppercase">
               <component :is="stat.icon" class="size-3.5 shrink-0" :style="{ color: stat.color }" :stroke-width="2.75" /><span class="truncate">{{ stat.label }}</span>
@@ -97,9 +99,15 @@ async function tap() {
     </p>
     <p v-else class="mt-1 flex h-[30px] items-center justify-center px-0.5 text-center text-[12.5px] leading-[15px] font-semibold sm:text-[13px]" :title="v.name"><span class="line-clamp-2">{{ v.name }}</span></p>
 
-    <span v-if="v.lockZone" class="state-pill mt-1 text-[#ffc93a]" :title="`Open the ${v.lockZone} first`">
+    <span v-if="v.lockLevel" class="state-pill mt-1 text-[#ffc93a]" :title="`Reach casino level ${v.lockLevel} to build it`">
+      <Lock class="size-3.5 shrink-0" :stroke-width="3" /><span class="g-num text-[13px] leading-none">Level {{ v.lockLevel }}</span>
+    </span>
+    <span v-else-if="v.lockZone" class="state-pill mt-1 text-[#ffc93a]" :title="`Open the ${v.lockZone} first`">
       <Lock class="size-3.5 shrink-0" :stroke-width="3" /><span class="line-clamp-2 text-[11px] leading-[13px] sm:text-xs">Needs {{ v.lockZone }}</span>
     </span>
+    <button v-else-if="v.noRoom" type="button" class="state-pill mt-1 w-full text-[#ffb35c]" title="No room for it: open a room or move things" @click="emit('open')">
+      <Move class="size-3.5 shrink-0" :stroke-width="3" /><span class="text-[12px] leading-none">No room</span>
+    </button>
     <TycoonSkipButton v-else-if="v.running" class="mt-1 h-11 w-full rounded-xl px-1 text-[15px]" :left-ms="v.running.leftMs" :target="`${kind}:${id}`" />
     <span v-else-if="v.maxed" class="state-pill mt-1 text-[#ffc93a]"><span class="g-num">MAX</span></span>
     <button

@@ -1,4 +1,4 @@
-import type { SkinId } from '#shared/cosmetics'
+import { BASIC_SKINS, type SkinId } from '#shared/cosmetics'
 import type { ZoneId } from '#shared/tycoon'
 
 /**
@@ -88,7 +88,7 @@ export interface SkinStyle extends ZoneStyle {
 }
 
 /** Zone skins (shared/cosmetics.ts): one theme that fits any zone. Classic is the zone's own style. */
-const SKIN_STYLE: Record<Exclude<SkinId, 'classic'>, SkinStyle> = {
+const SKIN_STYLE: Record<Exclude<SkinId, 'classic' | 'oak' | 'ruby' | 'emerald' | 'violet' | 'sapphire' | 'ivory'>, SkinStyle> = {
     deco: { wall: '#1f2a2e', trim: '#e0b85a', floor: '#22343a', floorAlt: '#1a2a2f', pattern: '#e0b85a', kind: 'carpet', rug: '#0f1d21', motif: 'fan' },
     tropical: { wall: '#2a9d8f', trim: '#ffe0a3', floor: '#e6c98f', floorAlt: '#d8b878', pattern: '#2fa58f', kind: 'wood', rug: '#2fa58f', motif: 'palm' },
     western: { wall: '#8a5a36', trim: '#e8c58c', floor: '#a8673a', floorAlt: '#97592f', pattern: '#e8c58c', kind: 'wood', rug: '#7d2f22', motif: 'horseshoe' },
@@ -100,9 +100,11 @@ const SKIN_STYLE: Record<Exclude<SkinId, 'classic'>, SkinStyle> = {
     cosmic: { wall: '#231650', trim: '#d9c8ff', floor: '#2e2268', floorAlt: '#271c5a', pattern: '#ffb86b', kind: 'carpet', rug: '#170f3c', motif: 'planet', finish: 'space', vein: '#c58bff', medal: '#170f3c', emblem: '#ffbe76' }
 }
 
-/** The style a zone wears with a skin. */
+/** The style a zone wears with a skin. A basic skin (BASIC_SKINS) is another room's classic look. */
 export function skinStyle(zone: ZoneId, skin: SkinId = 'classic'): SkinStyle {
-    return skin === 'classic' ? { ...ZONE_STYLE[zone], motif: 'none' } : SKIN_STYLE[skin] ?? { ...ZONE_STYLE[zone], motif: 'none' }
+    const basic = BASIC_SKINS[skin]
+    if (skin === 'classic' || basic) return { ...ZONE_STYLE[basic ?? zone], motif: 'none' }
+    return SKIN_STYLE[skin as keyof typeof SKIN_STYLE] ?? { ...ZONE_STYLE[zone], motif: 'none' }
 }
 
 export const SKINS = ['#f7d2b6', '#eab68f', '#cf946a', '#a86c47', '#7b4b31', '#f1c7a2']

@@ -85,6 +85,13 @@
       "when": 1795525486642,
       "tag": "0011_visitor_tiers",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1795545728183,
+      "tag": "0012_decorations",
+      "breakpoints": true
     }
   ]
 }

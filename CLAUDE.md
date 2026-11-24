@@ -32,21 +32,25 @@ the Bun and Nuxt versions; don't move the dev server to Node (bun:sqlite would n
 - `shared/`: rules and math used by both sides. `rng.ts` (CSPRNG + seeded), `money.ts`, `economy.ts`,
   `stars.ts`, `games/` (registry, dice, limbo, roulette), `slots/` (one rules module per slot),
   `tables/` (cards and shoe, chips and limits, the socket protocol, one rules file per live table),
-  `floor/` (the My Casino floor plan and walk grid: the client draws it, the floor socket checks moves on it),
+  `floor/` (the My Casino floor plan (`layout.ts`), what stands where and the spot check (`placement.ts`) and the
+  walk grid (`nav.ts`): the client draws it, the server checks placements and floor-socket moves on it),
   `tycoon.ts` (My Casino: catalog, economy numbers, pure helpers and the API shapes), `visitors.ts` (guest tiers, the
-  per-tick visitor model, house rules, history shapes).
+  per-tick visitor model, house rules, history shapes), `casino-level.ts` (XP, levels, game unlock levels),
+  `decor.ts` (decorations: catalog, specials' bonuses, API bodies).
 - `server/utils/`: `ledger.ts` (the only way coins move), `stars.ts`, `wallet.ts` (convert, wallet state),
   `rounds.ts` (play and settle a round), `games.ts` (server half of every game), `steps.ts` (multi-step
   rounds: start, move, cash out, abandoned-round sweep), `hub.ts` (hub client),
   `launch.ts`, `session.ts`, `env.ts`, `tables/` (the live tables: `table.ts` base, `escrow.ts`,
   `socket.ts`, one file per game, `index.ts` registry), `chips.ts` (the only way chips move),
-  `tycoon.ts` (casino profile, constructions, cage, build, campaigns, house rules, history), `tycoon-gems.ts` (gem purchases),
+  `tycoon.ts` (casino profile, constructions, cage, build, campaigns, house rules, history, decorations and
+  placement), `tycoon-gems.ts` (gem purchases),
   `floor-presence.ts` (live floor rooms, pure) + `floor-socket.ts` (its upgrade auth, DB source and the
   process's rooms), `socket-auth.ts` (Origin + session checks every socket shares), `rate-limit.ts`.
 - `server/api/`: `auth/launch`, `auth/logout`, `dev/login`, `config`, `me`, `wallet/*`,
   `games/[slug]/play`, `games/[slug]/{start,act,cashout,round}` (multi-step games), `games`, `tables` (occupancy), `tables/[slug]/ws` (WebSocket), `floor/[casinoId]/ws` (who walks
   around a casino floor: positions and looks, no money, no writes), `tycoon`
-  (state), `tycoon/collect`, `tycoon/build`, `tycoon/campaign`, `tycoon/gems`, `tycoon/rules`, `tycoon/history`. `server/routes/healthz`.
+  (state), `tycoon/collect`, `tycoon/build`, `tycoon/campaign`, `tycoon/gems`, `tycoon/rules`, `tycoon/history`,
+  `tycoon/decor` (buy a decoration), `tycoon/place` (move a game, place or put away a decoration). `server/routes/healthz`.
   `server/plugins/hub-sync.ts` (manifest, heartbeat, retry sweeps), `server/plugins/tables.ts` (escrow
   refunds at boot, shutdown and every five minutes), `server/plugins/step-rounds.ts` (settles multi-step
   rounds idle for a day). `server/middleware/`: `frame-ancestors` (CSP on pages), `same-origin`
@@ -71,7 +75,8 @@ the Bun and Nuxt versions; don't move the dev server to Node (bun:sqlite would n
 3. Client in `app/components/games/`, registered in `app/utils/game-components.ts`.
 4. A `scripts/<game>-rtp.ts` simulation; tune until it reads right.
 5. Only then add it to `GAMES` in `shared/games/registry.ts`: the lobby lists only complete games. Give
-   it a place in `TYCOON_GAMES` (`shared/tycoon.ts`) too: a game nobody can build can't be played.
+   it a place in `TYCOON_GAMES` (`shared/tycoon.ts`), a home spot (`PLOT_ORIGINS`, `shared/floor/layout.ts`)
+   and an unlock level (`GAME_LEVELS`, `shared/casino-level.ts`) too: a game nobody can build can't be played.
 
 A live table instead subclasses `LiveTable` in `server/utils/tables/`, registers in `tables/index.ts`, and
 is listed with `live: true` (no `games.ts` entry, no play endpoint).
@@ -114,6 +119,31 @@ The home page is the player's own casino floor (`docs/casino-economy.md`, "My Ca
 the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a game must be built to play it
 (403) or to sit at its live table (watching stays open).
 
+- **Casino level** (`shared/casino-level.ts`, 1-30): XP = the chips the finished build steps cost ÷ 10,
+  worked out from the build, never stored. Games unlock by level (`gameUnlockLevel`), not by room; rooms
+  still need the previous room, upgrades their `requiresZone`. Decorations unlock by level too. The room
+  look (carpet, walls, lights, chandeliers, 0-5) follows the level (`roomLook`).
+- **Placement** (`shared/floor/placement.ts`): a game stands at its stored spot
+  (`casino_profiles.placements`) or its home spot; a new game's spot is stored when its first build starts
+  (`buildSpot`: home, else the nearest free spot in an owned room; none = the build is refused). Games (built
+  or under construction) and decorations move to any owned room (`POST /api/tycoon/place`; only decorations
+  are put away); `placementProblem` is the one spot
+  check (server, floor ghost, walk grid). Validate inside the `BEGIN IMMEDIATE` transaction against the rows
+  read in it. Where a game stands never changes income.
+- **Decorations** (`shared/decor.ts`, `casino_decor`): plain ones (no stats, unlimited) and specials (one
+  each: the unique (player, special) index; their bonus counts only while placed, through
+  `FloorView.specials`): eight richer-guests ones (prestige: the rarity ladder that replaced the Decor
+  upgrade) and four spend ones. A rush, campaign prices and mission rewards count every owned special as if placed
+  (putting one away never makes them cheaper). After a build, placement or decoration change, `onFloorChange`
+  tells the floor socket to read its walk grid again. The old fixed furniture
+  (`PROPS`) is granted as plain decorations in `advanceCasino` when a room is owned (unique (player,
+  grant_key): once each).
+- **The Decor upgrade is gone.** A casino that had it is refunded once (`refundDecor`: `refund:decor` chips,
+  guarded by a conditional update that drops `upgrades.decor` and by deleting its construction rows) on the
+  owner's first read (`getTycoonState` is a `commitCoins` unit for that; that read carries `decorRefund`);
+  other writes keep the old level on the row until then (`Casino.legacyDecor`), and a gem skip can't finish a
+  Decor level.
+
 - Economy v2, "claim coins, win chips": coins come only from the cashier cage (guest income,
   **coins**, collected at the cage) and gem converts; every payout is **chips** (solo and live). Chips build
   (zones, games, levels, upgrades, ad campaigns) and can be bet; they never turn back into coins. Gems never
@@ -131,12 +161,13 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
   plus guest income since; collect is a compare-and-set on `cage_at` and credits coins (`'cage'`).
 - Guest income is the visitor model in `shared/visitors.ts`: every 15-minute tick guests arrive (crowd from
   the seats, prestige, Marketing, Hospitality, the guests ads, a random hour/day mood), roll a tier (Tourist,
-  Regular, High Roller, Whale; richer with prestige: Decor, Hospitality, rooms, top machine levels, wealth ads;
+  Regular, High Roller, Whale; richer with prestige: the richer-guests specials, Hospitality, rooms, top
+  machine levels, wealth ads;
   Whales stay 1-3 hours) and take seats; the luck is a pure function of (state, player seed, tick), so
   `runFloor` is reproducible and additive. The seed is the player id salted with a server-only secret
   (`luckSeed`, `PNX_LUCK_SALT`): never send it to the client. Prices, rewards and previews (`campaignGain`) read
   `expectedPerHour` / the full floor, never a lucky tick. Anything that changes the rate (a build finishing, a
-  rush, a campaign, a house rule) must `accrueCage` up to that moment first; `runFloor` splits at rush and
+  rush, a campaign, a house rule, a special placed or put away) must `accrueCage` up to that moment first; `runFloor` splits at rush and
   campaign ends itself. Persisted accruals write `casino_history` (hour by hour) when the casino is saved
   (`flushHistory`).
 - An idle floor is never full; each guests ad adds its own share of the seats (several kinds run at once,
@@ -148,10 +179,10 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
   pending row (checked and priced in the same transaction; one pending per player, item and target) → hub
   spend → guarded settle that delivers. Retried by the hub-sync sweep.
 - A rush is priced from the best full floor (`rushGems`: every seat taken under the richest rules and every
-  wealth ad the casino can run, for its four hours, × 1.25 at the convert rate), never from the occupancy,
+  wealth ad the casino can run, every special it owns placed, for its four hours, × 1.25 at the convert rate), never from the occupancy,
   rules or ads at purchase: a rush must never be a cheaper way to coins than converting (tested).
 - Tune numbers in `shared/tycoon.ts` (`CHIP_SCALE`, `GUEST_SCALE`, the catalog, campaign `costHours`),
-  `shared/visitors.ts` (tier spends, `VISITOR_MODEL`) and the star thresholds in `shared/stars.ts` with
+  `shared/visitors.ts` (tier spends, `VISITOR_MODEL`), `shared/decor.ts` (specials), `shared/casino-level.ts` (levels) and the star thresholds in `shared/stars.ts` with
   `bun scripts/tycoon-sim.ts [days] [seed] [days after max]` (pace, stars, campaign net, rules by stage, luck)
   and update the tables in the economy doc.
 
@@ -178,7 +209,7 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
 - Ledger category = the game's plain lowercase name (`'dice'`, `'spinata'`, `'convert'`, `'cage'` (old rows: `'allowance'`),
   `'cage'`); the live tables use their slug (`'blackjack'`, `'baccarat'`, `'casino-holdem'`,
   `'three-card-poker'`). Returned money passes `{ refund: true }`. Chip reasons: `bet:<slug>`,
-  `win:<slug>`, `refund:<slug>`, `build:<kind>:<id>`, `campaign:<id>`.
+  `win:<slug>`, `refund:<slug>`, `build:<kind>:<id>`, `campaign:<id>`, `decor:<type>`.
 
 ## Concurrency (SQLite, one writer)
 

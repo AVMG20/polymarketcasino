@@ -2,10 +2,11 @@
 import { HardHat, ListChecks, Megaphone, RotateCcw, ScrollText } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import type { MissionId } from '#shared/missions'
-import { findTycoonGame, type BuildKind, type ZoneId } from '#shared/tycoon'
+import { homeSpot, type Tile } from '#shared/floor/layout'
+import type { BuildKind, ZoneId } from '#shared/tycoon'
 import CasinoFloor from '~/components/tycoon/CasinoFloor.vue'
 import { QUICK_GAMES } from '~/utils/game-embed'
-import { COLLECT_LAND_MS, type FloorApi, type FloorFocusOptions, type FloorTarget } from '~/utils/floor/types'
+import { COLLECT_LAND_MS, type ArrangeItem, type FloorApi, type FloorFocusOptions, type FloorTarget } from '~/utils/floor/types'
 
 /** My Casino: the floor fills the screen, the HUD and the sheets sit on top. */
 const route = useRoute()
@@ -35,6 +36,7 @@ const campaignsOpen = ref(false)
 const buildersOpen = ref(false)
 const missionsOpen = ref(false)
 const card = ref<{ kind: BuildKind, id: string } | null>(null)
+const arrange = useArrange()
 
 const playSlug = computed(() => {
     const slug = route.query.play
@@ -85,9 +87,12 @@ function onFloorReady() {
     if (pendingWalk) walkFloor(pendingWalk)
     pendingFocus = null
     pendingWalk = null
+    // A new or rebuilt floor gets arrange mode back, with what was in hand.
+    syncArrange()
 }
 
 function openGame(slug: string) {
+    arrange.active.value = false
     cosmetics.hide()
     houseRules.open.value = false
     gamesOpen.value = false
@@ -126,6 +131,7 @@ watch(() => route.query.build, (value) => {
 }, { immediate: true })
 
 function openCard(kind: BuildKind, id: string) {
+    arrange.active.value = false
     houseRules.open.value = false
     gamesOpen.value = false
     buildOpen.value = false
@@ -138,6 +144,7 @@ function openCard(kind: BuildKind, id: string) {
 }
 
 function openMenu(tab = 'games') {
+    arrange.active.value = false
     cosmetics.hide()
     houseRules.open.value = false
     card.value = null
@@ -150,6 +157,7 @@ function openMenu(tab = 'games') {
 
 /** The small cards over the floor: the ad campaigns, the builders list and the daily missions. */
 function openPanel(panel: 'campaigns' | 'builders' | 'missions') {
+    arrange.active.value = false
     cosmetics.hide()
     card.value = null
     gamesOpen.value = false
@@ -210,7 +218,161 @@ onBeforeUnmount(() => {
     coinsHeld.value = null
 })
 
+// ── Arrange mode: move games, place decorations ─────────────────────────
+/** What the player holds on the floor (the engine draws the ghost), and why it can't go where it hovers. */
+const carrying = ref<ArrangeItem | null>(null)
+const problem = ref<string | null>(null)
+const arranging = ref(false)
+
+function closePanels() {
+    cosmetics.hide()
+    houseRules.open.value = false
+    card.value = null
+    gamesOpen.value = false
+    buildOpen.value = false
+    campaignsOpen.value = false
+    buildersOpen.value = false
+    missionsOpen.value = false
+    arrange.levelOpen.value = false
+}
+
+/** The tile the ghost was last over, so a rebuilt floor puts it back there. */
+let carryAt: Tile | null = null
+
+/**
+ * Tell the floor the whole arrange state (on, what is in hand, where). Safe to
+ * repeat: the floor ignores the item it already carries. Sent on every change,
+ * when the floor is ready and after it rebuilds itself.
+ */
+function syncArrange() {
+    if (!floorReady.value || !floor.value) return
+    if (!arrange.active.value) return floor.value.arrange(null)
+    const item = carrying.value
+    floor.value.arrange(item ? { carrying: item, at: carryAt ?? originOf(item) } : { carrying: null })
+    takePending()
+}
+
+watch(() => arrange.active.value, (on) => {
+    carrying.value = null
+    problem.value = null
+    carryAt = null
+    if (on) {
+        if (playSlug.value) closeGame()
+        closePanels()
+    } else {
+        arrange.shopOpen.value = false
+        arrange.pending.value = null
+    }
+    // After the HUD/overlay swap has rendered, so the floor is sure to be mounted.
+    void nextTick(syncArrange)
+})
+// The shop hands over a decoration (new, or from storage) while arrange mode is already on.
+watch(() => arrange.pending.value, item => item && arrange.active.value && takePending())
+
+function takePending() {
+    const item = arrange.pending.value
+    if (!item || !floorReady.value) return
+    arrange.pending.value = null
+    carry(item)
+}
+
+/** Where an item stands now (the ghost starts there); null: the middle of the screen. */
+function originOf(item: ArrangeItem): Tile | null {
+    if (item.kind === 'game') return tycoon.placements.value[item.id] ?? homeSpot(item.id)
+    if (item.kind === 'decor') {
+        const owned = tycoon.decor.value.find(d => d.id === item.id)
+        return owned && owned.x !== null && owned.y !== null ? { x: owned.x, y: owned.y } : null
+    }
+    return null
+}
+
+function carry(item: ArrangeItem) {
+    carrying.value = item
+    problem.value = null
+    carryAt = null
+    floor.value?.arrange({ carrying: item, at: originOf(item) })
+}
+
+function onArrangePick(item: ArrangeItem) {
+    // The floor lifted it: the page always follows, so both agree on what is in
+    // hand (a save still in flight just finishes first: place and buyDecor wait for it).
+    if (!arrange.active.value) return void floor.value?.arrange(null)
+    carry(item)
+}
+
+function onArrangeHover(at: Tile | null, why: string | null) {
+    if (at) carryAt = at
+    problem.value = why
+}
+
+/** Dropped on a free spot: move it, place it or buy it. A failed drop flies back with a shake (and a toast says why). */
+async function onArrangeDrop(item: ArrangeItem, at: Tile) {
+    carrying.value = null
+    carryAt = null
+    problem.value = null
+    arranging.value = true
+    const response = item.kind === 'game' ? await tycoon.place({ item: 'game', id: item.id, x: at.x, y: at.y })
+        : item.kind === 'decor' ? await tycoon.place({ item: 'decor', id: item.id, x: at.x, y: at.y })
+            : await tycoon.buyDecor({ type: item.type, x: at.x, y: at.y })
+    arranging.value = false
+    if (!response) {
+        floor.value?.arrange({ carrying: null })
+        return
+    }
+    sound.play(item.kind === 'new' ? 'kaching' : 'hammer')
+}
+
+/** Put the decoration in hand back into storage. */
+async function storeCarried() {
+    const item = carrying.value
+    if (!item || item.kind !== 'decor') return
+    arranging.value = true
+    const response = await tycoon.place({ item: 'decor', id: item.id, store: true })
+    arranging.value = false
+    // Stored: the new scene no longer has it, so nothing flies back.
+    await nextTick()
+    carrying.value = null
+    carryAt = null
+    problem.value = null
+    floor.value?.arrange({ carrying: null })
+    if (response) sound.play('collect')
+}
+
+function cancelCarry() {
+    carrying.value = null
+    carryAt = null
+    problem.value = null
+    floor.value?.arrange({ carrying: null })
+}
+
+function openDecorShop() {
+    if (carrying.value) cancelCarry()
+    arrange.shopOpen.value = true
+}
+
+// Escape: drop what is in hand, then leave arrange mode. Capture: this runs before the floor's own Escape.
+if (import.meta.client) {
+    useEventListener(window, 'keydown', (event: KeyboardEvent) => {
+        if (event.key !== 'Escape' || !arrange.active.value || arrange.shopOpen.value) return
+        if (carrying.value) cancelCarry()
+        else arrange.active.value = false
+    }, { capture: true })
+}
+
+/** The floor put the item back by itself (Escape on the canvas). */
+function onArrangeCancel() {
+    carrying.value = null
+    carryAt = null
+    problem.value = null
+}
+onBeforeUnmount(() => {
+    arrange.active.value = false
+    arrange.shopOpen.value = false
+    arrange.levelOpen.value = false
+})
+
 function onInteract(target: FloorTarget) {
+    if (arrange.active.value) return
     switch (target.kind) {
         case 'game': {
             const built = tycoon.state.value && (tycoon.state.value.games[target.id] ?? 0) >= 1
@@ -295,7 +457,7 @@ function retry() {
 }
 
 const hudPopover = ref(false)
-const overlayOpen = computed(() => !floorReady.value || buildOpen.value || gamesOpen.value || campaignsOpen.value || buildersOpen.value || !!card.value || !!playSlug.value || hudPopover.value || cosmetics.wardrobe.value.open || missionsOpen.value || houseRules.open.value || leaderboard.open.value || !!tycoon.welcome.value)
+const overlayOpen = computed(() => !floorReady.value || arrange.active.value || arrange.levelOpen.value || buildOpen.value || gamesOpen.value || campaignsOpen.value || buildersOpen.value || !!card.value || !!playSlug.value || hudPopover.value || cosmetics.wardrobe.value.open || missionsOpen.value || houseRules.open.value || leaderboard.open.value || !!tycoon.welcome.value)
 
 onMounted(() => {
     void tycoon.refresh({ welcome: true })
@@ -307,7 +469,23 @@ useHead({ title: 'My Casino' })
 
 <template>
   <div data-floor-root class="relative h-[calc(100dvh-var(--topbar-h,3.5rem))] overflow-hidden bg-[#1c1424]" @click.capture="onTap">
-    <CasinoFloor v-if="scene" :key="floorKey" ref="floor" class="absolute inset-0" :scene="scene" :paused="fullScreenGame" :remotes="presence.remotes.value" @interact="onInteract" @move="presence.move" @ready="onFloorReady" @error="onFloorError" />
+    <CasinoFloor
+      v-if="scene"
+      :key="floorKey"
+      ref="floor"
+      class="absolute inset-0"
+      :scene="scene"
+      :paused="fullScreenGame"
+      :remotes="presence.remotes.value"
+      @interact="onInteract"
+      @move="presence.move"
+      @ready="onFloorReady"
+      @error="onFloorError"
+      @arrange-pick="onArrangePick"
+      @arrange-hover="onArrangeHover"
+      @arrange-drop="onArrangeDrop"
+      @arrange-cancel="onArrangeCancel"
+    />
 
     <div v-if="!scene || !floorReady" class="g-ui absolute inset-0 z-20 grid place-items-center bg-[#1c1424]">
       <div v-if="(!scene && tycoon.loadFailed.value) || floorFailed" class="flex flex-col items-center gap-4 px-6 text-center">
@@ -323,7 +501,8 @@ useHead({ title: 'My Casino' })
     </div>
 
     <template v-if="scene">
-      <TycoonHud @build="openMenu()" @games="gamesOpen = true" @cage="walkFloor({ kind: 'cage' })" @shop="openMenu('gems')" @zone="id => openCard('zone', id)" @popover="open => (hudPopover = open)" @campaigns="openPanel('campaigns')" @missions="openPanel('missions')" />
+      <TycoonArrangeBar v-if="arrange.active.value" :carrying="carrying" :problem="problem" :busy="arranging" @done="arrange.active.value = false" @cancel="cancelCarry" @store="storeCarried" @shop="openDecorShop" @take="carry" />
+      <TycoonHud v-else @build="openMenu()" @games="gamesOpen = true" @cage="walkFloor({ kind: 'cage' })" @shop="openMenu('gems')" @zone="id => openCard('zone', id)" @popover="open => (hudPopover = open)" @campaigns="openPanel('campaigns')" @missions="openPanel('missions')" @level="arrange.levelOpen.value = true" @decor="arrange.start()" />
       <TycoonOnboarding ref="onboarding" :paused="overlayOpen" @cage="walkFloor({ kind: 'cage' })" @games="gamesOpen = true" @limbo="openCard('game', 'limbo')" @build="(kind, id) => openCard(kind, id)" />
     </template>
 
@@ -343,7 +522,11 @@ useHead({ title: 'My Casino' })
     <TycoonDrawer :open="missionsOpen" card dismissable title="Missions" :icon="ListChecks" color="#ff9a2e" height="80dvh" @close="missionsOpen = false">
       <TycoonMissions @go="goMission" />
     </TycoonDrawer>
+    <TycoonDecorShop :open="arrange.shopOpen.value" @close="arrange.shopOpen.value = false" />
+    <TycoonLevelSheet />
     <TycoonCelebration />
+    <TycoonLevelUp />
+    <TycoonDecorRefundNote />
     <TycoonWelcomeBack @collect="walkFloor({ kind: 'cage' })" @upgrade-cage="openCard('upgrade', 'cage')" @campaigns="openPanel('campaigns')" />
     <TycoonGameOverlay :slug="playSlug" @close="closeGame" @build="buildFromGame" />
   </div>

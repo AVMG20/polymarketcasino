@@ -61,7 +61,7 @@ const RAIN = Array.from({ length: 42 }, (_, i) => ({
           </span>
           <span class="g-title text-3xl leading-none text-white uppercase sm:text-5xl">{{ moment.title }}</span>
         </div>
-        <p class="g-title mt-3 text-lg text-[#ffe066] uppercase [text-shadow:0_2px_0_rgb(0_0_0/0.6)]">New games to build</p>
+        <p class="g-title mt-3 text-lg text-[#ffe066] uppercase [text-shadow:0_2px_0_rgb(0_0_0/0.6)]">More floor to fill</p>
       </div>
     </div>
   </Transition>

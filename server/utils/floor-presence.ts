@@ -197,6 +197,11 @@ export function createFloorPresence(source: PresenceSource, now: () => number = 
         open,
         message,
         close,
+        /** Read the casino's walkable tiles again on the next move (something was built, placed or put away). */
+        invalidate(casinoId: string) {
+            const room = rooms.get(casinoId)
+            if (room) room.walkable = null
+        },
         /** The players in a casino's room now (tests, diagnostics). */
         members(casinoId: string): PresenceMember[] {
             return [...(rooms.get(casinoId)?.members.values() ?? [])].map(view)

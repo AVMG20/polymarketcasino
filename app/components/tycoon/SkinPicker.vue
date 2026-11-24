@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { Check, Paintbrush, Sparkles } from 'lucide-vue-next'
-import { cosmeticsIn, findCosmetic, isFree, type CosmeticDef, type SkinId } from '#shared/cosmetics'
+import { BASIC_SKINS, cosmeticsIn, findCosmetic, isFree, type CosmeticDef, type SkinId } from '#shared/cosmetics'
 import type { ZoneId } from '#shared/tycoon'
 
 /**
- * Zone skins for one zone. Hovering a skin (mouse) or tapping it shows it on
+ * Zone skins for one zone: Classic, the other rooms' colours (free) and the
+ * themed skins. Hovering a skin (mouse) or tapping it shows it on
  * the floor right away; leaving the picker without buying puts the zone's
  * own skin back. One big button under the grid: Use (owned), or the price in
  * chips or gems.
@@ -13,7 +14,8 @@ const props = defineProps<{ zone: ZoneId }>()
 
 const tycoon = useTycoon()
 const cosmetics = useCosmetics()
-const skins = cosmeticsIn('skin')
+/** Every skin, minus the basic skin that is this zone's own colours (Classic already is). */
+const skins = computed(() => cosmeticsIn('skin').filter(item => BASIC_SKINS[item.id as SkinId] !== props.zone))
 const worn = computed(() => cosmetics.skinOn(props.zone))
 /** The skin tapped (stays on the floor while the picker is open). */
 const picked = ref<SkinId>(worn.value)

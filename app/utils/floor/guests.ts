@@ -76,6 +76,8 @@ export class GuestCrowd {
      */
     earnPerSec: VisitorCounts = { ...ZERO }
     onEarn: ((x: number, y: number, amount: number) => void) | null = null
+    /** 0..1: arrange mode fades the crowd so the furniture reads. */
+    visibility = 1
     private seq = Math.floor(Math.random() * LOOKS_PER_TIER)
     private initialised = false
 
@@ -304,10 +306,8 @@ export class GuestCrowd {
             const g = this.guests[i]!
             const arrived = g.actor.update(dt)
             if (g.glow) g.glow.alpha = this.reduced ? 0.4 : 0.34 + Math.sin(this.time * 2.2 + i) * 0.1
-            if (g.fade < 1 && g.state !== 'leave') {
-                g.fade = Math.min(1, g.fade + dt * 2)
-                g.actor.container.alpha = g.fade
-            }
+            if (g.fade < 1 && g.state !== 'leave') g.fade = Math.min(1, g.fade + dt * 2)
+            g.actor.container.alpha = Math.max(0, g.fade) * this.visibility
             switch (g.state) {
                 case 'idle': {
                     g.timer -= dt
@@ -375,7 +375,6 @@ export class GuestCrowd {
                     const t = g.actor.tile
                     if (!g.actor.moving || (t.x === SPAWN.x && t.y === SPAWN.y)) {
                         g.fade -= dt * 2.5
-                        g.actor.container.alpha = Math.max(0, g.fade)
                         if (g.fade <= 0) {
                             for (const b of this.bubbles) if (b.actor === g.actor) b.actor = null
                             g.actor.destroy()
@@ -406,7 +405,7 @@ export class GuestCrowd {
             b.t += dt
             const p = b.actor.container.position
             b.box.position.set(p.x, p.y - 66 - Math.min(1, b.t * 6) * 4)
-            b.box.alpha = b.t > 2.4 ? Math.max(0, 1 - (b.t - 2.4) / 0.4) : Math.min(1, b.t * 6)
+            b.box.alpha = (b.t > 2.4 ? Math.max(0, 1 - (b.t - 2.4) / 0.4) : Math.min(1, b.t * 6)) * this.visibility
             if (b.t > 2.8) b.actor = null
         }
     }

@@ -230,6 +230,13 @@ export const casinoProfiles = sqliteTable('casino_profiles', {
     door: text('door', { enum: ['open', 'limit', 'closed'] }).notNull().default('open'),
     vip: integer('vip', { mode: 'boolean' }).notNull().default(false),
     rulesAt: integer('rules_at', { mode: 'timestamp_ms' }),
+    /**
+     * Where games were moved or first built: { slug: { x, y } } origin tiles
+     * (shared/floor/placement.ts). A built game missing here stands at its
+     * home spot. Written only inside a BEGIN IMMEDIATE transaction that checked
+     * the spot against the rows it read.
+     */
+    placements: text('placements', { mode: 'json' }).$type<Record<string, { x: number, y: number }>>().notNull().default({}),
     createdAt: createdAt()
 })
 
@@ -432,4 +439,30 @@ export const dailyMissions = sqliteTable(
         createdAt: createdAt()
     },
     table => [primaryKey({ columns: [table.playerId, table.day, table.mission] })]
+)
+
+/**
+ * Decorations a casino owns (shared/decor.ts): bought with chips or granted
+ * as free furniture. Placed at (x, y), or put away when both are null. Never
+ * sold or deleted. `special` repeats the type for a special (null for a plain
+ * one), so the unique (player, special) index is the guard that a casino owns
+ * one of each; `grant_key` names the free furniture it came from (null when
+ * bought), so the unique (player, grant_key) index gives each grant once.
+ */
+export const casinoDecor = sqliteTable(
+    'casino_decor',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        type: text('type').notNull(),
+        x: integer('x'),
+        y: integer('y'),
+        special: text('special'),
+        grantKey: text('grant_key'),
+        createdAt: createdAt()
+    },
+    table => [
+        uniqueIndex('casino_decor_special_idx').on(table.playerId, table.special),
+        uniqueIndex('casino_decor_grant_idx').on(table.playerId, table.grantKey)
+    ]
 )

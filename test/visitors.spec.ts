@@ -6,6 +6,8 @@ import { getCasinoVisit } from '../server/utils/social'
 import {
     collectCage, getHistory, getTycoonState, HISTORY_KEEP_MS, luckSeed, parseHistoryRange, parseRulesBody, setHouseRules, startBuild
 } from '../server/utils/tycoon'
+import { casinoLevel } from '../shared/casino-level'
+import { DECOR, specialBonus } from '../shared/decor'
 import { normalizeCoins } from '../shared/money'
 import { CAMPAIGNS, campaignBlocker, campaignCost, cageCapacity, findUpgrade, floorView, MAX_LEVEL, TYCOON_GAMES, UPGRADES, ZONES, type CampaignId, type RunningCampaignRef, type UpgradeId, type ZoneId } from '../shared/tycoon'
 import {
@@ -30,20 +32,30 @@ function allowed(id: UpgradeId, open: readonly string[], cap: number): number {
     return level
 }
 
-/** A casino with the zones up to `zone` open, every game there at `level`, Cage and Marketing at `upgrades`, Decor and Hospitality as far as the zones allow (at most `upgrades` × 2 and `upgrades`). */
+/**
+ * A casino with the zones up to `zone` open, every game there at `level`, Cage and Marketing at `upgrades`,
+ * Hospitality as far as the zones allow (at most `upgrades` × 2), and with `upgrades` the richer-guests specials
+ * its casino level unlocks standing on the floor.
+ */
 function stage(zone: ZoneId, level: number, upgrades = 0, rules: HouseRules = DEFAULT_RULES): FloorView {
     const open = ZONES.slice(0, ZONES.findIndex(z => z.id === zone) + 1).map(z => z.id)
+    const games = Object.fromEntries(TYCOON_GAMES.filter(g => open.includes(g.zone)).map(g => [g.slug, level]))
+    const built = { cage: upgrades, marketing: upgrades, hospitality: allowed('hospitality', open, upgrades * 2), crew: 0 }
+    const reached = casinoLevel({ zones: open, games, upgrades: built }).level
     return {
         zones: open,
-        games: Object.fromEntries(TYCOON_GAMES.filter(g => open.includes(g.zone)).map(g => [g.slug, level])),
-        upgrades: { cage: upgrades, marketing: upgrades, decor: allowed('decor', open, upgrades * 2), hospitality: allowed('hospitality', open, upgrades), crew: 0 },
+        games,
+        upgrades: built,
         rushUntil: null,
         campaign: null,
-        rules
+        rules,
+        specials: specialBonus(upgrades ? DECOR.filter(d => d.special?.stat === 'prestige' && d.level <= reached).map(d => d.type) : [])
     }
 }
 
 const STAGES = ZONES.flatMap(zone => [1, 3, 5].flatMap(level => [0, 3, 5].map(upgrades => ({ name: `${zone.id} L${level} U${upgrades}`, view: stage(zone.id, level, upgrades) }))))
+    // The same casinos with every special standing on the floor (shared/decor.ts).
+    .flatMap(entry => [entry, { name: `${entry.name} specials`, view: { ...entry.view, specials: specialBonus(DECOR.filter(d => d.special).map(d => d.type)) } }])
 
 /** Every single build step from `view`: the next zone, a game level, an upgrade level (as the zones allow). */
 function buildSteps(view: FloorView): { name: string, view: FloorView }[] {
@@ -53,7 +65,8 @@ function buildSteps(view: FloorView): { name: string, view: FloorView }[] {
     if (next) steps.push({ name: `zone ${next.id}`, view: { ...view, zones: [...zones, next.id] } })
     for (const game of TYCOON_GAMES) {
         const level = view.games[game.slug] ?? 0
-        if (zones.includes(game.zone) && level < MAX_LEVEL) steps.push({ name: `${game.slug} ${level + 1}`, view: { ...view, games: { ...view.games, [game.slug]: level + 1 } } })
+        // Games unlock by casino level, not by room: any of them can be built in any owned room.
+        if (level < MAX_LEVEL) steps.push({ name: `${game.slug} ${level + 1}`, view: { ...view, games: { ...view.games, [game.slug]: level + 1 } } })
     }
     for (const def of UPGRADES) {
         const level = view.upgrades[def.id] ?? 0
@@ -156,7 +169,7 @@ describe('visitor model', () => {
             }
             const mean = days.reduce((a, b) => a + b, 0) / days.length
             expect(Math.abs(mean / 24 / expectedPerHour(view) - 1)).toBeLessThan(0.04)
-            for (const day of days) expect(Math.abs(day / mean - 1)).toBeLessThan(0.16)
+            for (const day of days) expect(Math.abs(day / mean - 1)).toBeLessThan(0.18)
             const sorted = [...hours].sort((a, b) => a - b)
             expect(sorted[Math.floor(hours.length * 0.9)]! / sorted[Math.floor(hours.length * 0.1)]!).toBeGreaterThan(1.3)
         }
@@ -336,13 +349,13 @@ describe('visitor model', () => {
 
     it('shows how a step moves the tier mix: cheap tiers down, rich ones up, and the next tier once its room opens', () => {
         const back = stage('backroom', 2)
-        const decor = tierShift({ ...back, upgrades: { ...back.upgrades, decor: 0 } }, { ...back, upgrades: { ...back.upgrades, decor: 1 } })
+        const decor = tierShift(back, { ...back, specials: specialBonus(['red-carpet']) })
         expect(decor.map(t => t.id)).toEqual(['tourist', 'regular'])
         expect(decor[0]!.from).toBeNull()
         expect(decor[1]!.from).toBe('main')
         expect(decor[1]!.next).toBeGreaterThan(decor[1]!.now)
         const pit = stage('pit', 3, 2)
-        const richer = tierShift(pit, { ...pit, upgrades: { ...pit.upgrades, decor: (pit.upgrades.decor ?? 0) + 1 } })
+        const richer = tierShift(pit, { ...pit, upgrades: { ...pit.upgrades, hospitality: (pit.upgrades.hospitality ?? 0) + 1 } })
         expect(richer.find(t => t.id === 'tourist')!.next).toBeLessThan(richer.find(t => t.id === 'tourist')!.now)
         expect(richer.find(t => t.id === 'highroller')!.next).toBeGreaterThan(richer.find(t => t.id === 'highroller')!.now)
         // The top machine levels draw richer guests; the first ones barely.

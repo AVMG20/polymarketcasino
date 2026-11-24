@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ArrowBigUpDash, Hammer, LayoutGrid, Store } from 'lucide-vue-next'
+import { gameUnlockLevel } from '#shared/casino-level'
 import { TYCOON_GAMES, UPGRADES, ZONES, type BuildKind } from '#shared/tycoon'
 
 /** The build menu: icon tabs over a grid of tiles; a tile opens its detail card in place. */
@@ -30,7 +31,8 @@ const TABS = [
 const items = computed(() => {
     if (tab.value === 'zones') return ZONES.filter(z => z.requires !== null).map(z => ({ kind: 'zone' as const, id: z.id }))
     if (tab.value === 'upgrades') return UPGRADES.map(u => ({ kind: 'upgrade' as const, id: u.id }))
-    return TYCOON_GAMES.map(g => ({ kind: 'game' as const, id: g.slug }))
+    // Games in the order the casino level unlocks them.
+    return [...TYCOON_GAMES].sort((a, b) => gameUnlockLevel(a.slug) - gameUnlockLevel(b.slug)).map(g => ({ kind: 'game' as const, id: g.slug }))
 })
 const ready = computed(() => {
     const counts: Record<string, number> = { zone: 0, game: 0, upgrade: 0 }

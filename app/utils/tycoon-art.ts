@@ -1,9 +1,11 @@
 import type { Component } from 'vue'
 import { Castle, Cherry, Crown, DoorClosed, Gem, HardHat, LayoutGrid, LockOpen, Megaphone, ScrollText, Spade, Sparkles, Store, Users, Vault, Wine } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
+import { findDecor, placedSpecials, specialBonus, type DecorType } from '#shared/decor'
+import { ZONE_RECTS } from '#shared/floor/layout'
 import { formatCoins } from '#shared/money'
 import {
-    cageCapacity, CAMPAIGNS, campaignEffect, seatsOf, findTycoonGame, findUpgrade, findZone, floorSeats, floorView, fullIncomePerHour, guestsPerHour, TYCOON_GAMES, visitorCount,
+    cageCapacity, CAMPAIGNS, HOSPITALITY_LEVELS, campaignEffect, seatsOf, findTycoonGame, findUpgrade, findZone, floorSeats, floorView, fullIncomePerHour, guestsPerHour, visitorCount,
     type BuildKind, type CampaignId, type TycoonState, type UpgradeId, type VisitorView, type ZoneId
 } from '#shared/tycoon'
 import { expectedFloor, richerLevel, RULE_UNLOCKS, seatedTotal, tierOdds, tierShift, VISITOR_MODEL, VISITOR_TIERS, type VisitorTierDef } from '#shared/visitors'
@@ -13,7 +15,7 @@ import CasinoCoinIcon from '~/components/casino/CoinIcon.vue'
 /** The hand-drawn pictures of TycoonIllo (zones, upgrades, gem shop items). */
 export type IlloName =
     | 'backroom' | 'main' | 'pit' | 'lounge' | 'highlimit' | 'penthouse'
-    | 'cage' | 'marketing' | 'decor' | 'hospitality' | 'crew'
+    | 'cage' | 'marketing' | 'hospitality' | 'crew'
     | 'rush' | 'builder' | 'golden' | 'wardrobe'
     | 'dice' | 'cherry' | 'bigwin' | 'cards' | 'coins' | 'visit' | 'chest'
 
@@ -41,7 +43,6 @@ const ZONE_ART: Record<string, { icon: Component, color: string }> = {
 const UPGRADE_ART: Record<string, { icon: Component, color: string }> = {
     cage: { icon: Vault, color: '#f59e0b' },
     marketing: { icon: Megaphone, color: '#3b82f6' },
-    decor: { icon: Sparkles, color: '#a855f7' },
     hospitality: { icon: Wine, color: '#ff5470' },
     crew: { icon: HardHat, color: '#f59e0b' }
 }
@@ -85,7 +86,6 @@ const fillPct = (share: number) => `${Math.round(share * 100)}%`
 const unlockedAt = (level: number) => CAMPAIGNS.find(c => c.requiresMarketing > 0 && c.requiresMarketing === level) ?? null
 const RULE_NAMES: Record<string, string> = { door: 'Door policy', vip: 'VIP room' }
 /** What each Hospitality level adds. */
-const HOSPITALITY_LEVELS = ['Free drinks', 'Free snacks and drinks', 'A buffet', 'Fine dining', 'A champagne bar'] as const
 
 /** The tile badge of a wealth step: the richest open tier's share after it (▲), the title says now → next. */
 function richBadge(before: StatState, after: StatState, what: string): BuildEffect {
@@ -111,6 +111,93 @@ type StatState = VisitorView & Partial<Pick<TycoonState, 'builders'>>
 /** Expected coins an hour (no luck) of a state at `now`: what the HUD's "avg" shows. */
 function expected(state: StatState, now: number): number {
     return guestsPerHour(state, now)
+}
+
+/** A state whose floor has exactly these specials standing (put-away ones don't count). */
+function withSpecials(state: StatState, types: readonly string[]): StatState {
+    return { ...state, specials: specialBonus(types) }
+}
+
+/**
+ * Coins an hour (expected, no luck) a special adds while it stands on the
+ * floor, against the casino as it is: the same measure a build's card shows.
+ * A placed one counts what it adds now; one not on the floor what it would.
+ */
+export function specialGain(state: StatState, type: DecorType, now: number): number {
+    const others = placedSpecials(state.decor ?? []).filter(t => t !== type)
+    const gain = expected(withSpecials(state, [...others, type]), now) - expected(withSpecials(state, others), now)
+    return Math.max(0, Math.round(gain))
+}
+
+/**
+ * What a special does, as one stat: the rarity lift (how many more of the
+ * richest guest tier the casino gets, against the floor without it), the
+ * next tier and its room when only Tourists come yet, or the spend lift.
+ */
+export type SpecialLift =
+    | { kind: 'rarity', tier: VisitorTierDef, rise: number }
+    | { kind: 'rarity-locked', tier: VisitorTierDef, room: string }
+    | { kind: 'spend', share: number }
+
+/** The rarity lift of going from the `without` specials to the `with` ones: the richest open tier above Tourists. */
+function rarityLift(state: StatState, without: readonly string[], withThem: readonly string[], now: number): SpecialLift {
+    const before = tierOdds(floorView(withSpecials(state, without)), now)
+    const after = tierOdds(floorView(withSpecials(state, withThem)), now)
+    for (const tier of [...VISITOR_TIERS].reverse()) {
+        if (tier.id === 'tourist' || !(before[tier.id] > 0)) continue
+        return { kind: 'rarity', tier, rise: after[tier.id] / before[tier.id] - 1 }
+    }
+    const next = VISITOR_TIERS.find(tier => tier.unlockZone && !(state.zones ?? []).includes(tier.unlockZone as ZoneId)) ?? VISITOR_TIERS[1]!
+    return { kind: 'rarity-locked', tier: next, room: findZone(next.unlockZone ?? '')?.name ?? 'the next room' }
+}
+
+/** One special's stat, against the casino as it is (a placed one counts what it does now). */
+export function specialLift(state: StatState, type: DecorType, now: number): SpecialLift | null {
+    const special = findDecor(type)?.special
+    if (!special) return null
+    if (special.stat === 'spend') return { kind: 'spend', share: special.bonus }
+    const others = placedSpecials(state.decor ?? []).filter(t => t !== type)
+    return rarityLift(state, others, [...others, type], now)
+}
+
+/** What the specials on the floor do together: their rarity lift and their spend lift (null when none of that kind stands). */
+export function specialsLift(state: StatState, now: number): { rarity: SpecialLift | null, spend: SpecialLift | null } {
+    const placed = placedSpecials(state.decor ?? [])
+    const bonus = specialBonus(placed)
+    return {
+        rarity: bonus.prestige > 0 ? rarityLift(state, [], placed, now) : null,
+        spend: bonus.spend > 0 ? { kind: 'spend', share: bonus.spend } : null
+    }
+}
+
+/**
+ * What a set of specials standing on the floor does together, against the
+ * floor with none: the rarity lift of every open tier above Tourists (in tier
+ * order), the spend lift, and the coins an hour.
+ */
+export function specialsSummary(state: StatState, types: readonly string[], now: number): { lifts: SpecialLift[], gain: number } {
+    const lifts: SpecialLift[] = []
+    const bonus = specialBonus(types)
+    if (bonus.prestige > 0) {
+        const before = tierOdds(floorView(withSpecials(state, [])), now)
+        const after = tierOdds(floorView(withSpecials(state, types)), now)
+        for (const tier of VISITOR_TIERS) {
+            if (tier.id === 'tourist' || !(before[tier.id] > 0)) continue
+            lifts.push({ kind: 'rarity', tier, rise: after[tier.id] / before[tier.id] - 1 })
+        }
+        // Only Tourists come yet: say which room opens the next tier.
+        if (!lifts.length) lifts.push(rarityLift(state, [], types, now))
+    }
+    if (bonus.spend > 0) lifts.push({ kind: 'spend', share: bonus.spend })
+    const gain = types.length ? Math.max(0, Math.round(expected(withSpecials(state, types), now) - expected(withSpecials(state, []), now))) : 0
+    return { lifts, gain }
+}
+
+/** Coins an hour the specials standing on the floor add together. */
+export function specialsGain(state: StatState, now: number): number {
+    const placed = placedSpecials(state.decor ?? [])
+    if (!placed.length) return 0
+    return Math.max(0, Math.round(expected(withSpecials(state, placed), now) - expected(withSpecials(state, []), now)))
 }
 
 /** A state with an upgrade at `level`. */
@@ -196,15 +283,21 @@ export function buildHeadline(kind: BuildKind, id: string, level: number): strin
     return level + 1 >= max ? 'Max level: draws High Rollers and Whales ▲' : `Level ${level + 1}: draws richer guests ▲`
 }
 
+/** Floor tiles a room adds (games and decorations stand anywhere in the rooms you own). */
+function floorTiles(id: string): number {
+    const r = ZONE_RECTS[id as ZoneId]
+    return r ? r.w * r.h : 0
+}
+
 /** What the next level of `kind:id` (now at `level`) adds. */
 export function buildEffects(kind: BuildKind, id: string, level: number, state: StatState | null = null, now = Date.now()): BuildEffect[] {
     const next = level + 1
     if (kind === 'zone') {
-        const games = TYCOON_GAMES.filter(game => game.zone === id).length
+        const tiles = floorTiles(id)
         const tier = VISITOR_TIERS.find(t => t.unlockZone === id)
         return [
             ...(tier ? [{ icon: Users, text: `${tier.name}s`, title: `${tier.name}s start to visit (${formatCoins(tier.spend)} coins an hour each)`, color: tier.color }] : []),
-            ...(games ? [{ icon: LayoutGrid, text: `+${games}`, title: `Room for ${games} games`, color: '#ffc93a' }] : []),
+            ...(tiles ? [{ icon: LayoutGrid, text: `+${tiles}`, title: `${tiles} more tiles of floor for games and decorations`, color: '#ffc93a' }] : []),
             ...(state && !tier ? [richBadge(state, withZone(state, id), 'A new room makes the casino classier')] : [])
         ]
     }
@@ -234,10 +327,9 @@ export function buildEffects(kind: BuildKind, id: string, level: number, state: 
                 ...(unlock ? [{ icon: LockOpen, text: unlock.name, title: `Unlocks the ${unlock.name} campaign`, color: '#ffc93a' }] : [])
             ]
         }
-        case 'decor':
         case 'hospitality': {
             if (!state) return [{ icon: Sparkles, text: 'Richer', title: findUpgrade(id)?.description ?? 'Richer guests', color: '#c084fc' }]
-            return [richBadge(state, withUpgrade(state, id as UpgradeId, next), id === 'decor' ? 'Richer guests' : 'More and richer guests')]
+            return [richBadge(state, withUpgrade(state, 'hospitality', next), 'More and richer guests')]
         }
         case 'crew':
             return [{ icon: HardHat, text: '+1', title: 'One more builder: one more construction at once', color: '#ffc93a' }]
@@ -291,11 +383,11 @@ function cageRow(before: StatState, after: StatState, now: number): BuildStat {
 export function buildStats(kind: BuildKind, id: string, level: number, state: StatState | null, now: number): BuildStat[] {
     const next = level + 1
     if (kind === 'zone') {
-        const games = TYCOON_GAMES.filter(game => game.zone === id).length
+        const tiles = floorTiles(id)
         const tier = VISITOR_TIERS.find(t => t.unlockZone === id)
         const rule = RULE_UNLOCKS.find(r => r.zone === id)
         return [
-            ...(games ? [{ icon: LayoutGrid, label: 'Room for games', now: null, next: String(games), color: '#ffc93a' }] : []),
+            ...(tiles ? [{ icon: LayoutGrid, label: 'Floor space', now: null, next: `+${tiles} tiles`, color: '#ffc93a', title: 'More floor for games and decorations: place them anywhere in a room you own' }] : []),
             ...(tier ? [{ icon: Users, label: 'New guests', now: null, next: `${tier.name}s`, color: tier.color, title: `${tier.name}s start to visit: ${formatCoins(tier.spend)} coins an hour each` }] : []),
             ...(rule ? [{ icon: ScrollText, label: 'House rule', now: null, next: RULE_NAMES[rule.rule] ?? rule.rule, color: '#a879ff', title: `Unlocks the ${RULE_NAMES[rule.rule] ?? rule.rule} house rule` }] : []),
             ...(state ? tierRows(state, withZone(state, id), now) : [])
@@ -316,7 +408,7 @@ export function buildStats(kind: BuildKind, id: string, level: number, state: St
         return [
             // One income number, the same one the tile's badge shows; the casino total lives in the HUD.
             { icon: CasinoCoinIcon, label: 'This game earns', now: level > 0 ? `${formatCoins(gameNow)}/h` : null, next: `${formatCoins(gameNext)}/h`, trend: Math.sign(Math.round(gameNext - gameNow)), color: '#ffc93a', title: `Coins an hour this game brings into your cage on average, now and after this step: it earns by its seats (${seatsOf(id, Math.max(1, level))} now)` },
-            { icon: Users, label: 'Guests / seats', now: `${visitorCount(state, now)}/${floorSeats(state)}`, next: `${visitorCount(after, now)}/${floorSeats(after)}`, color: '#7dd3fc', title: 'Guests on your floor on average / seats. Every level adds a seat and makes guests there spend more. Marketing and ads bring more guests, Decor and Hospitality richer ones.' },
+            { icon: Users, label: 'Guests / seats', now: `${visitorCount(state, now)}/${floorSeats(state)}`, next: `${visitorCount(after, now)}/${floorSeats(after)}`, color: '#7dd3fc', title: 'Guests on your floor on average / seats. Every level adds a seat and makes guests there spend more. Marketing and ads bring more guests; Hospitality, specials and wealth ads richer ones.' },
             // The top levels draw richer guests: the whole mix, up and down.
             ...(richerStep(kind, level) ? tierRows(state, after, now) : [])
         ]
@@ -334,11 +426,10 @@ export function buildStats(kind: BuildKind, id: string, level: number, state: St
                 ...(state && after ? [cageRow(state, after, now)] : [])
             ]
         }
-        case 'decor':
         case 'hospitality': {
             if (!state) return [{ icon: Sparkles, label: 'Guests', now: null, next: 'Richer', color: '#c084fc', title: findUpgrade(id)?.description }]
-            const after = withUpgrade(state, id as UpgradeId, next)
-            const rows: BuildStat[] = [...(id === 'hospitality' ? [guestsRow(state, after, now)] : []), ...tierRows(state, after, now)]
+            const after = withUpgrade(state, 'hospitality', next)
+            const rows: BuildStat[] = [guestsRow(state, after, now), ...tierRows(state, after, now)]
             const income = cageRow(state, after, now)
             // No income change yet (only Tourists come, so a richer mix shows once the Main Floor opens): say when, not "0".
             if (income.trend) rows.push(income)
@@ -357,8 +448,7 @@ export function buildStats(kind: BuildKind, id: string, level: number, state: St
 export function buildLine(kind: BuildKind, id: string, level: number): string | null {
     if (kind === 'zone') return 'A new room on your floor'
     if (kind === 'game') return level === 0 ? 'A new machine on your floor' : 'A bigger machine on your floor'
-    if (id === 'decor') return 'Carpet, lights and chandeliers: richer guests'
-    if (id === 'hospitality') return HOSPITALITY_LEVELS[level] ? `${HOSPITALITY_LEVELS[level]}: more and richer guests` : 'More and richer guests'
+    if (id === 'hospitality') return HOSPITALITY_LEVELS[level] ? `Next: ${HOSPITALITY_LEVELS[level]} · more and richer guests` : `${HOSPITALITY_LEVELS.at(-1)}: the best service in town`
     if (id === 'crew') return 'A second crew for good: one more builder'
     if (id === 'marketing') {
         const unlocks = CAMPAIGNS.filter(c => c.requiresMarketing > level).map(c => `${c.name} at Lv ${c.requiresMarketing}`).join(', ')

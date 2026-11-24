@@ -3,7 +3,8 @@ import { Check, Eye, HardHat, LayoutGrid, Lock, Star } from 'lucide-vue-next'
 import { GAMES } from '#shared/games/registry'
 import { formatCoins } from '#shared/money'
 import { nextStar } from '#shared/stars'
-import { findTycoonGame, findZone, TYCOON_GAMES, ZONES } from '#shared/tycoon'
+import { gameUnlockLevel } from '#shared/casino-level'
+import { findTycoonGame, TYCOON_GAMES } from '#shared/tycoon'
 
 /** Every game as a cover tile with its state on your floor. Tap: walk there (built) or its build card. */
 defineProps<{ open: boolean }>()
@@ -14,20 +15,7 @@ const { wallet } = useWallet()
 /** The next star and the chips it takes to hold it (null at ten). */
 const next = computed(() => (wallet.value ? nextStar(wallet.value.stars.level) : null))
 
-const groups = computed(() => {
-    const s = tycoon.state.value
-    const list = ZONES.map(zone => ({
-        id: zone.id,
-        name: zone.name,
-        owned: !!s?.zones.includes(zone.id),
-        art: zoneArt(zone.id),
-        games: TYCOON_GAMES.filter(g => g.zone === zone.id).map(g => GAMES.find(game => game.slug === g.slug)).filter(g => !!g)
-    })).filter(group => group.games.length)
-    const others = GAMES.filter(game => !findTycoonGame(game.slug))
-    return others.length ? [...list, { id: 'more', name: 'More', owned: true, art: zoneArt('main'), games: others }] : list
-})
-
-type Status = { kind: 'built', level: number } | { kind: 'building', progress: number, leftMs: number } | { kind: 'open' } | { kind: 'locked', zone: string }
+type Status = { kind: 'built', level: number } | { kind: 'building', progress: number, leftMs: number } | { kind: 'open' } | { kind: 'locked', level: number }
 
 function statusOf(slug: string): Status {
     const s = tycoon.state.value
@@ -35,10 +23,24 @@ function statusOf(slug: string): Status {
     const running = tycoon.queue.value.find(c => c.kind === 'game' && c.id === slug)
     if (running && level === 0) return { kind: 'building', progress: 1 - running.leftMs / running.total, leftMs: running.leftMs }
     if (level >= 1) return { kind: 'built', level }
-    const def = findTycoonGame(slug)
-    if (def && s && !s.zones.includes(def.zone)) return { kind: 'locked', zone: findZone(def.zone)?.name ?? def.zone }
+    const needs = findTycoonGame(slug) ? gameUnlockLevel(slug) : 1
+    if (needs > tycoon.level.value.level) return { kind: 'locked', level: needs }
     return { kind: 'open' }
 }
+
+/** Your games first, then the ones you can build, then the ones a higher casino level unlocks. */
+const groups = computed(() => {
+    const games = TYCOON_GAMES.map(g => GAMES.find(game => game.slug === g.slug)).filter(g => !!g)
+    const kind = (slug: string) => statusOf(slug).kind
+    const locked = games.filter(g => kind(g.slug) === 'locked').sort((a, b) => gameUnlockLevel(a.slug) - gameUnlockLevel(b.slug))
+    const list = [
+        { id: 'yours', name: 'Your games', icon: Check, color: '#3fd25a', games: games.filter(g => kind(g.slug) === 'built' || kind(g.slug) === 'building') },
+        { id: 'open', name: 'Ready to build', icon: HardHat, color: '#ff9f1c', games: games.filter(g => kind(g.slug) === 'open') },
+        { id: 'locked', name: 'Unlock with casino level', icon: Lock, color: '#7a6a99', games: locked }
+    ].filter(group => group.games.length)
+    const others = GAMES.filter(game => !findTycoonGame(game.slug))
+    return others.length ? [...list, { id: 'more', name: 'More', icon: LayoutGrid, color: '#4aa6ff', games: others }] : list
+})
 
 function tap(slug: string) {
     const status = statusOf(slug)
@@ -66,11 +68,11 @@ function tap(slug: string) {
 
       <section v-for="group in groups" :key="group.id" class="space-y-2">
         <h3 class="flex items-center gap-2">
-          <span class="grid size-7 place-items-center rounded-lg border-2 border-black/40" :style="{ background: group.art.color }">
-            <component :is="group.art.icon" class="size-4 text-white" :stroke-width="2.75" />
+          <span class="grid size-7 place-items-center rounded-lg border-2 border-black/40" :style="{ background: group.color }">
+            <component :is="group.icon" class="size-4 text-white" :stroke-width="2.75" />
           </span>
           <span class="g-title text-lg">{{ group.name }}</span>
-          <Lock v-if="!group.owned" class="size-4 text-[#ffc93a]" :stroke-width="3" />
+          <span v-if="group.id === 'locked'" class="g-num ml-auto text-sm text-[var(--g-muted)]">You: Lv {{ tycoon.level.value.level }}</span>
         </h3>
         <ul class="grid grid-cols-3 gap-2">
           <li v-for="game in group.games" :key="game.slug">
@@ -83,8 +85,8 @@ function tap(slug: string) {
                   <span v-else-if="status.kind === 'building'" class="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/70 via-black/25 to-black/10 p-1.5">
                     <TycoonBuildBar :progress="status.progress" :left-ms="status.leftMs" size="sm" />
                   </span>
-                  <span v-else-if="status.kind === 'locked'" class="absolute inset-0 grid place-items-center">
-                    <span class="grid size-9 place-items-center rounded-full border-2 border-black/50 bg-[#1b1329]/90"><Lock class="size-4 text-[#ffc93a]" :stroke-width="3" /></span>
+                  <span v-else-if="status.kind === 'locked'" class="absolute inset-0 grid place-items-center" :title="`Reach casino level ${status.level}`">
+                    <span class="g-num flex items-center gap-1 rounded-full border-2 border-black/50 bg-[#1b1329]/90 px-2 py-1 text-[13px] leading-none text-[#ffc93a]"><Lock class="size-3.5" :stroke-width="3" />Lv {{ status.level }}</span>
                   </span>
                   <span v-else class="absolute inset-0 grid place-items-center">
                     <span class="grid size-10 place-items-center rounded-full border-2 border-black/50 bg-[#3fd25a] shadow-[0_3px_0_#1b8a33]"><HardHat class="size-5 text-white" :stroke-width="2.75" /></span>

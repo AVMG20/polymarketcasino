@@ -728,6 +728,17 @@ export class PlotView {
         if (this.countdown) this.countdown.update()
     }
 
+    /** Hidden while arrange mode carries it (a ghost stands in for it). */
+    setHidden(hidden: boolean) {
+        const show = !hidden
+        if (this.container.visible === show) return
+        this.container.visible = show
+        if (this.floor) this.floor.visible = show
+        if (this.glow) this.glow.visible = show
+        if (this.countdown) this.countdown.container.visible = show
+        for (const t of this.tags) t.visible = show
+    }
+
     destroy() {
         this.floor?.destroy()
         this.glow?.destroy()

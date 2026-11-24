@@ -172,6 +172,17 @@ export interface InputHandlers {
     hover: (sx: number, sy: number) => boolean
     /** The mouse left, or a drag started: drop the highlight. */
     hoverEnd: () => void
+    /**
+     * A first finger or the mouse went down: true takes the gesture (arrange
+     * mode lifting an item), so moves go to `drag` and the release to
+     * `release` instead of panning or tapping.
+     */
+    press?: (sx: number, sy: number, touch: boolean) => boolean
+    drag?: (sx: number, sy: number) => void
+    /** The taken gesture ended; `moved` is false for a press that stayed put (a tap on the item). */
+    release?: (sx: number, sy: number, moved: boolean) => void
+    /** A second finger came down during a taken gesture: it is a pinch now. */
+    dragCancel?: () => void
 }
 
 /**
@@ -184,6 +195,9 @@ export class FloorInput {
     private start: { x: number, y: number, t: number } | null = null
     private dragging = false
     private pinch: { dist: number, mx: number, my: number } | null = null
+    /** The gesture belongs to `press` (an item being dragged), not the camera. */
+    private taken = false
+    private takenMoved = false
     private samples: { x: number, y: number, t: number }[] = []
     /** Until when wheel events count as a trackpad (performance.now()). */
     private trackpadUntil = 0
@@ -222,7 +236,14 @@ export class FloorInput {
             this.start = { ...p, t: performance.now() }
             this.dragging = false
             this.samples = [{ ...p, t: performance.now() }]
+            this.taken = this.handlers.press?.(p.x, p.y, e.pointerType !== 'mouse') ?? false
+            this.takenMoved = false
+            if (this.taken) this.handlers.hoverEnd()
         } else if (this.pointers.size === 2) {
+            if (this.taken) {
+                this.taken = false
+                this.handlers.dragCancel?.()
+            }
             const [a, b] = [...this.pointers.values()]
             this.pinch = { dist: Math.hypot(a!.x - b!.x, a!.y - b!.y), mx: (a!.x + b!.x) / 2, my: (a!.y + b!.y) / 2 }
             this.start = null
@@ -251,6 +272,14 @@ export class FloorInput {
         }
         if (!this.start) return
         const slop = e.pointerType === 'mouse' ? 5 : 10
+        if (this.taken) {
+            if (!this.takenMoved && Math.hypot(p.x - this.start.x, p.y - this.start.y) > slop) {
+                this.takenMoved = true
+                if (e.pointerType === 'mouse') this.el.style.cursor = 'grabbing'
+            }
+            if (this.takenMoved) this.handlers.drag?.(p.x, p.y)
+            return
+        }
         if (!this.dragging && Math.hypot(p.x - this.start.x, p.y - this.start.y) > slop) {
             this.dragging = true
             this.el.style.cursor = 'grabbing'
@@ -270,6 +299,14 @@ export class FloorInput {
         if (!had) return
         if (this.pointers.size > 0) {
             this.regroup()
+            return
+        }
+        if (this.taken) {
+            this.taken = false
+            this.start = null
+            this.samples = []
+            this.handlers.release?.(p.x, p.y, this.takenMoved)
+            if (e.pointerType === 'mouse') this.el.style.cursor = this.handlers.hover(p.x, p.y) ? 'pointer' : 'default'
             return
         }
         if (!this.dragging && this.start && performance.now() - this.start.t < 600) {
@@ -307,6 +344,10 @@ export class FloorInput {
 
     private cancel(e: PointerEvent) {
         if (!this.pointers.delete(e.pointerId)) return
+        if (this.taken) {
+            this.taken = false
+            this.handlers.dragCancel?.()
+        }
         if (this.pointers.size) {
             this.regroup()
             return
@@ -355,7 +396,7 @@ export class FloorInput {
 
     /** Update the mouse cursor (the highlight can change under a resting mouse). */
     setCursor(cursor: string) {
-        if (this.pointers.size) return
+        if (this.pointers.size && !this.taken) return
         if (this.el.style.cursor !== cursor) this.el.style.cursor = cursor
     }
 

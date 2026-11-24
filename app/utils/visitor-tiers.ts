@@ -22,7 +22,7 @@ export function tierPlural(id: VisitorTierId, n: number): string {
 const BLURB: Record<VisitorTierId, string> = {
     tourist: 'Drop in from the start and spend a little.',
     regular: 'Steady guests who spend a bit more than Tourists.',
-    highroller: 'Come for a classy casino: Decor, Hospitality, new rooms and top machine levels bring more of them, VIP Invitations too.',
+    highroller: 'Come for a classy casino: Hospitality, new rooms, specials and top machine levels bring more of them, VIP Invitations too.',
     whale: 'Rare: one stays one to three hours and spends as much as a room full of Tourists. A Private Jet brings more.'
 }
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { eq } = await import('drizzle-orm')
+const { casinoLevel, roomLook } = await import('../shared/casino-level')
 const { db } = await import('../server/database')
 const { casinoConstructions, casinoLikes, casinoProfiles } = await import('../server/database/schema')
 const { getCasinoVisit, getLeaderboard, likeCasino, parsePlayerParam, resetLeaderboardCache } = await import('../server/utils/social')
@@ -21,7 +22,7 @@ function casino(build: { zones?: string[], games?: Record<string, number>, upgra
     db.update(casinoProfiles).set({
         zones: build.zones ?? ['backroom'],
         games: build.games ?? { plinko: 1, spinata: 1 },
-        upgrades: { cage: 0, marketing: 0, decor: 0, ...build.upgrades },
+        upgrades: { cage: 0, marketing: 0, hospitality: 0, ...build.upgrades },
         golden: build.golden ?? []
     }).where(eq(casinoProfiles.playerId, id)).run()
     return id
@@ -42,18 +43,18 @@ beforeEach(() => {
 
 describe('casino value', () => {
     it('is the chips everything finished cost at catalog prices', () => {
-        expect(casinoValue({ zones: ['backroom'], games: { plinko: 1, spinata: 1 }, upgrades: { cage: 0, marketing: 0, decor: 0 } })).toBe(0)
-        const value = casinoValue({ zones: ['backroom', 'main'], games: { plinko: 3, spinata: 1, limbo: 2, roulette: 1 }, upgrades: { cage: 2, marketing: 0, decor: 1 } })
+        expect(casinoValue({ zones: ['backroom'], games: { plinko: 1, spinata: 1 }, upgrades: { cage: 0, marketing: 0, hospitality: 0 } })).toBe(0)
+        const value = casinoValue({ zones: ['backroom', 'main'], games: { plinko: 3, spinata: 1, limbo: 2, roulette: 1 }, upgrades: { cage: 2, marketing: 0, hospitality: 1 } })
         expect(value).toBe(chipsOf('zone', 'main') + chipsOf('game', 'plinko', 3) + chipsOf('game', 'limbo', 2) + chipsOf('game', 'roulette')
-            + chipsOf('upgrade', 'cage', 2) + chipsOf('upgrade', 'decor'))
+            + chipsOf('upgrade', 'cage', 2) + chipsOf('upgrade', 'hospitality'))
         // Starters' first level is free.
         expect(chipsOf('game', 'plinko', 1)).toBe(0)
         expect(value).toBeGreaterThan(0)
     })
 
     it('ignores unknown and out-of-range entries', () => {
-        const base = casinoValue({ zones: ['backroom'], games: { limbo: 5 }, upgrades: { cage: 0, marketing: 0, decor: 0 } })
-        expect(casinoValue({ zones: ['backroom', 'moon'] as never, games: { limbo: 9, nope: 3 }, upgrades: { cage: 0, marketing: 0, decor: 0, houseCut: 4 } as never })).toBe(base)
+        const base = casinoValue({ zones: ['backroom'], games: { limbo: 5 }, upgrades: { cage: 0, marketing: 0 } })
+        expect(casinoValue({ zones: ['backroom', 'moon'] as never, games: { limbo: 9, nope: 3 }, upgrades: { cage: 0, marketing: 0, decor: 12, houseCut: 4 } as never })).toBe(base)
     })
 
     it('names the furthest zone as the tier', () => {
@@ -65,7 +66,7 @@ describe('casino value', () => {
 describe('leaderboard', () => {
     it('ranks casinos by value, most valuable first, with the player pinned', () => {
         const small = casino({ games: { plinko: 1, spinata: 1, limbo: 1 } })
-        const big = casino({ zones: ['backroom', 'main', 'pit'], games: { plinko: 2, spinata: 1, roulette: 3, blackjack: 1 }, upgrades: { decor: 2 } })
+        const big = casino({ zones: ['backroom', 'main', 'pit'], games: { plinko: 2, spinata: 1, roulette: 3, blackjack: 1 }, upgrades: { hospitality: 2 } })
         const mid = casino({ zones: ['backroom', 'main'], games: { plinko: 1, spinata: 1, roulette: 1 } })
         const fresh = casino()
 
@@ -76,7 +77,7 @@ describe('leaderboard', () => {
         expect(board.me?.owner.id).toBe(fresh)
         expect(board.me?.rank).toBe(4)
         const top = board.entries[0]!
-        expect(top.value).toBe(casinoValue({ zones: ['backroom', 'main', 'pit'], games: { plinko: 2, roulette: 3, blackjack: 1 }, upgrades: { cage: 0, marketing: 0, decor: 2 } }))
+        expect(top.value).toBe(casinoValue({ zones: ['backroom', 'main', 'pit'], games: { plinko: 2, roulette: 3, blackjack: 1 }, upgrades: { cage: 0, marketing: 0, hospitality: 2 } }))
         expect(top.tier).toBe('pit')
         expect(top.zones).toEqual(['backroom', 'main', 'pit'])
         expect(top.games).toBe(4)
@@ -134,12 +135,13 @@ describe('visiting', () => {
         const owner = casino({
             zones: ['backroom', 'main'],
             games: { plinko: 3, spinata: 1, roulette: 2, limbo: 0 },
-            upgrades: { decor: 2, cage: 1, marketing: 1 },
+            upgrades: { hospitality: 2, cage: 1, marketing: 1 },
             golden: ['roulette'],
             chips: 987_654.3210
         })
         db.update(casinoProfiles).set({ campaign: 'flyers', campaignUntil: new Date(now + HOUR), cageStored: 8_675.3 }).where(eq(casinoProfiles.playerId, owner)).run()
         db.insert(casinoConstructions).values({ playerId: owner, kind: 'game', target: 'wheel', level: 1, startedAt: new Date(now), readyAt: new Date(now + HOUR) }).run()
+        db.insert(casinoConstructions).values({ playerId: owner, kind: 'upgrade', target: 'marketing', level: 2, startedAt: new Date(now), readyAt: new Date(now + HOUR) }).run()
         const visitor = casino()
 
         const visit = getCasinoVisit(visitor, owner, now)
@@ -147,7 +149,8 @@ describe('visiting', () => {
         expect(visit.zones).toEqual(['backroom', 'main'])
         expect(visit.games).toEqual({ plinko: 3, spinata: 1, roulette: 2 })
         expect(visit.golden).toEqual(['roulette'])
-        expect(visit.decor).toBe(2)
+        expect(visit.level).toBe(casinoLevel({ zones: ['backroom', 'main'], games: { plinko: 3, spinata: 1, roulette: 2 }, upgrades: { hospitality: 2, cage: 1, marketing: 1, crew: 0 } }).level)
+        expect(visit.look).toBe(roomLook(visit.level!))
         expect(visit.campaign).toBe('flyers')
         expect(visit.seats).toBe(T.floorSeats({ games: visit.games }))
         expect(visit.visitors).toBeGreaterThan(0)
@@ -163,7 +166,11 @@ describe('visiting', () => {
         }
         expect(json).not.toContain('987654')
         expect(json).not.toContain('8675.3')
-        expect(json).not.toContain('wheel')
+        // A game under its first construction already stands on the floor (it takes the tiles): only that, no timers.
+        expect(visit.building).toEqual(['wheel'])
+        expect(Object.keys(visit.placements!).sort()).toEqual(['plinko', 'roulette', 'spinata', 'wheel'])
+        expect(json).not.toContain('readyAt')
+        expect(json).not.toContain('marketing')
     })
 
     it('refuses a player without a casino and a malformed id', () => {

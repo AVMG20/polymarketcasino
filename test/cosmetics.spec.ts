@@ -103,6 +103,13 @@ describe('catalog', () => {
         expect(C.normalizeAvatar({ hat: 'crown', outfit: 'nope', accessory: 3 })).toEqual({ ...C.DEFAULT_AVATAR, hat: 'crown' })
         expect(C.normalizeAvatar({ hair: 'afro', haircolor: 'pink', skintone: 'green' })).toEqual({ ...C.DEFAULT_AVATAR, hair: 'afro', haircolor: 'pink' })
         expect(C.normalizeSkins({ main: 'royal', pit: 'classic', lounge: 'moon', highlimit: 7 })).toEqual({ main: 'royal' })
+        expect(C.normalizeSkins({ backroom: 'emerald', main: 'ivory' })).toEqual({ backroom: 'emerald', main: 'ivory' })
+    })
+
+    it('gives every room its own colours as a free skin for the other rooms', () => {
+        const basics = Object.entries(C.BASIC_SKINS)
+        expect(new Set(basics.map(([, zone]) => zone)).size).toBe(6)
+        for (const [skin] of basics) expect(C.isFree(C.findCosmetic(`skin:${skin}`)!)).toBe(true)
     })
 })
 

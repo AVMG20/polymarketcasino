@@ -1,5 +1,4 @@
 import { eq } from 'drizzle-orm'
-import { decorLook, type ZoneId } from '#shared/tycoon'
 // The floor plan lives with the client's floor renderer; the server reads the same walkable grid.
 import { NavGrid } from '../../shared/floor/nav'
 import { db } from '../database'
@@ -7,7 +6,7 @@ import { casinoProfiles } from '../database/schema'
 import { avatarOf } from './cosmetics'
 import { createFloorPresence, type PresenceContext, type PresenceSource } from './floor-presence'
 import { refuseCrossSiteSocket, socketPlayer, type SocketUpgradeRequest } from './socket-auth'
-import { peekCasino } from './tycoon'
+import { casinoLayout, onFloorChange, peekCasino } from './tycoon'
 
 /** The casino a socket URL names: /api/floor/<casinoId>/ws. */
 export function floorCasinoFromUrl(url: string): string | null {
@@ -31,14 +30,11 @@ export async function authorizeFloorUpgrade(request: SocketUpgradeRequest): Prom
     return { casinoId, ...player }
 }
 
-/** Walkable tiles from the casino's owned zones and decor, as its floor draws them. */
+/** Walkable tiles from what stands on the casino's floor (its rooms, games and placed decorations), as its floor draws them. */
 export const dbPresenceSource: PresenceSource = {
     walkable(casinoId) {
         const casino = peekCasino(casinoId)
-        const zones = new Set<ZoneId>(casino.zones.length ? casino.zones : ['backroom'])
-        // The floor's look from the 0-12 Decor level, the same mapping the client draws with.
-        const decor = decorLook(casino.upgrades.decor ?? 0)
-        const nav = new NavGrid(zones, decor)
+        const nav = new NavGrid(casinoLayout({ ...casino, zones: casino.zones.length ? casino.zones : ['backroom'] }))
         return (x, y) => nav.isWalkable(x, y)
     },
     look: playerId => avatarOf(playerId)
@@ -46,3 +42,6 @@ export const dbPresenceSource: PresenceSource = {
 
 /** The process's floor rooms. */
 export const floorPresence = createFloorPresence(dbPresenceSource)
+
+// A build, a placement or a decoration changes the floor: the room reads its walk grid again on the next move.
+onFloorChange(casinoId => floorPresence.invalidate(casinoId))

@@ -6,8 +6,11 @@ import { formatCoins, formatCoinsExact } from '#shared/money'
 import { skinOf } from '#shared/cosmetics'
 import type { CasinoVisit, LikeResponse } from '#shared/social'
 import { emptyCounts } from '#shared/visitors'
-import { decorLook, findCampaign, findTycoonGame, findZone, MAX_LEVEL, seatsOf, TYCOON_GAMES, ZONES, type ZoneId } from '#shared/tycoon'
+import { findCampaign, findZone, MAX_LEVEL, seatsOf, TYCOON_GAMES, ZONES, type ZoneId } from '#shared/tycoon'
 import CasinoFloor from '~/components/tycoon/CasinoFloor.vue'
+import { levelForXp, roomLook, XP_CHIPS } from '#shared/casino-level'
+import { homeSpot, zoneAt } from '#shared/floor/layout'
+import { placedDecorations, standingRect } from '~/composables/useFloorScene'
 import { QUICK_GAMES } from '~/utils/game-embed'
 import type { FloorApi, FloorPlot, FloorScene, FloorTarget, FloorZone } from '~/utils/floor/types'
 
@@ -92,13 +95,16 @@ const scene = computed<FloorScene | null>(() => {
     const zones: FloorZone[] = ZONES.map(zone => ({ id: zone.id, owned: owned.has(zone.id), available: false, construction: null, skin: skinOf(v.skins, zone.id) }))
     const plots: FloorPlot[] = TYCOON_GAMES.map((game) => {
         const level = v.games[game.slug] ?? 0
+        // A first build in progress stands on the floor as scaffolding (no countdown: visitors don't see the times).
+        const building = level === 0 && !!v.building?.includes(game.slug)
         return {
             id: game.slug,
             archetype: game.archetype,
             accent: game.accent,
             zone: game.zone,
-            // Not built: a dim plot with a lock, never a build sign.
-            status: level >= 1 ? 'built' : 'locked',
+            // Not built: not drawn (no build signs in someone else's casino).
+            status: building ? 'building' : level >= 1 ? 'built' : 'locked',
+            rect: level >= 1 || building ? standingRect(v.placements, game.slug) : null,
             level,
             golden: v.golden.includes(game.slug),
             construction: null,
@@ -108,9 +114,11 @@ const scene = computed<FloorScene | null>(() => {
     return {
         zones,
         plots,
+        decorations: placedDecorations(v.decorations),
         // The cage is the owner's: drawn empty.
         cage: { fill: 0, stored: 0 },
-        decor: decorLook(v.decor),
+        // Their room look follows their casino level (older payloads: worked out from the casino's value).
+        decor: v.look ?? roomLook(v.level ?? levelForXp(Math.floor(v.value / XP_CHIPS))),
         guestsPerHour: 0,
         visitors: v.floor?.visitors ?? { ...emptyCounts(), tourist: v.visitors },
         queue: v.floor?.turnedAway ?? v.queue,
@@ -208,7 +216,12 @@ function retryFloor() {
 const infoGame = computed(() => info.value?.kind === 'game' ? findGame(info.value.slug) ?? null : null)
 const infoZone = computed(() => {
     const i = info.value
-    if (i?.kind === 'game') return findZone(findTycoonGame(i.slug)?.zone ?? '') ?? null
+    if (i?.kind === 'game') {
+        // Where it stands on their floor (games can stand in any room).
+        const at = visit.value?.placements?.[i.slug] ?? homeSpot(i.slug)
+        const zone = at ? zoneAt(at.x, at.y) : null
+        return zone ? findZone(zone) ?? null : null
+    }
     if (i?.kind === 'zone') return findZone(i.id) ?? null
     return null
 })

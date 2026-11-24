@@ -18,6 +18,15 @@
 // that never sees a campaign runs next to the real one: the difference at
 // each collect is what the campaigns brought.
 //
+// Games unlock by casino level (shared/casino-level.ts), not by room, and need
+// floor space: a new game takes its spot as the server gives it (home, else the
+// nearest free one in an owned room, shared/floor/placement.ts), and the free
+// furniture each room brings is granted onto the floor too. A
+// special decoration (shared/decor.ts) is bought once it is unlocked, pays its
+// price back within SPECIAL_PAYBACK_H of expected income and leaves chips to
+// build; it is placed at once. The tables show the day each casino level came,
+// the day each game was first built and the specials bought.
+//
 // The cage accrues through the visitor model (shared/visitors.ts `runFloor`):
 // tiers, seats, house rules and the per-tick luck, seeded per profile, exactly
 // as the server does. Players judge campaigns and house rules on the expected
@@ -40,6 +49,9 @@
 // The starting 50 gems converted stay under ~10-15% of the catalog, a day's
 // 10 gems ~10-20% of a regular's mid-game daily chips, and a full floor's
 // guest income stays capped.
+import { casinoLevel, gameUnlockLevel, MAX_CASINO_LEVEL } from '../shared/casino-level'
+import { DECOR, placedSpecials, specialBonus, type DecorType } from '../shared/decor'
+import { findSpot, furnitureGrants, layoutOf, layoutStateOf, roomCentre } from '../shared/floor/placement'
 import { seededRng, type Rng } from '../shared/rng'
 import { COINS_PER_GEM } from '../shared/economy'
 import { CASINO_STARS, starLevel } from '../shared/stars'
@@ -54,12 +66,14 @@ import {
     type CampaignId,
     buildBlocker,
     cageCapacity,
+    newGameSpot,
     fullIncomePerHour,
     nextCost,
     occupancy,
     progressOf,
     RUSH_GEMS,
     RUSH_MAX_GEMS,
+    rushExtraCoins,
     rushGems,
     RUSH_MS,
     skipGems,
@@ -162,9 +176,11 @@ type SimState = TycoonState & {
     rules: HouseRules
     rulesAt: number | null
     seed: number
+    /** Free furniture given (grant keys). */
+    granted: string[]
 }
 
-const view = (state: SimState): FloorView => ({ zones: state.zones, games: state.games, upgrades: state.upgrades, rushUntil: state.rushUntil, campaign: null, campaigns: state.campaigns ?? [], rules: state.rules })
+const view = (state: SimState): FloorView => ({ zones: state.zones, games: state.games, upgrades: state.upgrades, rushUntil: state.rushUntil, campaign: null, campaigns: state.campaigns ?? [], rules: state.rules, specials: specialBonus(placedSpecials(state.decor ?? [])) })
 
 function newState(now: number, seed = 0): SimState {
     const state: SimState = {
@@ -172,7 +188,7 @@ function newState(now: number, seed = 0): SimState {
         chips: 0,
         zones: ['backroom'],
         games: Object.fromEntries(TYCOON_GAMES.filter(g => g.starter).map(g => [g.slug, 1])),
-        upgrades: { cage: 0, marketing: 0, decor: 0, hospitality: 0, crew: 0 },
+        upgrades: { cage: 0, marketing: 0, hospitality: 0, crew: 0 },
         constructions: [],
         builders: 1,
         gemBuilder: false,
@@ -181,6 +197,8 @@ function newState(now: number, seed = 0): SimState {
         campaign: null,
         campaigns: [],
         golden: [],
+        placements: {},
+        decor: [],
         progress: 0,
         gemsEnabled: true,
         cageAt: now,
@@ -188,6 +206,7 @@ function newState(now: number, seed = 0): SimState {
         rules: { ...DEFAULT_RULES },
         rulesAt: null,
         seed,
+        granted: [],
         floor: undefined as unknown as TycoonState['floor']
     }
     state.floor = floorNow(view(state), seed, now)
@@ -224,6 +243,13 @@ interface Tally {
     cageByDay: number[]
     /** Hours run under each rule set (by stage zone). */
     ruleHours: Map<string, number>
+    /** Specials bought: when, the price and the expected coins an hour they added. */
+    specials: { type: DecorType, day: number, chips: number, gain: number }[]
+    /** Casino level at the end of each day, and the day each level was reached. */
+    levelEndOfDay: number[]
+    levelDays: (number | null)[]
+    /** Day each game was first started (built). */
+    gameDays: Record<string, number>
 }
 
 /** The cage up to `to` through the tick model (lazily: before anything changes the floor or reads the cage). */
@@ -257,6 +283,17 @@ function apply(state: SimState, c: Construction) {
     else if (c.kind === 'game') state.games[c.id] = c.level
     else state.upgrades[c.id as UpgradeId] = c.level
     state.builders = builderCount(state.upgrades, !!state.gemBuilder)
+    if (c.kind === 'zone') grantFurniture(state)
+}
+
+/** The free furniture a room brings, as the server grants it (it takes floor space). */
+function grantFurniture(state: SimState) {
+    const given = new Set(state.granted)
+    const due = furnitureGrants(layoutOf(layoutStateOf(state)), given)
+    for (const grant of due) {
+        state.granted.push(grant.key)
+        state.decor!.push({ id: state.decor!.length + 1, type: grant.type, x: grant.at?.x ?? null, y: grant.at?.y ?? null })
+    }
 }
 
 function hireGemBuilder(state: SimState) {
@@ -357,6 +394,27 @@ function bestRules(state: SimState, now: number, until: number, campaigns: reado
     return best
 }
 
+/** A special is bought when its expected extra income pays its price back within this many hours. */
+const SPECIAL_PAYBACK_H = 10 * 24
+
+function buySpecials(state: SimState, now: number, tally: Tally, day: number) {
+    const level = casinoLevel(state).level
+    for (const def of DECOR) {
+        if (!def.special || def.level > level || state.decor!.some(d => d.type === def.type)) continue
+        const without = expectedPerHour(view(state))
+        const types = [...placedSpecials(state.decor!), def.type]
+        const gain = expectedPerHour({ ...view(state), specials: specialBonus(types) }) - without
+        if (!(gain * SPECIAL_PAYBACK_H * RTP >= def.chips) || state.chips < def.chips * 2) continue
+        const layout = layoutOf(layoutStateOf(state))
+        const at = findSpot(layout, { kind: 'decor', type: def.type }, roomCentre(state.zones.at(-1)!))
+        if (!at) continue
+        accrue(state, now, tally)
+        state.chips -= def.chips
+        tally.specials.push({ type: def.type, day: Math.round(now / DAY * 10) / 10, chips: def.chips, gain })
+        state.decor!.push({ id: state.decor!.length + 1, type: def.type, x: at.x, y: at.y })
+    }
+}
+
 interface Result {
     profile: string
     milestones: Record<string, number | null>
@@ -370,6 +428,7 @@ function simulate(profile: Profile): Result {
     // Missions draw from their own stream, so the bets replay as before.
     const missionRng = seededRng(seed + 1_000)
     const state = newState(0, seedOf(`${profile.name}-${seed}`))
+    grantFurniture(state)
     let coins = 0
     let gems = profile.startGems
     const tally: Tally = {
@@ -384,7 +443,11 @@ function simulate(profile: Profile): Result {
         incomeByHour: new Map(),
         incomeByDay: [],
         cageByDay: [],
-        ruleHours: new Map()
+        ruleHours: new Map(),
+        specials: [],
+        levelEndOfDay: [],
+        levelDays: Array.from({ length: MAX_CASINO_LEVEL }, () => null),
+        gameDays: {}
     }
     const milestones: Record<string, number | null> = Object.fromEntries(MILESTONES.map(m => [m, null]))
     let firstSession = true
@@ -528,6 +591,9 @@ function simulate(profile: Profile): Result {
                     state.campaigns = [...(state.campaigns ?? []).filter(c => c.id !== best.id && c.until > now), { id: best.id, until: now + CAMPAIGNS.find(c => c.id === best.id)!.ms }]
                 }
 
+                // Specials: buy one that pays back within SPECIAL_PAYBACK_H and leaves chips to build.
+                if (now === t0) buySpecials(state, now, tally, day)
+
                 // House rules: the set that earns the most until the next session
                 // (the casual player looks once a day), within the cooldown.
                 if (now === t0 && (index === 0 || profile.name !== 'casual') && unlockedRules(state).length) {
@@ -567,6 +633,11 @@ function simulate(profile: Profile): Result {
                         tally.firstSession.builds++
                         tally.firstSession.longestMs = Math.max(tally.firstSession.longestMs, option.cost.buildMs)
                     }
+                    // A new game takes its spot as the server gives it (home, else the nearest free one).
+                    if (option.kind === 'game' && levelOf(state, 'game', option.id) === 0) {
+                        state.placements![option.id] = newGameSpot(state, option.id)!
+                        tally.gameDays[option.id] = Math.round(now / DAY * 10) / 10
+                    }
                     const c: Construction = { kind: option.kind, id: option.id, level: levelOf(state, option.kind, option.id) + 1, startedAt: now, readyAt: now + option.cost.buildMs }
                     if (option.cost.buildMs <= 0) {
                         accrue(state, now, tally)
@@ -575,6 +646,8 @@ function simulate(profile: Profile): Result {
                     else state.constructions.push(c)
                 }
 
+                const level = casinoLevel(state).level
+                for (let l = 0; l < level; l++) tally.levelDays[l] ??= Math.round(now / DAY * 10) / 10
                 const progress = progressOf(state)
                 if (tally.builds >= 8 && firstSession) milestones['8 builds'] = 0
                 else if (tally.builds >= 8) mark('8 builds', now)
@@ -602,6 +675,7 @@ function simulate(profile: Profile): Result {
             firstSession = false
         }
         tally.chipsEndOfDay[day] = state.chips
+        tally.levelEndOfDay[day] = casinoLevel(state).level
     }
     accrue(state, clock, tally)
     return { profile: profile.name, milestones, tally }
@@ -622,6 +696,18 @@ console.log(`${'profile'.padEnd(9)}${MILESTONES.map(m => pad(m, 10)).join('')}`)
 for (const r of results) {
     console.log(`${r.profile.padEnd(9)}${MILESTONES.map(m => pad(r.milestones[m] ?? '-', 10)).join('')}`)
 }
+
+console.log('\nCasino level (day each level was first reached):')
+for (let from = 0; from < MAX_CASINO_LEVEL; from += 15) {
+    console.log(`${'level'.padEnd(9)}${Array.from({ length: 15 }, (_, i) => pad(from + i + 1, 6)).join('')}`)
+    for (const r of results) console.log(`${r.profile.padEnd(9)}${r.tally.levelDays.slice(from, from + 15).map(d => pad(d ?? '-', 6)).join('')}`)
+}
+console.log('Games: unlock level, and the day each profile first built it (old room in brackets):')
+for (const game of TYCOON_GAMES.filter(g => !g.starter)) {
+    console.log(`  ${game.slug.padEnd(17)} L${pad(gameUnlockLevel(game.slug), 2)} (${game.zone.padEnd(9)}) ${results.map(r => `${r.profile} ${pad(r.tally.gameDays[game.slug] ?? '-', 5)}`).join('  ')}`)
+}
+console.log('Specials bought (day, chips, expected coins/h added):')
+for (const r of results) console.log(`${r.profile.padEnd(9)}${r.tally.specials.map(b => `${b.type} d${b.day} ${fmtShort(b.chips)} +${fmt(b.gain)}/h`).join(' | ') || '-'}`)
 
 console.log(`\nStars (day each level was first held; play goes on ${POST_MAX_DAYS} days after max):`)
 console.log(`${'profile'.padEnd(9)}${CASINO_STARS.map((star, i) => pad(`${i + 1}:${fmtShort(star.threshold)}`, 9)).join('')}${pad('at max', 8)}${pad('max+7', 8)}${pad('max+14', 8)}${pad('max+21', 8)}`)
@@ -659,16 +745,19 @@ function upgradeCap(id: UpgradeId, open: readonly string[]): number {
     while (level < def.levels.length && (def.requiresZone[level] === null || open.includes(def.requiresZone[level]!))) level++
     return level
 }
-/** A casino with the zones up to `zi` open, every game there at `level`, Decor and Hospitality as far as the zones allow, Cage and Marketing at the zone's index. */
+/** A casino with the zones up to `zi` open, every game there at `level`, Hospitality as far as the zones allow, Cage and Marketing at the zone's index, and every richer-guests special its casino level unlocks placed. */
 function stageState(zi: number, level: number): SimState {
     const open = ZONES.slice(0, zi + 1).map(z => z.id)
     const upgrade = Math.min(5, zi)
-    return {
+    const state: SimState = {
         ...newState(0, seedOf(`stage-${seed}`)),
         zones: open,
         games: Object.fromEntries(TYCOON_GAMES.filter(g => open.includes(g.zone)).map(g => [g.slug, level])),
-        upgrades: { cage: upgrade, marketing: upgrade, decor: upgradeCap('decor', open), hospitality: upgradeCap('hospitality', open), crew: 0 }
+        upgrades: { cage: upgrade, marketing: upgrade, hospitality: upgradeCap('hospitality', open), crew: 0 }
     }
+    const reached = casinoLevel(state).level
+    state.decor = DECOR.filter(d => d.special?.stat === 'prestige' && d.level <= reached).map((d, i) => ({ id: i + 1, type: d.type, x: 0, y: 0 }))
+    return state
 }
 const STAGES = ZONES.flatMap((zone, zi) => [1, 3, 5].map(level => ({ name: `${zone.id} L${level}`, state: stageState(zi, level) })))
 const withAds = (stage: SimState, ids: CampaignId[]) => ({ ...view(stage), campaigns: ids.filter(id => !campaignBlocker(stage, id, 0)).map(id => ({ id, until: 1e15 })) })
@@ -731,18 +820,15 @@ const payback = (label: string, stage: SimState, kind: BuildKind, id: string) =>
     }
     payback('early: Limbo (backroom)', at(0, 1, s => delete s.games.limbo), 'game', 'limbo')
     payback('early: Roulette (main)', at(1, 1, s => delete s.games.roulette), 'game', 'roulette')
-    payback('early: Decor 1 (main)', at(1, 2, s => (s.upgrades.decor = 0)), 'upgrade', 'decor')
+    payback('early: Hospitality 1 (main)', at(1, 2, s => (s.upgrades.hospitality = 0)), 'upgrade', 'hospitality')
     payback('early: Marketing 1→2 (main)', at(1, 2, s => (s.upgrades.marketing = 1)), 'upgrade', 'marketing')
     payback('mid: Blackjack 3→4 (pit)', at(2, 3), 'game', 'blackjack')
-    payback('mid: Decor 4→5 (lounge)', at(3, 3, s => (s.upgrades.decor = 4)), 'upgrade', 'decor')
-    payback('mid: Hospitality 1→2 (lounge)', at(3, 3, s => (s.upgrades.hospitality = 1)), 'upgrade', 'hospitality')
+    payback('mid: Hospitality 3→4 (lounge)', at(3, 3, s => (s.upgrades.hospitality = 3)), 'upgrade', 'hospitality')
     payback('mid: Xenoslot 3→4 (lounge)', at(3, 3), 'game', 'xenoslot')
-    payback('late: Decor 8→9 (high limit)', at(4, 4, s => (s.upgrades.decor = 8)), 'upgrade', 'decor')
-    payback('late: Hospitality 3→4 (high limit)', at(4, 4, s => (s.upgrades.hospitality = 3)), 'upgrade', 'hospitality')
+    payback('late: Hospitality 5→6 (high limit)', at(4, 4, s => (s.upgrades.hospitality = 5)), 'upgrade', 'hospitality')
     payback('late: Marketing 4→5 (high limit)', at(4, 4), 'upgrade', 'marketing')
     payback('late: Baccarat 4→5 (high limit)', at(4, 4), 'game', 'baccarat')
-    payback('max: Decor 11→12 (penthouse)', at(5, 5, s => (s.upgrades.decor = 11)), 'upgrade', 'decor')
-    payback('max: Hospitality 4→5 (penthouse)', at(5, 5, s => (s.upgrades.hospitality = 4)), 'upgrade', 'hospitality')
+    payback('max: Hospitality 7→8 (penthouse)', at(5, 5, s => (s.upgrades.hospitality = 7)), 'upgrade', 'hospitality')
     payback('max: Mines 4→5 (penthouse)', at(5, 4), 'game', 'mines')
     payback('zone: Slot Lounge', at(2, 5), 'zone', 'lounge')
     payback('zone: Penthouse', at(4, 5), 'zone', 'penthouse')
@@ -782,9 +868,14 @@ const maxed = {
     ...newState(0),
     zones: ZONES.map(z => z.id),
     games: Object.fromEntries(TYCOON_GAMES.map(g => [g.slug, 5])),
-    upgrades: { cage: 5, marketing: 5, decor: 12, hospitality: 5, crew: 1 }
+    upgrades: { cage: 5, marketing: 5, hospitality: 8, crew: 1 }
 }
+const allSpecials = DECOR.filter(d => d.special).map((d, i) => ({ id: i + 1, type: d.type, x: 0, y: 0 }))
+const maxedSpecials = { ...maxed, decor: allSpecials }
+const allAds = CAMPAIGNS.map(c => ({ id: c.id, until: 1e15 }))
+const bestAt = (v: FloorView, at?: number) => Math.max(...ruleCombos(v).map(rules => expectedPerHour({ ...v, rules }, at)))
 console.log(`\nCatalog: ${fmt(catalog)} chips, ${(catalogMs / HOUR).toFixed(0)} build hours.`)
+console.log(`Specials at max (best rules): every special placed ${fmt(bestAt(view(maxedSpecials)) * 24)} coins/day (+${((bestAt(view(maxedSpecials)) / bestAt(view(maxed)) - 1) * 100).toFixed(1)}%), with every ad +${((bestAt({ ...view(maxedSpecials), campaigns: allAds }, 0) / bestAt({ ...view(maxed), campaigns: allAds }, 0) - 1) * 100).toFixed(1)}%; the richer-guests ones alone +${((bestAt({ ...view(maxed), specials: specialBonus(DECOR.filter(d => d.special?.stat === 'prestige').map(d => d.type)) }) / bestAt(view(maxed)) - 1) * 100).toFixed(1)}%; a rush with them all owned ${rushGems(maxedSpecials)} gems (${fmt(rushExtraCoins(maxedSpecials) / rushGems(maxedSpecials))} coins a gem), without ${rushGems(maxed)}.`)
 console.log(`Guest income at max: ${fmt(expectedPerHour(view(maxed)) * 24)} coins/day expected without a campaign (default rules; best rules ${fmt(Math.max(...ruleCombos(maxed).map(rules => expectedPerHour({ ...view(maxed), rules }))) * 24)}), ${fmt(fullIncomePerHour(maxed) * 24)} with every seat full (cage holds ${fmt(cageCapacity(5))}).`)
 
 // The floor's luck at each stage: 30 days at a fixed build, default rules, no campaign.

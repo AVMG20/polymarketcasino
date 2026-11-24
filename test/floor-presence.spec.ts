@@ -170,6 +170,19 @@ describe('floor presence rooms', () => {
         presence.message(a, move(3, 1))
         expect(fake.gridReads()).toBe(2)
     })
+
+    it('reads the walkable grid again at once when the floor changed', () => {
+        const { presence, join, fake } = setup()
+        const a = join('a')
+        presence.message(a, move(1, 1))
+        expect(fake.gridReads()).toBe(1)
+        presence.invalidate('elsewhere')
+        presence.message(a, move(2, 1))
+        expect(fake.gridReads()).toBe(1)
+        presence.invalidate('owner')
+        presence.message(a, move(3, 1))
+        expect(fake.gridReads()).toBe(2)
+    })
 })
 
 describe('floor presence source', () => {

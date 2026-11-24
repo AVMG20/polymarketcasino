@@ -1,14 +1,15 @@
 import { INK, Painter, circlePoly, darken, faceColors, lighten, mix, project, rgba, roundRect, type Pt } from '../iso'
-import type { PropKind } from '#shared/floor/layout'
 import { ARCHITECT_LOOK, CASHIER_LOOK, drawFigure } from './characters'
 import { PAL } from './palette'
+import type { PropKind } from '#shared/floor/layout'
 
 /**
  * Everything on the floor that is not a game: the cashier cage, the
  * architect's desk, furniture and decoration, signs and scaffolding.
  */
 
-const gold = () => ({ top: PAL.goldLight, left: PAL.gold, right: PAL.goldDark })
+/** Gold with a real gold top (goldLight on a big top face reads as butter). */
+const gold = () => ({ top: '#efb944', left: '#e3aa3a', right: PAL.goldDark })
 
 // ── cashier cage (2×2) ─────────────────────────────────────────────────────
 
@@ -139,12 +140,15 @@ export function drawDesk(p: Painter) {
 
 // ── furniture and decoration ───────────────────────────────────────────────
 
+/** The furniture drawn here (decorations reuse it: art/decor.ts). */
+export type { PropKind }
+
 export function propHeight(kind: PropKind): number {
     switch (kind) {
         case 'plant': return 40
         case 'palm': return 66
         case 'lamp': return 64
-        case 'rope': return 26
+        case 'rope': return 34
         case 'statue': return 58
         case 'sofa': return 30
         case 'bar': return 70
@@ -235,31 +239,39 @@ export function drawProp(p: Painter, kind: PropKind, w: number, h: number, accen
         }
         case 'rope': {
             const post = gold()
-            p.cylinder(0.2, 0.5, 0, 0.1, 2, post)
-            p.cylinder(0.2, 0.5, 2, 0.035, 20, post, { lineWidth: 1, shine: false })
-            p.cylinder(0.8, 0.5, 0, 0.1, 2, post)
-            p.cylinder(0.8, 0.5, 2, 0.035, 20, post, { lineWidth: 1, shine: false })
-            const [ax, ay] = p.pt(0.2, 0.5, 20)
-            const [bx, by] = p.pt(0.8, 0.5, 20)
+            p.shadow([[0.1, 0.4], [0.9, 0.4], [0.9, 0.6], [0.1, 0.6]], 4, 0.3, 0)
+            p.cylinder(0.15, 0.5, 0, 0.13, 3, post)
+            p.cylinder(0.15, 0.5, 3, 0.05, 24, post, { lineWidth: 1.1, shine: false })
+            p.cylinder(0.85, 0.5, 0, 0.13, 3, post)
+            p.cylinder(0.85, 0.5, 3, 0.05, 24, post, { lineWidth: 1.1, shine: false })
+            const [ax, ay] = p.pt(0.15, 0.5, 26)
+            const [bx, by] = p.pt(0.85, 0.5, 26)
             p.reset()
             ctx.lineCap = 'round'
             ctx.strokeStyle = INK
-            ctx.lineWidth = 4.4
+            ctx.lineWidth = 6
             ctx.beginPath()
             ctx.moveTo(ax, ay)
-            ctx.quadraticCurveTo((ax + bx) / 2, (ay + by) / 2 + 9, bx, by)
+            ctx.quadraticCurveTo((ax + bx) / 2, (ay + by) / 2 + 11, bx, by)
             ctx.stroke()
             ctx.strokeStyle = PAL.velvet
-            ctx.lineWidth = 2.6
+            ctx.lineWidth = 3.8
+            ctx.stroke()
+            ctx.strokeStyle = 'rgba(255,255,255,0.28)'
+            ctx.lineWidth = 1
             ctx.stroke()
             for (const [x, y] of [[ax, ay], [bx, by]] as const) {
                 ctx.fillStyle = INK
                 ctx.beginPath()
-                ctx.arc(x, y - 1, 3.2, 0, Math.PI * 2)
+                ctx.arc(x, y - 1, 4, 0, Math.PI * 2)
+                ctx.fill()
+                ctx.fillStyle = PAL.gold
+                ctx.beginPath()
+                ctx.arc(x, y - 1, 2.8, 0, Math.PI * 2)
                 ctx.fill()
                 ctx.fillStyle = PAL.goldLight
                 ctx.beginPath()
-                ctx.arc(x, y - 1, 2.1, 0, Math.PI * 2)
+                ctx.arc(x - 0.8, y - 1.9, 1, 0, Math.PI * 2)
                 ctx.fill()
             }
             return
@@ -305,7 +317,9 @@ export function drawProp(p: Painter, kind: PropKind, w: number, h: number, accen
         }
         case 'bar': {
             p.shadow([[0, 0], [w, 0], [w, h], [0, h]], 7, 0.35)
-            // Bottle shelf on the back wall, then the counter.
+            // A back cabinet from the floor with uprights at its ends, bottle shelves on it, then the counter.
+            p.box(0.08, 0.0, 0, w - 0.16, 0.24, 30, faceColors(darken(PAL.woodDark, 0.1)))
+            for (const gx of [0.08, w - 0.16]) p.box(gx, 0.0, 30, 0.08, 0.2, 34, faceColors(PAL.woodDark), { lineWidth: 1 })
             p.box(0.1, 0.02, 30, w - 0.2, 0.18, 4, faceColors(PAL.woodDark), { lineWidth: 1 })
             for (let i = 0; i < 11; i++) {
                 const gx = 0.25 + i * ((w - 0.5) / 10)

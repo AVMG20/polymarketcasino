@@ -7,23 +7,27 @@ import { TextureBank, type Baked } from './art/bank'
 import { PLAYER_LOOK_PREFIX, avatarLook, lookKey } from './art/characters'
 import { drawBackdrop, drawBuildingShadow, drawPillar, drawPorch, drawWall, drawZoneFloor, rectBounds, sconceLight, wallHeight, wallKey, WALL_T, type WallLook, type WallVariant, type ZoneLook } from './art/floor'
 import { bakeFx, type FxTextures } from './art/fx'
-import { PAL, CHIP_TINT, COIN_TINT, CONFETTI } from './art/palette'
-import { CHANDELIER_LIGHT, CHANDELIER_Z, LAMP_LIGHT, LAMP_POST_LIGHT, drawChandelier, drawDoorRope, drawLampPost, drawProp, propHeight } from './art/props'
+import { CHIP_TINT, COIN_TINT, CONFETTI } from './art/palette'
+import { CHANDELIER_LIGHT, CHANDELIER_Z, LAMP_POST_LIGHT, drawChandelier, drawDoorRope, drawLampPost } from './art/props'
+import { decorSize } from './art/decor'
+import { ArrangeController, arrangeKey, type ArrangeEvents } from './arrange'
+import { DecorView, decorTexture } from './decor-view'
 import { Camera, FloorInput } from './camera'
 import { rankStatics, tileRanks, type DepthBox } from './depth'
 import { FloatTexts, Particles, coinBurst } from './effects'
 import { GuestCrowd, type GuestSpot } from './guests'
 import { HH, HW, footprintCanvas, hashString, project, unproject, type Pt } from './iso'
 import {
-    CAGE, CHANDELIERS, DESK, DOORWAYS, GRID_H, GRID_W, PLOTS, PORCH, PROPS, SPAWN, ZONE_RECTS, ZONE_ORDER,
-    areaAt, doorwayBetween, saleSpot, zoneAt, zonesBounds, type Rect, type Tile
+    ARCH_SIZE, CAGE, CHANDELIERS, DESK, DOORWAYS, GRID_H, GRID_W, PLOTS, PORCH, SPAWN, ZONE_RECTS, ZONE_ORDER,
+    areaAt, doorwayBetween, frontRow, plotAt, saleSpot, zoneAt, zonesBounds, type PlotLayout, type Rect, type Tile
 } from '#shared/floor/layout'
 import { NavGrid } from '#shared/floor/nav'
+import { layoutOf, placementProblem, type LayoutInput, type LayoutState, type PlaceTarget } from '#shared/floor/placement'
 import { Picker } from './pick'
 import { VISITOR_TIER_IDS, type VisitorCounts, type VisitorTierId } from '#shared/visitors'
 import { TIERS } from '~/utils/visitor-tiers'
-import { MAX_GUESTS, MAX_REMOTES, type FloorApi, type FloorCollectOptions, type FloorFocusOptions, type FloorMove, type FloorPlot, type FloorRemote, type FloorScene, type FloorTarget } from './types'
-import { CageView, DeskView, PlotView, SaleSignView, plotKey, type PlotShow, type ViewContext } from './views'
+import { MAX_GUESTS, MAX_REMOTES, type ArrangeItem, type ArrangeState, type FloorApi, type FloorCollectOptions, type FloorFocusOptions, type FloorMove, type FloorPlot, type FloorRemote, type FloorScene, type FloorTarget } from './types'
+import { CageView, DeskView, PlotView, SaleSignView, machineTexture, plotKey, type PlotShow, type ViewContext } from './views'
 
 type Pixi = typeof import('pixi.js')
 
@@ -42,6 +46,8 @@ export interface FloorEngineOptions {
     onRenderError?: (error: unknown) => void
     /** The avatar set off for a tile or was put on one (live presence tells the room). */
     onMove?: (move: FloorMove) => void
+    /** Arrange mode: an item picked up, the ghost moved, put down, or the carry given up (Esc). */
+    onArrange?: Partial<ArrangeEvents>
 }
 
 /** Camera and avatar position, carried over when the engine is rebuilt. */
@@ -105,12 +111,12 @@ const TOUCH_RING: [number, number][] = [[0, -7], [7, 0], [0, 7], [-7, 0], [5, -5
 const ZONE_NAMES = Object.fromEntries(ZONES.map(z => [z.id, z.name])) as Record<ZoneId, string>
 
 /**
- * Visit mode, owner away: where they doze, on the open floor beside their
- * builder desk, facing the entrance (clear of the desk, the cage, the lamps
- * and the plots at every decor level).
+ * Visit mode, owner away: where they doze, beside their builder desk facing
+ * the entrance. Games and decorations can stand there now, so the engine
+ * takes the nearest free tile to it (`ownerSpot`).
  */
-const OWNER_SPOT: Tile = { x: DESK.rect.x + DESK.rect.w, y: DESK.rect.y }
-const OWNER_FACE: Tile = { x: OWNER_SPOT.x + 2, y: OWNER_SPOT.y + 2 }
+const OWNER_HOME: Tile = { x: DESK.rect.x + DESK.rect.w, y: DESK.rect.y }
+const OWNER_FACE: Tile = { x: OWNER_HOME.x + 2, y: OWNER_HOME.y + 2 }
 
 /** Another player on the floor, as drawn. */
 interface RemoteView {
@@ -126,6 +132,38 @@ function shifted(c: { ox: number, oy: number }, sx: number, sy: number): { ox: n
 
 function boxOf(rect: Rect, height: number): DepthBox {
     return { minX: rect.x, minY: rect.y, maxX: rect.x + rect.w, maxY: rect.y + rect.h, height }
+}
+
+/** Where a plot stands (an older scene without rects: its home spot). */
+function plotRect(plot: FloorPlot): Rect | null {
+    if (plot.rect !== undefined) return plot.rect
+    return PLOTS[plot.id]?.rect ?? null
+}
+
+/** Built or being built: it stands on the floor (and can be moved). */
+function standing(plot: FloorPlot): boolean {
+    return plot.status === 'built' || plot.status === 'building'
+}
+
+/** A plot's layout at its rect: the avatar's tile in front, the guests' spots. */
+function plotLayout(plot: FloorPlot, rect: Rect): PlotLayout {
+    const at = plotAt(plot.id, rect)
+    if (at) return at
+    return { id: plot.id, zone: plot.zone, archetype: plot.archetype, rect, front: { x: rect.x + Math.floor((rect.w - 1) / 2), y: rect.y + rect.h }, spots: frontRow(rect) }
+}
+
+/** What stands where in a scene, as placement.ts reads it. */
+function sceneLayout(scene: FloorScene, owned: ReadonlySet<ZoneId>): LayoutState {
+    const games: Record<string, Tile> = {}
+    for (const plot of scene.plots) {
+        const r = plotRect(plot)
+        if (r && standing(plot)) games[plot.id] = { x: r.x, y: r.y }
+    }
+    return { zones: [...owned], games, decor: (scene.decorations ?? []).map(d => ({ id: d.id, type: d.type, x: d.x, y: d.y })) }
+}
+
+function sameRect(a: Rect, b: Rect): boolean {
+    return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h
 }
 
 const TIER_COLORS = Object.fromEntries(TIERS.map(t => [t.id, t.color])) as Record<VisitorTierId, string>
@@ -181,6 +219,10 @@ export class FloorEngine implements FloorApi {
     private readonly overlay: Container
     private readonly fxLayer: Container
     private readonly screenFx: Container
+    /** Rugs: flat decorations under everything else. */
+    private readonly rugLayer: Container
+    /** Arrange mode's lifted ghosts, above everything standing. */
+    private readonly ghostLayer: Container
 
     private readonly camera: Camera
     private readonly input: FloorInput
@@ -195,6 +237,19 @@ export class FloorEngine implements FloorApi {
     /** Zones drawn on the floor: all of them, so the player sees what they can grow into. */
     private readonly visible = new Set<ZoneId>(ZONE_ORDER)
     private nav: NavGrid
+    /** What stands where (games, decorations, cage, desk): placement checks and the walk grid. */
+    private layout: LayoutInput | null = null
+    private layoutKey = ''
+    /** Doorway tiles a FOR SALE sign stands on (blocked on the walk grid). */
+    private saleBlocks: Tile[] = []
+    private decorViews = new Map<number, DecorView>()
+    private readonly arranger: ArrangeController
+    /** Arrange mode: display roots and floor tiles of the movable items. */
+    private arrangeRoots = new Map<Container, ArrangeItem>()
+    private arrangeTiles = new Map<number, ArrangeItem>()
+    private arrangeLit: Container[] = []
+    /** 0..1: how far the floor has gone into arrange mode (guests fade, the avatar hides). */
+    private arrangeFade = 0
     private structureViews: Container[] = []
     private structureSigns: SaleSignView[] = []
     private structureStatics: Static[] = []
@@ -308,7 +363,9 @@ export class FloorEngine implements FloorApi {
         this.overlay = new PIXI.Container()
         this.fxLayer = new PIXI.Container()
         this.screenFx = new PIXI.Container()
-        this.world.addChild(this.ground, this.floorFx, this.fog, this.objects, this.lights, this.overlay, this.fxLayer)
+        this.rugLayer = new PIXI.Container()
+        this.ghostLayer = new PIXI.Container()
+        this.world.addChild(this.ground, this.rugLayer, this.floorFx, this.fog, this.objects, this.lights, this.ghostLayer, this.overlay, this.fxLayer)
         app.stage.addChild(this.bg, this.world, this.vignette, this.screenFx)
 
         this.camera = new Camera(this.reduced)
@@ -326,7 +383,12 @@ export class FloorEngine implements FloorApi {
             hoverEnd: () => {
                 this.hoverPos = null
                 this.setHover(null)
-            }
+                this.arranger?.hoverEnd()
+            },
+            press: (x, y, touch) => this.arranger.press(x, y, touch),
+            drag: (x, y) => this.arranger.drag(x, y),
+            release: (x, y, moved) => this.arranger.release(x, y, moved),
+            dragCancel: () => this.arranger.dragCancel()
         })
         this.particles = new Particles(PIXI, this.fxLayer, this.reduced ? 80 : 260)
         this.screenParticles = new Particles(PIXI, this.screenFx, 60)
@@ -343,7 +405,34 @@ export class FloorEngine implements FloorApi {
             now: () => Date.now() + (this.scene?.clockOffset ?? 0)
         }
 
-        this.nav = new NavGrid(new Set(['backroom']), 0)
+        this.nav = new NavGrid({ zones: ['backroom'], pieces: [] })
+        const events = opts.onArrange ?? {}
+        this.arranger = new ArrangeController({
+            PIXI,
+            fx: this.fx,
+            camera: this.camera,
+            particles: this.particles,
+            reduced: this.reduced,
+            floorLayer: this.floorFx,
+            ghostLayer: this.ghostLayer,
+            owned: () => this.owned,
+            itemAt: (sx, sy, touch) => this.itemAt(sx, sy, touch),
+            itemRect: item => this.itemRect(item),
+            itemSize: item => this.itemSize(item),
+            itemArt: item => this.itemArt(item),
+            itemFront: (item, at) => item.kind === 'game' ? frontRow({ ...at, ...this.itemSize(item) }) : [],
+            problem: (item, at) => this.itemProblem(item, at),
+            setHidden: (key, hidden) => this.setItemHidden(key, hidden),
+            highlight: item => this.arrangeHighlight(item),
+            landed: (item, at, known) => this.landed(item, at, known),
+            decorIds: () => new Set((this.scene?.decorations ?? []).map(d => d.id)),
+            events: {
+                pick: item => events.pick?.(item),
+                hover: (at, problem) => events.hover?.(at, problem),
+                drop: (item, at) => events.drop?.(item, at),
+                cancel: () => events.cancel?.()
+            }
+        })
 
         // The player's avatar starts on the porch and walks in.
         this.player = new Actor(PIXI, figureFrames(this.bank, avatarLook('player')), this.fx, SPAWN)
@@ -449,6 +538,13 @@ export class FloorEngine implements FloorApi {
             Math.max(0, Math.min(5, Math.round(scene.decor)))
         ])
         const skins = new Map(scene.zones.map(z => [z.id, owned.has(z.id) ? z.skin ?? DEFAULT_SKIN : DEFAULT_SKIN] as const))
+        const layoutState = sceneLayout(scene, owned)
+        const layoutKey = JSON.stringify(layoutState)
+        const moved = layoutKey !== this.layoutKey
+        if (moved) {
+            this.layoutKey = layoutKey
+            this.layout = layoutOf(layoutState)
+        }
         if (key !== this.structureKey) {
             const grew = !this.firstScene && owned.size > this.owned.size
             this.structureKey = key
@@ -459,8 +555,12 @@ export class FloorEngine implements FloorApi {
             if (grew) this.frameOwned(true)
         } else {
             this.reskin(skins)
-            this.syncPlots(scene)
+            // Something moved: a new walk grid (guests re-path), views at their new spots.
+            if (moved) this.rebuildNav()
+            const decor = this.syncDecor(scene)
+            this.syncPlots(scene, moved || decor)
         }
+        this.arranger.sceneChanged()
         this.pruneFigures()
         this.setCage(scene.cage.fill, scene.cage.stored)
         this.partyOn = scene.rush
@@ -499,7 +599,7 @@ export class FloorEngine implements FloorApi {
         this.owner = null
         this.ownerZzz = null
         if (!owner) return
-        this.owner = new Actor(this.PIXI, figureFrames(this.bank, avatarLook(owner.name, owner.avatar)), this.fx, OWNER_SPOT)
+        this.owner = new Actor(this.PIXI, figureFrames(this.bank, avatarLook(owner.name, owner.avatar)), this.fx, this.ownerSpot())
         this.owner.tag = makeNameTag(this.PIXI, owner.name, false)
         this.overlay.addChild(this.owner.tag)
         this.objects.addChild(this.owner.container)
@@ -529,6 +629,25 @@ export class FloorEngine implements FloorApi {
             box.addChild(z)
         }
         return box
+    }
+
+    /** The free tile nearest the owner's dozing spot by the desk (something may stand on it). */
+    private ownerSpot(): Tile {
+        if (this.nav.isWalkable(OWNER_HOME.x, OWNER_HOME.y)) return OWNER_HOME
+        return this.nav.nearestWalkable(OWNER_HOME.x + 0.5, OWNER_HOME.y + 0.5, 6) ?? OWNER_HOME
+    }
+
+    /** The layout changed: a dozing owner moves off anything now standing where they were. */
+    private placeOwner() {
+        const owner = this.owner
+        if (!owner) return
+        const spot = this.ownerSpot()
+        const here = owner.tile
+        if (here.x === spot.x && here.y === spot.y) return
+        owner.x = spot.x + 0.5
+        owner.y = spot.y + 0.5
+        owner.face(OWNER_FACE)
+        owner.place()
     }
 
     /** The away owner breathes slowly and the Z's float up. */
@@ -858,26 +977,6 @@ export class FloorEngine implements FloorApi {
             }
         }
 
-        // Furniture and decoration in owned zones.
-        for (const prop of PROPS) {
-            if (!this.owned.has(prop.zone) || prop.decor > decor) continue
-            const accent = PAL.velvet
-            const { w, h } = prop.rect
-            const baked = bank.get(`prop:${prop.kind}:${w}x${h}`, () => {
-                const c = footprintCanvas(w, h, propHeight(prop.kind) + 8, 12)
-                return bank.bake(c.width, c.height, c.ox, c.oy, p => drawProp(p, prop.kind, w, h, accent), true)
-            })
-            const view = new PIXI.Sprite(baked.texture)
-            view.anchor.set(baked.ox / baked.width, baked.oy / baked.height)
-            const at = project(prop.rect.x, prop.rect.y)
-            view.position.set(at.x, at.y)
-            addStatic(`prop:${prop.kind}:${prop.rect.x}:${prop.rect.y}`, view, boxOf(prop.rect, propHeight(prop.kind)))
-            if (prop.kind === 'lamp') {
-                addGlow(at.x + LAMP_LIGHT.x, at.y + LAMP_LIGHT.y, 1.1, 0.6)
-                const f = project(prop.rect.x + 0.5, prop.rect.y + 0.5)
-                addPool(f.x, f.y, 1.4, 0.32)
-            }
-        }
         if (decor >= 4) {
             for (const ch of CHANDELIERS) {
                 if (!this.owned.has(ch.zone)) continue
@@ -928,15 +1027,13 @@ export class FloorEngine implements FloorApi {
             }
         }
 
-        // Navigation.
-        this.nav = new NavGrid(this.owned, decor)
-
         // FOR SALE / OPENING SOON signs.
+        this.saleBlocks = []
         for (const z of scene.zones) {
             if (this.owned.has(z.id) || (!z.available && !z.construction)) continue
             const spot = saleSpot(z.id, this.owned)
             if (!spot) continue
-            this.nav.setBlocked(spot.sign, true)
+            this.saleBlocks.push(spot.sign)
             const at = project(spot.sign.x + 0.5, spot.sign.y + 0.5)
             const view = new SaleSignView(this.ctx, at, ZONE_NAMES[z.id], z.construction)
             this.structureSigns.push(view)
@@ -945,6 +1042,9 @@ export class FloorEngine implements FloorApi {
             addStatic(`sale:${z.id}`, view.container, { minX: rect.x + 0.2, maxX: rect.x + 0.8, minY: rect.y + 0.2, maxY: rect.y + 0.8, height: 70 }, false)
             this.saleTargets.set(z.id, { target: { kind: 'zone', id: z.id }, stand: spot.stand, face: spot.sign, rect, center: { x: at.x, y: at.y - 30 } })
         }
+
+        // Navigation: the floor of the owned rooms, minus what stands on it.
+        this.rebuildNav()
 
         // Cage and desk (re-baked only when the decor tier changes).
         const cageTier = decor >= 3 ? 1 : 0
@@ -964,6 +1064,7 @@ export class FloorEngine implements FloorApi {
         bank.prune('shadow:', usedFloors)
         this.pruneSkinned()
 
+        this.syncDecor(scene)
         this.syncPlots(scene, true)
 
         // Camera bounds: the whole building, so every future zone can be panned to.
@@ -1015,8 +1116,42 @@ export class FloorEngine implements FloorApi {
         this.bank.prune(`fig:${PLAYER_LOOK_PREFIX}`, keep)
     }
 
-    private plotShow(plot: FloorPlot): PlotShow {
-        if (!this.owned.has(plot.zone)) return 'ghost'
+    /** The walk grid from what stands on the floor, FOR SALE signs blocking their doorway tiles. */
+    private rebuildNav() {
+        this.nav = new NavGrid(this.layout ?? { zones: [...this.owned], pieces: [] })
+        for (const t of this.saleBlocks) this.nav.setBlocked(t, true)
+        this.placeOwner()
+    }
+
+    /** Decorations on the floor: new ones drawn, moved ones redrawn, gone ones removed. True when any changed. */
+    private syncDecor(scene: FloorScene): boolean {
+        let changed = false
+        const seen = new Set<number>()
+        for (const d of scene.decorations ?? []) {
+            const zone = zoneAt(d.x, d.y)
+            if (!zone || !this.owned.has(zone)) continue
+            seen.add(d.id)
+            const existing = this.decorViews.get(d.id)
+            if (existing && existing.key === `${d.type}:${d.x}:${d.y}`) continue
+            existing?.destroy()
+            const view = new DecorView(this.ctx, d.id, d.type, d.x, d.y)
+            if (view.flat) this.rugLayer.addChild(view.container)
+            else this.objects.addChild(view.container)
+            this.decorViews.set(d.id, view)
+            changed = true
+        }
+        for (const [id, view] of this.decorViews) {
+            if (seen.has(id)) continue
+            view.destroy()
+            this.decorViews.delete(id)
+            changed = true
+        }
+        return changed
+    }
+
+    private plotShow(plot: FloorPlot, rect: Rect): PlotShow {
+        const zone = zoneAt(rect.x, rect.y) ?? plot.zone
+        if (!this.owned.has(zone)) return 'ghost'
         if (plot.status === 'locked') return 'locked'
         return plot.status
     }
@@ -1025,19 +1160,18 @@ export class FloorEngine implements FloorApi {
         let changed = force
         const seen = new Set<string>()
         for (const plot of scene.plots) {
-            const layout = PLOTS[plot.id]
-            // Games in zones beyond the one for sale are not drawn.
-            if (!layout || !this.visible.has(plot.zone)) continue
+            const rect = plotRect(plot)
+            if (!rect) continue
             seen.add(plot.id)
-            const show = this.plotShow(plot)
+            const show = this.plotShow(plot, rect)
             const existing = this.plots.get(plot.id)
-            const view = existing && existing.key === plotKey(plot, show) ? existing : null
+            const view = existing && existing.key === plotKey(plot, show) && sameRect(existing.layout.rect, rect) ? existing : null
             if (view) {
                 if (plot.occupancy) view.setSeated(plot.occupancy.seated, plot.occupancy.seats)
                 continue
             }
             existing?.destroy()
-            const next = new PlotView(this.ctx, layout, plot, show)
+            const next = new PlotView(this.ctx, plotLayout(plot, rect), plot, show)
             next.onDust = (x, y) => this.dust(x, y)
             next.setPlaying(this.playingSet.has(plot.id))
             this.plots.set(plot.id, next)
@@ -1057,15 +1191,18 @@ export class FloorEngine implements FloorApi {
     private reorder() {
         const statics: Static[] = [...this.structureStatics]
         for (const [id, view] of this.plots) {
-            const rect = PLOTS[id]!.rect
             if (view.show === 'ghost') continue
-            statics.push({ id: `plot:${id}`, view: view.container, box: boxOf(rect, view.height) })
+            statics.push({ id: `plot:${id}`, view: view.container, box: boxOf(view.layout.rect, view.height) })
+        }
+        for (const [id, view] of this.decorViews) {
+            if (view.flat) continue
+            statics.push({ id: `decor:${id}`, view: view.container, box: boxOf(view.rect, view.height) })
         }
         if (this.cage) statics.push({ id: 'cage', view: this.cage.container, box: boxOf(CAGE.rect, 96) })
         if (this.desk) statics.push({ id: 'desk', view: this.desk.container, box: boxOf(DESK.rect, 80) })
         const boxes = statics.map(s => s.box)
         // The ranking is O(n²) in statics: reuse it while the boxes are the same (a plot changed state, not size).
-        const rankKey = `${this.structureKey}|${statics.map(s => `${s.id}:${s.box.height}`).join(',')}`
+        const rankKey = `${this.structureKey}|${this.layoutKey}|${statics.map(s => `${s.id}:${s.box.height}`).join(',')}`
         if (rankKey !== this.rankKey || !this.rankCache) {
             const rank = rankStatics(boxes)
             this.rankCache = { rank, tiles: tileRanks(boxes, rank) }
@@ -1099,7 +1236,7 @@ export class FloorEngine implements FloorApi {
         }
         for (const [id, view] of this.plots) {
             if (view.show === 'ghost') continue
-            const layout = PLOTS[id]!
+            const layout = view.layout
             const r = layout.rect
             register({
                 target: { kind: 'game', id },
@@ -1126,7 +1263,7 @@ export class FloorEngine implements FloorApi {
         const spots: GuestSpot[] = []
         for (const [id, view] of this.plots) {
             if (view.show !== 'built') continue
-            const layout = PLOTS[id]!
+            const layout = view.layout
             const r = layout.rect
             const occupied = layout.archetype === 'cards' ? view.plot.occupancy?.seated.length ?? 0 : 0
             layout.spots.forEach((t, i) => {
@@ -1137,6 +1274,7 @@ export class FloorEngine implements FloorApi {
             })
         }
         this.guests.setWorld(this.nav, spots)
+        this.indexArrange()
         // Keep the player on walkable ground.
         const pt = this.player.tile
         if (!this.nav.isWalkable(pt.x, pt.y)) {
@@ -1148,6 +1286,162 @@ export class FloorEngine implements FloorApi {
                 this.player.place()
             }
         }
+    }
+
+    // ── arrange mode ──────────────────────────────────────────────────────
+
+    /** Arrange mode's picking tables: which display roots and floor tiles belong to a movable item. */
+    private indexArrange() {
+        this.arrangeRoots.clear()
+        this.arrangeTiles.clear()
+        const tiles = (r: Rect, item: ArrangeItem, under = false) => {
+            for (let x = r.x; x < r.x + r.w; x++) {
+                for (let y = r.y; y < r.y + r.h; y++) {
+                    if (x < 0 || y < 0 || x >= GRID_W || y >= GRID_H) continue
+                    const i = y * GRID_W + x
+                    if (!under || !this.arrangeTiles.has(i)) this.arrangeTiles.set(i, item)
+                }
+            }
+        }
+        for (const [id, view] of this.plots) {
+            if (view.show !== 'built' && view.show !== 'building') continue
+            const item: ArrangeItem = { kind: 'game', id }
+            this.arrangeRoots.set(view.container, item)
+            tiles(view.layout.rect, item)
+            view.setHidden(this.arranger.hides(arrangeKey(item)))
+        }
+        for (const [id, view] of this.decorViews) {
+            const item: ArrangeItem = { kind: 'decor', id, type: view.type }
+            if (!view.flat) {
+                this.arrangeRoots.set(view.container, item)
+                tiles(view.rect, item)
+            }
+            view.setHidden(this.arranger.hides(arrangeKey(item)))
+        }
+        // Rugs last: a tile shared with something standing on it picks that.
+        for (const [id, view] of this.decorViews) if (view.flat) tiles(view.rect, { kind: 'decor', id, type: view.type }, true)
+    }
+
+    /** The movable item under a screen point: its picture first, else the floor tile it stands on. */
+    private itemAt(sx: number, sy: number, touch: boolean): ArrangeItem | null {
+        const at = (x: number, y: number): ArrangeItem | null => {
+            this.objects.sortChildren()
+            const objects = this.objects.children
+            for (let i = objects.length - 1; i >= 0; i--) {
+                const c = objects[i]!
+                const item = this.arrangeRoots.get(c)
+                if (item && this.picker.hit(c, x, y)) return item
+            }
+            const w = this.camera.screenToWorld(x, y)
+            const g = unproject(w.x, w.y)
+            const tx = Math.floor(g.x)
+            const ty = Math.floor(g.y)
+            if (tx < 0 || ty < 0 || tx >= GRID_W || ty >= GRID_H) return null
+            return this.arrangeTiles.get(ty * GRID_W + tx) ?? null
+        }
+        const hit = at(sx, sy)
+        if (hit || !touch) return hit
+        for (const [dx, dy] of TOUCH_RING) {
+            const near = at(sx + dx, sy + dy)
+            if (near) return near
+        }
+        return null
+    }
+
+    private itemRect(item: ArrangeItem): Rect | null {
+        const scene = this.scene
+        if (!scene || item.kind === 'new') return null
+        if (item.kind === 'game') {
+            const plot = scene.plots.find(p => p.id === item.id)
+            return plot && standing(plot) ? plotRect(plot) : null
+        }
+        const d = scene.decorations?.find(x => x.id === item.id)
+        return d ? { x: d.x, y: d.y, ...decorSize(d.type) } : null
+    }
+
+    private itemSize(item: ArrangeItem): { w: number, h: number } {
+        if (item.kind !== 'game') return decorSize(item.type)
+        const plot = this.scene?.plots.find(p => p.id === item.id)
+        const r = plot ? plotRect(plot) : null
+        return r ? { w: r.w, h: r.h } : plot ? ARCH_SIZE[plot.archetype] : { w: 1, h: 1 }
+    }
+
+    private itemArt(item: ArrangeItem) {
+        if (item.kind !== 'game') return decorTexture(this.ctx, item.type)
+        const plot = this.scene?.plots.find(p => p.id === item.id)
+        if (!plot) return this.fx.dust
+        const rect = plotRect(plot) ?? { x: 0, y: 0, ...ARCH_SIZE[plot.archetype] }
+        return machineTexture(this.ctx, plot, plotLayout(plot, rect), Math.max(1, plot.level), plot.golden, plot.occupancy?.seats ?? 5).baked
+    }
+
+    /** Why `item` can't stand at `at`, in the words the server uses (a game being built moves like any other). */
+    private itemProblem(item: ArrangeItem, at: Tile): string | null {
+        if (!this.layout) return null
+        const target: PlaceTarget = item.kind === 'game' ? { kind: 'game', id: item.id } : item.kind === 'decor' ? { kind: 'decor', id: item.id, type: item.type } : { kind: 'decor', type: item.type }
+        try {
+            return placementProblem(this.layout, target, at)
+        } catch (err) {
+            console.error('[floor] placement check failed', err)
+            return null
+        }
+    }
+
+    private setItemHidden(key: string, hidden: boolean) {
+        const [kind, id] = key.split(':') as [string, string]
+        if (kind === 'game') this.plots.get(id)?.setHidden(hidden)
+        else if (kind === 'decor') this.decorViews.get(Number(id))?.setHidden(hidden)
+    }
+
+    /** The scene shows a dropped item where it was put. */
+    private landed(item: ArrangeItem, at: Tile, known: ReadonlySet<number>): boolean {
+        const scene = this.scene
+        if (!scene) return false
+        if (item.kind === 'game') {
+            const plot = scene.plots.find(p => p.id === item.id)
+            const r = plot ? plotRect(plot) : null
+            return !!r && r.x === at.x && r.y === at.y
+        }
+        const list = scene.decorations ?? []
+        if (item.kind === 'decor') return list.some(d => d.id === item.id && d.x === at.x && d.y === at.y)
+        return list.some(d => d.type === item.type && d.x === at.x && d.y === at.y && !known.has(d.id))
+    }
+
+    /** The mouse rests on a movable item: it brightens and its footprint shows. */
+    private arrangeHighlight(item: ArrangeItem | null) {
+        for (const r of this.arrangeLit) if (!r.destroyed) r.filters = null
+        this.arrangeLit = []
+        const g = this.hoverGfx
+        g.clear()
+        this.hoverKey = ''
+        if (!item) return
+        const view = item.kind === 'game' ? this.plots.get(item.id)?.container : item.kind === 'decor' ? this.decorViews.get(item.id)?.container : undefined
+        if (view) {
+            view.filters = [this.hoverFilter]
+            this.arrangeLit = [view]
+        }
+        const r = this.itemRect(item)
+        if (r) {
+            const pts = [project(r.x, r.y), project(r.x + r.w, r.y), project(r.x + r.w, r.y + r.h), project(r.x, r.y + r.h)]
+            g.poly(pts.flatMap(p => [p.x, p.y])).fill({ color: 0xffe9a8, alpha: 0.16 }).stroke({ color: 0xfff1c4, width: 2, alpha: 0.9 })
+        }
+    }
+
+    /**
+     * Arrange mode on (a state) or off (null). The avatar hides and guests
+     * fade; taps pick things up (arrange.ts).
+     */
+    arrange(state: ArrangeState | null) {
+        if (this.destroyed) return
+        const was = this.arranger.active
+        if (state && !was) {
+            // Leave walking behind: no route, no pending use, no highlight.
+            this.pending = null
+            this.player.stop()
+            this.marker.visible = false
+            this.setHover(null)
+        }
+        this.arranger.set(state)
+        if (!state && was) this.input.setCursor('default')
     }
 
     // ── input ─────────────────────────────────────────────────────────────
@@ -1218,6 +1512,10 @@ export class FloorEngine implements FloorApi {
     }
 
     private tap(sx: number, sy: number, touch: boolean) {
+        if (this.arranger.active) {
+            this.arranger.tap(sx, sy)
+            return
+        }
         if (this.onSelf(sx, sy)) {
             this.pending = null
             if (!this.reduced) this.player.showEmote('smile', 1)
@@ -1241,6 +1539,7 @@ export class FloorEngine implements FloorApi {
 
     /** Mouse over the floor: outline what a click would do. True when that is a target. */
     private hover(sx: number, sy: number): boolean {
+        if (this.arranger.active) return this.arranger.hover(sx, sy)
         if (this.onSelf(sx, sy)) {
             this.setHover(null)
             return true
@@ -1360,11 +1659,13 @@ export class FloorEngine implements FloorApi {
         const found = this.targetsByKey.get(targetKey(target))
         if (found) return found
         if (target.kind === 'game') {
-            // A game in a zone not owned yet: go to that zone's sign if there is one.
-            const layout = PLOTS[target.id]
-            if (!layout) return null
-            const sale = this.saleTargets.get(layout.zone)
-            const r = layout.rect
+            // A game not on the floor: its hint spot, or its home in a zone not owned yet (that zone's sign).
+            const plot = this.scene?.plots.find(p => p.id === target.id)
+            const home = PLOTS[target.id]
+            const r = (plot && plotRect(plot)) ?? home?.rect
+            if (!r) return null
+            const zone = zoneAt(r.x, r.y) ?? home?.zone
+            const sale = zone && !this.owned.has(zone) ? this.saleTargets.get(zone) : undefined
             return { target, stand: sale?.stand ?? this.player.tile, face: { x: r.x, y: r.y }, rect: null, center: project(r.x + r.w / 2, r.y + r.h / 2, 30) }
         }
         return null
@@ -1460,7 +1761,7 @@ export class FloorEngine implements FloorApi {
     /** `options.to`: the HUD pill in canvas pixels (default: the top right). */
     /** A playing guest spent `amount` at their machine: a small coin rises with "+N". */
     private guestEarned(x: number, y: number, amount: number) {
-        if (this.paused || this.destroyed) return
+        if (this.paused || this.destroyed || this.arranger.active) return
         if (amount >= 1) this.floaters.spawn(`+${formatCoins(amount, true)}`, x + 10, y - 58, COIN_TINT, 14)
         if (!this.reduced) {
             this.particles.spawn(this.fx.coin.texture, x - 6, y - 52, {
@@ -1658,8 +1959,12 @@ export class FloorEngine implements FloorApi {
             view.actor.container.zIndex = this.actorZ(view.actor)
         }
 
+        // Arrange mode: guests and other players fade, the avatar steps out of the picture.
+        this.updateArrange(dt)
+
         // Machines and props.
         for (const view of this.plots.values()) view.update(dt)
+        for (const view of this.decorViews.values()) view.update(dt)
         this.cage?.update(dt)
         this.desk?.update(dt)
         for (const s of this.structureSigns) s.update(dt)
@@ -1715,7 +2020,7 @@ export class FloorEngine implements FloorApi {
 
         // Camera.
         this.camera.update(dt)
-        if (this.player.moving) {
+        if (this.player.moving && !this.arranger.active) {
             const p = project(this.player.x, this.player.y)
             this.camera.follow(p.x, p.y - 30, dt)
         }
@@ -1734,12 +2039,38 @@ export class FloorEngine implements FloorApi {
         }
     }
 
+    private updateArrange(dt: number) {
+        this.arranger.update(dt)
+        const want = this.arranger.active ? 1 : 0
+        // Off and settled: nothing to do (on, it keeps newcomers faded too).
+        if (this.arrangeFade === want && want === 0) return
+        const step = this.reduced ? 1 : dt * 4
+        this.arrangeFade = want > this.arrangeFade ? Math.min(1, this.arrangeFade + step) : Math.max(0, this.arrangeFade - step)
+        const k = this.arrangeFade
+        const seen = 1 - k * 0.85
+        this.guests.visibility = seen
+        const hidePlayer = k > 0.5
+        this.player.container.visible = !hidePlayer
+        if (this.player.tag) this.player.tag.visible = !hidePlayer
+        for (const view of this.remotes.values()) {
+            view.actor.container.alpha = seen
+            if (view.actor.tag) view.actor.tag.visible = !hidePlayer
+        }
+        if (this.owner) {
+            this.owner.container.alpha = seen
+            if (this.owner.tag) this.owner.tag.visible = !hidePlayer
+        }
+    }
+
     destroy() {
         if (this.destroyed) return
         this.destroyed = true
         this.app.ticker.remove(this.tick, this)
         this.app.ticker.remove(this.renderFrame, this)
         this.input.destroy()
+        this.arranger.destroy()
+        for (const v of this.decorViews.values()) v.destroy()
+        this.decorViews.clear()
         this.hoverRoots = []
         this.hitRoots.clear()
         this.guests.destroy()

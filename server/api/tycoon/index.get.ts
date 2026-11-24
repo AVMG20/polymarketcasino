@@ -1,6 +1,6 @@
 import type { TycoonState } from '#shared/tycoon'
 import { requirePlayerId } from '#server/utils/session'
-import { getTycoonState } from '#server/utils/tycoon'
+import { readTycoonState } from '#server/utils/tycoon'
 
 /**
  * GET /api/tycoon: the player's casino (created on first visit, finished builds applied) and today's
@@ -8,5 +8,5 @@ import { getTycoonState } from '#server/utils/tycoon'
  */
 export default defineEventHandler(async (event): Promise<TycoonState> => {
     const playerId = await requirePlayerId(event)
-    return getTycoonState(playerId, Date.now(), { welcome: getQuery(event).welcome === '1' })
+    return readTycoonState(playerId, Date.now(), { welcome: getQuery(event).welcome === '1' })
 })

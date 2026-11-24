@@ -26,7 +26,8 @@ const v = computed(() => tycoon.view('game', props.slug))
       </div>
       <h1 class="g-title text-3xl leading-tight">{{ game?.name ?? 'Unknown game' }}</h1>
       <TycoonSkipButton v-if="v.running" class="h-12 rounded-xl px-4 text-lg" :left-ms="v.running.leftMs" :target="`game:${slug}`" />
-      <p v-else-if="v.lockZone" class="flex items-center gap-1.5 font-semibold text-[#ffc93a]"><Lock class="size-4" :stroke-width="3" /> {{ v.lockZone }}</p>
+      <p v-else-if="v.lockLevel" class="flex items-center gap-1.5 font-semibold text-[#ffc93a]"><Lock class="size-4" :stroke-width="3" /> Reach casino level {{ v.lockLevel }}</p>
+      <p v-else-if="v.noRoom" class="font-semibold text-[#ffb35c]">No room for it: open a room or move things</p>
       <button v-if="overlay" type="button" class="g-btn g-green h-14 w-full rounded-2xl text-xl uppercase" @click="$emit('build')">
         <HardHat class="size-6" :stroke-width="2.75" /> Build
         <span v-if="v.cost && !v.running" class="ml-2 rounded-xl bg-black/25 px-2.5 py-1 text-lg normal-case"><TycoonCost :amount="v.cost.chips" /></span>

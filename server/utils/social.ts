@@ -5,6 +5,8 @@ import { normalizeAvatar, normalizeSkins, type ZoneSkins } from '../../shared/co
 import { amsterdamDay } from '../../shared/economy'
 import { casinoTier, casinoValue, LEADERBOARD_SIZE, type CasinoOwner, type CasinoVisit, type LeaderboardEntry, type LeaderboardResponse, type LikeResponse } from '../../shared/social'
 import { activeCampaign, progressOf, ZONES, type UpgradeId, type ZoneId } from '../../shared/tycoon'
+import { casinoLevel, roomLook } from '../../shared/casino-level'
+import { layoutStateOf } from '../../shared/floor/placement'
 import { floorNow, seatedTotal } from '../../shared/visitors'
 import { casinoView, peekCasino } from './tycoon'
 
@@ -146,6 +148,8 @@ export function getCasinoVisit(visitorId: string, ownerId: string, now = Date.no
         .where(and(eq(casinoLikes.ownerId, ownerId), eq(casinoLikes.visitorId, visitorId), eq(casinoLikes.day, amsterdamDay(new Date(now)))))
         .get()
     const games = Object.fromEntries(Object.entries(casino.games).filter(([, level]) => level >= 1))
+    // Games being built for the first time already stand on the floor (the walk grid blocks them too).
+    const building = [...new Set(casino.constructions.filter(row => row.kind === 'game' && (games[row.target] ?? 0) < 1).map(row => row.target))]
     return {
         serverNow: now,
         owner,
@@ -155,7 +159,12 @@ export function getCasinoVisit(visitorId: string, ownerId: string, now = Date.no
         zones: ZONES.map(zone => zone.id).filter(id => casino.zones.includes(id)),
         games,
         golden: casino.golden.filter(slug => (games[slug] ?? 0) >= 1),
-        decor: casino.upgrades.decor ?? 0,
+        level: casinoLevel(casino).level,
+        look: roomLook(casinoLevel(casino).level),
+        // Where the built games and the placed decorations stand (stored ones stay private).
+        placements: Object.fromEntries(Object.entries(layoutStateOf({ zones: casino.zones, games, constructions: building.map(id => ({ kind: 'game', id })), placements: casino.placements }).games)),
+        building,
+        decorations: casino.decor.filter(item => item.x !== null && item.y !== null).map(item => ({ id: item.id, type: item.type, x: item.x, y: item.y })),
         // Skins on owned zones only (a skin is never put on a zone that isn't open).
         skins: Object.fromEntries(Object.entries(skins).filter(([zone]) => casino.zones.includes(zone as ZoneId))),
         visitors: seated,

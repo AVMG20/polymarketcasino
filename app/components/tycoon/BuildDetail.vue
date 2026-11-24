@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowBigUp, ArrowRight, ChevronLeft, Clock, Crown, Eye, Footprints, Gem, HardHat, Lock } from 'lucide-vue-next'
+import { ArrowBigUp, ArrowRight, ChevronLeft, Clock, Crown, Eye, Footprints, Gem, HardHat, Lock, Move } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import { formatCoins } from '#shared/money'
 import { findUpgrade, type BuildKind, type ZoneId } from '#shared/tycoon'
@@ -36,6 +36,8 @@ const target = computed(() => (v.value.running ? v.value.running.level : v.value
 const isNew = computed(() => isNewBuild(props.kind, props.id, v.value.level))
 const verb = computed(() => (props.id === 'crew' && props.kind === 'upgrade' ? 'Hire' : isNew.value ? 'Build' : 'Upgrade'))
 const soonest = computed(() => tycoon.queue.value[0] ?? null)
+const locked = computed(() => !!v.value.lockZone || !!v.value.lockLevel)
+const arrange = useArrange()
 const shake = ref(0)
 
 async function start() {
@@ -56,8 +58,8 @@ async function start() {
         <ChevronLeft class="size-6" :stroke-width="3" />
       </button>
       <div class="relative size-24 shrink-0 overflow-hidden rounded-[20px] border-[3px] border-black/50 shadow-[0_4px_0_rgb(0_0_0/0.4)] sm:size-28">
-        <TycoonItemArt :kind="kind" :id="id" :dim="!!v.lockZone" />
-        <span v-if="v.lockZone" class="absolute inset-0 grid place-items-center"><Lock class="size-8 text-[#ffc93a] drop-shadow-[0_2px_0_rgb(0_0_0/0.5)]" :stroke-width="3" /></span>
+        <TycoonItemArt :kind="kind" :id="id" :dim="locked" />
+        <span v-if="locked" class="absolute inset-0 grid place-items-center"><Lock class="size-8 text-[#ffc93a] drop-shadow-[0_2px_0_rgb(0_0_0/0.5)]" :stroke-width="3" /></span>
         <span v-if="v.maxLevel > 1 && v.level > 0" class="g-num absolute bottom-1 left-1 rounded-full border-2 border-black/50 bg-[#1b1329]/90 px-1.5 text-xs leading-4">Lv {{ v.level }}</span>
       </div>
       <div class="min-w-0 flex-1 space-y-1.5 pr-10">
@@ -99,6 +101,31 @@ async function start() {
       <TycoonSkipButton class="h-12 shrink-0 rounded-xl px-3.5 text-lg" :left-ms="v.running.leftMs" :target="`${v.running.kind}:${v.running.id}`" />
     </div>
     <div v-else-if="v.maxed" class="g-btn g-gold h-14 w-full rounded-2xl text-xl" aria-disabled="true"><Crown class="size-6" :stroke-width="3" /> MAX</div>
+    <button
+      v-else-if="v.lockLevel"
+      type="button"
+      class="g-btn g-dark h-14 w-full rounded-2xl px-4 text-lg"
+      title="Build rooms, games and upgrades to raise your casino level"
+      @click="arrange.levelOpen.value = true"
+    >
+      <Lock class="size-5 shrink-0 text-[#ffc93a]" :stroke-width="3" />
+      <span class="truncate">Reach casino level {{ v.lockLevel }}</span>
+      <ArrowRight class="ml-auto size-5 shrink-0" :stroke-width="3" />
+    </button>
+    <button
+      v-else-if="v.noRoom"
+      type="button"
+      class="g-btn g-dark h-14 w-full rounded-2xl px-4 text-lg"
+      title="Every room is full: open a new room, or move things to make space"
+      @click="arrange.start()"
+    >
+      <Move class="size-5 shrink-0 text-[#ffb35c]" :stroke-width="3" />
+      <span class="flex min-w-0 flex-col items-start leading-tight">
+        <span class="truncate">No room for it</span>
+        <span class="truncate text-[12px] font-semibold opacity-75 [text-shadow:none]">Open a room or move things</span>
+      </span>
+      <ArrowRight class="ml-auto size-5 shrink-0" :stroke-width="3" />
+    </button>
     <button
       v-else-if="v.lockZone && v.lockZoneId"
       type="button"

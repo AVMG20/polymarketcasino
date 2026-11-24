@@ -93,8 +93,9 @@ them. Coins never count.
 
 The thresholds are sized on the simulation's chip balances (`bun scripts/tycoon-sim.ts`, which plays on
 for three weeks after max): stars 1-3 come in the first session, 4-6 in the first week while saving
-between builds (the Lounge, the Crew), 7 while saving for the High Limit Room (day ~11 regular, ~15
-casual), 8 while saving for the Penthouse (it costs 132,000: day ~21 casual, ~14.5 regular), 9 around
+between builds (the Lounge, the Crew), 7 while saving for the High Limit Room (day ~11 regular, ~16-21
+casual; 24-seed means 10.5 and 17.4), 8 while saving for the Penthouse (it costs 132,000: day ~22 casual, ~15 regular;
+means 24.1 and 15.6), 9 around
 max (a maxed casino wins 100-200k chips a day) and 10 about a week of play after max (casual: max + ~8-10
 days, regular + ~6-7, whale + ~4-5). A regular who converts the 50 starting gems holds ~48,000 chips for a
 moment on day 0 (star 6) and spends them on builds. Star 8 was 150k until the polish pass: nothing in the
@@ -118,10 +119,11 @@ Thresholds live in `shared/stars.ts`; balance scripts in `scripts/` import them.
 ## My Casino
 
 Every player owns a casino floor (`/`, "My Casino"). It starts with the backroom holding Pegfall and
-Spiñata, and the rest is built with **chips**: zones, games (levels 1-5) and five casino upgrades, each with
-one purpose: Cashier Cage (storage, 5 levels), Marketing (more guests, 5), Decor (richer guests, 12 levels gated
-by the rooms), Hospitality (more and richer guests, 5 dear levels from the Table Pit) and the one-level
-Construction Crew (builders); the House Cut upgrade left with v2 and its levels are ignored. Rules and numbers
+Spiñata, and the rest is built with **chips**: zones, games (levels 1-5) and four casino upgrades, each with
+one purpose: Cashier Cage (storage, 5 levels), Marketing (more guests, 5), Hospitality (more and richer guests,
+8 levels gated by the rooms) and the one-level Construction Crew (builders). Richer guests come mostly from
+the richer-guests specials (decorations, below). The House Cut upgrade left with v2 and its levels are ignored;
+the Decor upgrade left too and was refunded (below). Rules and numbers
 live in `shared/tycoon.ts` (chip prices and cage sizes are written small and scaled by `CHIP_SCALE` 5
 and `GUEST_SCALE` 30, which size the economy against the fixed convert rate and star
 thresholds) and the guests in `shared/visitors.ts`; `bun scripts/tycoon-sim.ts [days] [seed] [days after max]`
@@ -130,10 +132,143 @@ the floor's luck) and is how the numbers were tuned.
 
 - **Chips** are stored like coins (units of 1/10,000) in `casino_profiles.chips`; every change writes a
   `chip_transactions` row (reason `bet:<slug>`, `win:<slug>`, `refund:<slug>`, `build:<kind>:<id>`,
-  `campaign:<id>`) through `server/utils/chips.ts`, inside a coin unit (so the stars follow). A debit is
+  `campaign:<id>`, `decor:<type>`) through `server/utils/chips.ts`, inside a coin unit (so the stars follow). A debit is
   guarded (`chips >= amount`).
 - **A game must be built to play it.** A round of an unbuilt game is a 403 (`Build <name> in your casino
   first`). Live tables stay shared: anyone can watch, sitting down needs the game built.
+
+### Casino level (`shared/casino-level.ts`)
+
+Every finished build step earns XP: the chips it cost at catalog prices ÷ 10 (so XP is the casino value,
+`shared/social.ts`, ÷ 10, and a bigger step gives more). The level (1-30) is worked out from what is built,
+never stored. A level comes every couple of builds in the first session (levels 1-5 on day 0), then about
+one a day mid-game and one every one to three days at the end; level 30 comes with the last few builds
+(`LEVEL_XP`, 144,000 XP of 144,962).
+
+**Room look.** The floor's carpet, walls, lights and chandeliers (look 0-5) follow the casino level, about one
+look per room: `roomLook(level)` is 1 from level 5, 2 from 10, 3 from 15, 4 from 21 (chandeliers) and 5 from 26
+(`ROOM_LOOK_LEVELS`). Visits carry `level` and `look` so a visitor sees the same floor.
+
+| level | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| XP | 60 | 140 | 250 | 400 | 600 | 850 | 1,150 | 1,500 | 1,900 | 2,400 | 3,000 | 3,800 | 4,800 | 6,000 | 7,500 |
+
+| level | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| XP | 9,500 | 12,000 | 15,000 | 19,000 | 24,000 | 30,000 | 37,000 | 45,000 | 54,000 | 64,000 | 76,000 | 92,000 | 115,000 | 145,000 |
+
+**Games unlock by level, not by room.** Rooms still need the room before them and chips (they bring floor
+space, guest tiers, house rules and the upgrades' levels); a game the level unlocks can be built in any room
+the player owns. Each game unlocks at about the level a casino has when it opens the room the game used to
+need, so the pace stayed where it was:
+
+| room it belonged to | games (level) |
+|---|---|
+| Backroom | Pegfall, Spiñata (built), Limbo 1, Wheel 2 |
+| Main Floor | Roulette 6, Trash Panda 6, Fire in the Hole 7, Candy Madness 7, Dice 8 |
+| Table Pit | Blackjack 11, Poly Masters 12, Three Card Poker 12 |
+| Slot Lounge | Book of Shadows 15, Xenoslot 16, Magic Hands 16, Ember Portals 17 |
+| High Limit Room | Baccarat 25, Casino Hold'em 26, Aether Gates 26 |
+| Penthouse | Gem Dig 29, Card Climb 29 |
+
+`buildBlocker` says `Reach casino level N` below it, and `No room for it: open a room or move things` when
+no owned room has a free spot. Where a game stands never changes income: the VIP room is the High Limit
+Room's games by the catalog, wherever they stand.
+
+### Placement (`shared/floor/placement.ts`)
+
+Every game has a home spot (its old fixed plot, `shared/floor/layout.ts`). When a game is first built the
+server stores its spot: home when that lies in an owned room and is free, else the free spot nearest to home
+in an owned room (deterministic; `buildSpot`, also the floor's "build here" hint). A built game with no stored
+spot stands at home. Built games, games under construction (the construction keeps running) and decorations
+move to any owned room (`POST /api/tycoon/place`, free); only decorations can be put away. Nothing rotates,
+machines face +gy, the cage and the builder's desk stay put. One pure check, `placementProblem`, serves the server, the floor's ghost
+and the floor socket's walk grid. A spot is fine when:
+
+- the whole footprint lies in one owned room (`Not in a room you own`, `Keep it inside one room`);
+- it covers no doorway tile, either side of any doorway, also into rooms not owned (where the FOR SALE signs
+  stand), and not the entrance (`Keep the doorways clear`);
+- it overlaps nothing, rugs included (`Something is in the way`) and covers no front (where guests stand at
+  a game, the cage's and the desk's front: `Blocks where guests stand`);
+- a game's own front row is open floor in the same room (`Needs open floor in front`);
+- it cuts nothing off: every front and every doorway tile of the owned rooms that can be walked to from the
+  entrance now (8 directions, no corner cutting) still can afterwards (`Blocks the way through`). The check is
+  relative, so a floor that is cut off somewhere can be fixed one move at a time and never made worse. Rugs
+  block nothing. Every default layout (rooms in order, games at home, all furniture of its rooms) starts
+  fully reachable (tested).
+
+Unbuilt games take no floor. `casino_profiles.placements` holds the stored spots; the check runs inside the
+`BEGIN IMMEDIATE` transaction against the rows read there, so of two parallel moves onto one tile only the
+first lands.
+
+### Decorations (`shared/decor.ts`)
+
+Bought with chips (`POST /api/tycoon/decor`, reason `decor:<type>`), unlocked by the casino level, placed at
+once or put in storage, moved and put away for free, never sold. Stored in `casino_decor` (x and y null when
+put away).
+
+- **Plain** (no stats, as many as you like): Potted Plant 150 chips (level 1), Flower Vase 250 (2), Velvet
+  Rope 300 (3), Floor Lamp 400 (4), Carpet Rug 500 (5, 2×2, guests walk over it), Palm Tree 700 (6), Neon Sign
+  900 (8), Lounge Sofa 1,200 (10), Marble Statue 1,800 (13), Bar Counter 2,500 (15), Fountain 3,000 (18), Piano
+  3,500 (22).
+- **Specials** (one per casino: the unique (player, special) index is the guard; the bonus counts only while
+  it stands on the floor, anywhere). The **richer guests** ones are the rarity ladder that took over the old
+  Decor upgrade: one every two to four casino levels, together multiplying prestige by (1 + the sum of the
+  placed ones' bonuses), so each moves guests a tier up at the level it unlocks (`specialOdds(state, type)`
+  gives the tier odds without and with one). The **spend** ones make every guest spend a little more.
+
+| special | stat | level | chips | bonus | where it unlocks: Tourists/Regulars/High Rollers, before → after | at max |
+|---|---|---|---|---|---|---|
+| Red Carpet (2×1, flat) | prestige | 7 | 750 | 0.12 | 82.1/17.9/0 → 80.4/19.6/0 % | +1.0% |
+| VIP Booth (2×1) | prestige | 9 | 1,500 | 0.15 | 80.4/19.6/0 → 78.3/21.7/0 % | +1.2% |
+| Diamond Display (1×1) | prestige | 12 | 3,000 | 0.18 | 75.4/23.5/1.1 → 72.7/25.9/1.4 % | +1.5% |
+| Golden Slot Machine (1×1) | prestige | 15 | 5,000 | 0.2 | 72.7/25.9/1.4 → 70.0/28.3/1.7 % | +1.6% |
+| Showcase Car (2×2) | prestige | 19 | 8,000 | 0.25 | 67.8/30.2/2.0 → 64.4/33.0/2.5 % | +2.0% |
+| Aquarium (2×1) | prestige | 22 | 12,000 | 0.25 | 64.4/33.0/2.5 → 61.3/35.6/3.1 % | +2.0% |
+| Ice Sculpture (1×1) | prestige | 24 | 18,000 | 0.3 | 61.3/35.6/3.1 → 57.9/38.3/3.8 % | +2.4% |
+| Grand Fountain (2×2) | prestige | 27 | 25,000 | 0.35 | 54.7/40.7/4.6 → 51.0/43.4/5.5 % | +2.8% |
+| Golden Statue (1×1) | spend | 9 | 3,000 | 0.015 | | +1.5% |
+| Jackpot Sign (2×1) | spend | 12 | 8,000 | 0.02 | | +2.0% |
+| Grand Piano (2×2) | spend | 20 | 18,000 | 0.025 | | +2.5% |
+| Champagne Bar (3×1) | spend | 28 | 60,000 | 0.03 | | +3.0% |
+
+The shifts are measured where each unlocks (the rooms open by then, games at level 3, the earlier ladder
+specials placed). With all eight placed a maxed casino draws prestige 6.9, the old Decor-12 casino's 6.8: 38%
+Tourists, 52% Regulars, 11% High Rollers, 0.12% Whales (65/32/2.4/0.01 without them). Against the maxed casino
+before this change (Decor 12, no specials; best rules), the eight richer-guests specials stand in for Decor:
+132,300 coins a day idle against 134,200, 322,400 with every ad running against 321,600 (114,400 and 185,900
+without them). The four spend specials then add +7.5% idle (144,200) and +9.4% with every ad (351,900). Spend
+multiplies what every guest spends; prestige multiplies the prestige the tiers are
+drawn with (richer guests, not more: specials add no crowd, so only all guests ads fill the floor). Prices and
+rewards read from the full floor (campaigns, mission rewards, the rush) count every special the casino owns as
+if placed, so putting one away never makes them cheaper. A maxed rush with all twelve owned costs 88 gems (57
+without), 799 coins a gem: under the 100-gem cap, so the 1.25 premium holds (tested). At max they pay back in
+16-420 hours; the sim buys one once it pays back within ten days. Placing or putting away a special accrues the
+cage up to that moment first. The visitor model gets them through `FloorView.specials` (`floorView` reads the
+placed ones).
+
+**Free furniture.** The furniture that used to stand fixed (`PROPS`) is granted as plain decorations: once a
+casino owns a room, `advanceCasino` gives all of that room's pieces, each at its old spot when that is fine,
+else into storage. Each grant has a key (unique per casino), so a piece moved or put away never comes back
+twice. Chandeliers stay fixed overhead and follow the room look.
+
+**The Decor upgrade is gone.** A casino that had built it gets the chips back once: what its levels cost at
+the last catalog prices (750 to 18,500 a level, 101,350 for all twelve; `DECOR_REFUND_CHIPS`, `decorRefund`),
+plus any Decor level still under construction, as one `refund:decor` chip credit. It happens on the owner's
+first read (`GET /api/tycoon`, and every action's response, a `commitCoins` unit): that read carries
+`decorRefund` (the chips) so the page can say why income dipped until specials are placed, and GET carries the
+star change it caused (`stars`). A gem skip can't finish a Decor level (the skip is handed back). The guards, in
+the same BEGIN IMMEDIATE transaction: a conditional update that drops `decor` from `casino_profiles.upgrades`
+only while it still holds the level read, and the delete of the Decor construction rows (… RETURNING). Until
+then other writes keep the old level on the row.
+
+Errors: `POST /api/tycoon/decor` 400 for a bad body or spot (the message is the problem) and `Not enough
+chips`, 403 `Reach casino level N`, 409 `You already own the <name>`. `POST /api/tycoon/place` 400 for a bad
+body or spot (`Only decorations can be put away` for a game), 404 `You have not built that game` / `That
+decoration is not yours`. Owner reads (`GET /api/tycoon`) carry `placements` (every game on the floor, home spots resolved) and
+`decor` (all owned); visits carry `placements`, `decorations` (placed only) and `building` (games under their
+first construction, which already take their tiles). The floor socket walks the same layout and reads it
+again as soon as something is built, placed or bought (`onFloorChange`).
 
 ### Coins in: the cashier cage (visitor tiers)
 
@@ -154,11 +289,12 @@ half again what Spiñata (2 seats) does at the same level.
 | Whale | 500 | the High Limit Room | `#fbbf24` |
 
 The odds of tier k are weight_k × P^k over the unlocked tiers, normalised (weights 1, 0.2, 0.006, 0.00001).
-The casino's **prestige** P multiplies up: × 1.09 per Decor level, × 1.045 per Hospitality level, × 1.05 per
-zone past the Backroom, × (1 + 0.002 / 0.004 / 0.008 / 0.02) per game at level 2 / 3 / 4 / 5 (the top machine
-levels draw richer guests; `richerLevel` marks 4 and 5), × 1.15 with Tourists limited at the door and × 1.35
-with them kept out, and × the wealth ads. P reaches 6.8 at max: 38% Tourists, 51% Regulars, 10% High Rollers,
-0.12% Whales. **Whales stay** one to three hours (4-12 ticks, rolled from their arrival tick): the floor at a
+The casino's **prestige** P multiplies up: × 1.03 per Hospitality level, × 1.05 per zone past the Backroom,
+× (1 + 0.002 / 0.004 / 0.008 / 0.02) per game at level 2 / 3 / 4 / 5 (the top machine levels draw richer
+guests; `richerLevel` marks 4 and 5), × 1.15 with Tourists limited at the door and × 1.35 with them kept out,
+× the wealth ads, and × (1 + Σ bonus) of the richer-guests specials standing on the floor (they lift the tier
+odds only, not the crowd). P reaches 2.45 at max without specials and 6.9 with all eight: 38% Tourists, 52%
+Regulars, 11% High Rollers, 0.12% Whales. **Whales stay** one to three hours (4-12 ticks, rolled from their arrival tick): the floor at a
 tick holds the Whales who arrived in the last three hours and haven't left, worked out from (state, seed,
 arrival tick) only, so a tick stays a pure function of (state, seed, tick); after a change the stayers are those
 the new casino would have drawn, and a Whale already in keeps its seat first. About 0.1 visits a day when the
@@ -166,7 +302,7 @@ High Limit Room opens, 1.4 a day at max, ~2 hours and ~1,000 coins each; with bo
 2.9% of arrivals.
 
 **The crowd** follows prestige: seats × 0.41 × P^0.08 × a small-floor bonus (× 1 + 0.3 × 20 ÷ (20 + seats)) ×
-(1 + 0.045 × Marketing) × (1 + 0.04 × Hospitality), plus each guests ad's share of the seats, times a mood (a
+(1 + 0.045 × Marketing) × (1 + 0.035 × Hospitality), plus each guests ad's share of the seats, times a mood (a
 random good or quiet hour ±30%, day ±10%, tick ±15%; no time-of-day curve). Idle, a floor runs 47-54% full
 early and 65-73% late: never full. Each guests ad adds its own share (Flyers 12% of the seats, Billboard 18%,
 TV Ad 25%), so only all of them together fill a late floor (98-99%). Each guest rolls a tier, the door filters
@@ -196,21 +332,30 @@ walks every build step of 54 stages × the rules × 7 ad mixes).
 | High Limit L1 / L5 | 1,591 / 4,227 | 59/37/4/0.1% |
 | Penthouse L1 / max | 2,008 / 5,422 | 38/51/10/0.1% at max |
 
-A maxed casino earns about 130,000 coins a day idle (134,000 under the best idle rules) and 179,000 with every
-seat full at the default rules; with every ad running 240,000 (default rules) to 320,000 (no Tourists and the
+A maxed casino with its eight richer-guests specials earns about 128,000 coins a day idle (132,000 under the
+best idle rules; 114,000 without any special) and 160,000 with every seat full at the default rules (no
+specials; 196,000 with all twelve owned, what campaigns and missions are priced from); with every ad running 240,000 (default rules) to 320,000 (no Tourists and the
 VIP room). A day stays within 0.89-1.15 of the mean (±6-7% sd); an hour's 10th and 90th percentile are about
 ±25% from the median. The cage holds 9,000 coins at Cashier Cage 0 (a new casino's 7,500 starter coins leave
 room, so it never reads "full" in the first minute), then 12,000 / 18,000 / 25,500 / 33,000 / 42,000; income
 over the capacity is lost (and recorded as lost). Collect: `POST /api/tycoon/collect` (whole coins, a `'cage'`
 row; parallel collects pay once).
 
-**Upgrades for guests.** Marketing: +4.5% guests a level, stronger wealth ads (+10% a level). Decor: 12 levels
-(1-2 at the Main Floor, 3-4 Table Pit, 5-6 Slot Lounge, 7-9 High Limit, 10-12 Penthouse; 750 to 18,500 chips, 3
-minutes to 9 hours): richer guests. Casinos from before the 12 levels moved with migration 0011: old Decor 1 / 2
-/ 3 / 4 / 5 → 2 / 4 / 6 / 9 / 12 (the most each old level's room allows, the same floor look through
-`decorLook`, no more chips than were spent; a running Decor construction moves the same way). Hospitality
-(free drinks, snacks, a buffet, fine dining, a champagne bar; Table Pit, Lounge, High Limit ×2, Penthouse;
-4,500 to 37,500 chips): +4% guests and prestige × 1.045 a level. The build cards list every open tier's share
+**Upgrades for guests.** Marketing: +4.5% guests a level, stronger wealth ads (+10% a level). Hospitality:
++3.5% guests and prestige × 1.03 a level (`HOSPITALITY_LEVELS` names them):
+
+| level | what | room | chips | build |
+|---|---|---|---|---|
+| 1 | Free drinks | Main Floor | 2,000 | 30 min |
+| 2 | Snacks | Table Pit | 6,000 | 2 h |
+| 3 | Buffet | Table Pit | 12,000 | 4 h |
+| 4 | Live music | Slot Lounge | 18,000 | 5 h |
+| 5 | Fine dining | High Limit Room | 25,000 | 6 h |
+| 6 | Cocktail bar | High Limit Room | 32,500 | 7 h |
+| 7 | Champagne | Penthouse | 40,000 | 8 h |
+| 8 | Private chef | Penthouse | 48,000 | 9 h |
+
+Richer guests mostly come from the richer-guests specials (decorations, above). The build cards list every open tier's share
 now → next (▲ green, ▼ red) and the next tier still to open with the share it will have.
 
 **House rules** (`POST /api/tycoon/rules`, `RulesBody`: some of `door`, `vip`; typed strictly, anything else a
@@ -221,7 +366,7 @@ carry `house`.
 |---|---|---|---|
 | `door: 'limit'` | Slot Lounge | Tourists take at most a third of the seats; prestige × 1.15 | Tourists turned away on a quiet floor |
 | `door: 'closed'` | Slot Lounge | no Tourists; prestige × 1.35 | a floor that is far from full |
-| `vip` | High Limit Room | the High Limit Room seats only High Rollers and Whales (×1.6 there); its seats stop drawing the everyday crowd | 10 coins an hour per VIP guest |
+| `vip` | High Limit Room | the High Limit games (wherever they stand) seat only High Rollers and Whales (×1.6 there); its seats stop drawing the everyday crowd | 10 coins an hour per VIP guest |
 
 Expected change against the default rules (idle / with the Flyers / with every ad): the limit -2% to -22% at the
 Lounge, about even idle and +6-7% with every ad from High Limit up; no Tourists -17% to -52% idle, +4% to +24%
@@ -266,7 +411,8 @@ against a 1.46 million catalog) would leave the chip economy.
 ### Chips in and out
 
 - In: round payouts only (solo and live, every win, stake included).
-- Out: building (about 1,459,000 chips for everything; 410 build hours), ad campaigns, and losing bets.
+- Out: building (about 1,450,000 chips for everything; 376 build hours), ad campaigns, decorations (the
+  twelve specials 162,000 together), and losing bets.
   Builds cost chips only (`Cost.coins` is always 0) and take time: seconds for the first ones (Limbo 10 s,
   Wheel 45 s, the starters' level 2 two minutes), 25 minutes for the Main Floor, level-ups from minutes early
   to hours late (level 4 at least an hour, level 5 at least three; at most 9 hours per construction). A
@@ -339,7 +485,7 @@ gems (the old chip pack is gone; a pack still pending from before v2 is refunded
 | item | gems | what |
 |---|---|---|
 | `skip` | 1-200, `ceil(0.71 × minutes^0.69)` (10 min: 4, 1 h: 12, 4 h: 32, 8 h: 51) | finish one construction now |
-| `rush` | 5-100, `ceil(best full-floor income × 4 h / 1,000 × 1.25)` (every rule and wealth ad the casino can run) (a new casino: 5; maxed: 81) | high rollers: every guest spends double for 4 hours; priced from the floor with every seat taken at the richest mix any rules the casino has unlocked let in (not from the occupancy at purchase, which a campaign started next would raise, nor from the rules now, which can change after), so a rush with or without a campaign, under any rules, is never a cheaper way to coins than converting (at most 800 coins a gem) |
+| `rush` | 5-100, `ceil(best full-floor income × 4 h / 1,000 × 1.25)` (every rule and wealth ad the casino can run, every special it owns as if placed) (a new casino: 5; maxed: 81, with all six specials owned 96) | high rollers: every guest spends double for 4 hours; priced from the floor with every seat taken at the richest mix any rules the casino has unlocked let in (not from the occupancy at purchase, which a campaign started next would raise, nor from the rules now, which can change after), so a rush with or without a campaign, under any rules, is never a cheaper way to coins than converting (at most 800 coins a gem) |
 | `builder` | 60 | a permanent extra builder (one more construction at once; once, next to the Crew) |
 | `golden` | 30 | a golden skin for one built game (cosmetic) |
 | `cosmetic` | 5-200 (target: the item key, `hat:crown`) | an avatar item or a premium zone skin (`shared/cosmetics.ts`; cosmetic only) |
@@ -367,7 +513,8 @@ what the player's name gives). A few hats, outfits and accessories are free (the
 others cost gems (5-50; premium Crown 90, Gold Suit 100, Diamond Suit 200) or, the mid and late game
 pieces, chips: Fedora 40,000, Velvet Blazer 120,000, Ice Chain 250,000, Royal Robe 600,000 and Golden
 Laurel 750,000 (a maxed casino wins 100-200k chips a day, so the dearest are days of winnings and a star
-level or two given up: an end-game sink). Zone skins: Art Deco, Tropical and Wild West cost chips (2,400 /
+level or two given up: an end-game sink). Zone skins: every room's own colours are free on any room
+(`BASIC_SKINS`: Oak Floor, Ruby, Emerald, Violet and Sapphire Carpet, Ivory Marble); Art Deco, Tropical and Wild West cost chips (2,400 /
 4,800 / 7,200), Ice Palace 35,000 (mid game), Vegas Gold 150,000 and Cosmic 500,000 (late and end game);
 Royal, Midnight and Jade Temple gems (40 / 60 / 150). A chip buy is a chip sink, so it can lower the star
 level. Bought once, owned for good; equipping is free (a skin goes on any owned zone). Chip buys are one
@@ -390,26 +537,41 @@ missions: casual two a day, regular and whale all three and the bonus. Day each 
 
 | profile | 8 builds | main | pit | lounge | crew | high limit | penthouse | 50% | 90% | max |
 |---|---|---|---|---|---|---|---|---|---|---|
-| casual | 0 | 0.5 | 2.9 | 6.3 | 8.9 | 15.9 | 22.3 | 11.9 | 23.3 | 26.3 |
-| regular | 0 | 0.5 | 0.8 | 0.9 | 6.5 | 11.8 | 15.9 | 7.8 | 16.8 | 18.9 |
-| whale | 0 | 0.4 | 1.3 | 3.3 | 3.5 | 6.6 | 10.3 | 3.5 | 10.8 | 12.6 |
+| casual | 0 | 0.5 | 3.5 | 6.5 | 9.5 | 15.9 | 21.9 | 11.9 | 23.9 | 26.3 |
+| regular | 0 | 0.5 | 0.8 | 0.9 | 6.5 | 11.3 | 15.3 | 7.5 | 17.3 | 19.3 |
+| whale | 0 | 0.4 | 1.3 | 2.3 | 3.7 | 6.6 | 10.3 | 3.6 | 11.3 | 12.6 |
 
-Over seeds 1, 2, 3, 7 and 11: casual maxes on day 26.3 on every seed (the Table Pit 2.6, the Lounge 5.1, the
-Crew 9.0 on average), regular 18.3-18.9, whale 12.3-12.6. Before the visitor tiers: 25.3-27.3, 18.3-19.3 and
-12.3-12.4.
+Means over seeds 1-24: before this work (HEAD) → with the casino level, floor space and the first specials →
+now, without the Decor upgrade:
 
-Day each star was first held (same run; 10 comes 4-9 days after max; star 8 stays at 120,000: the casual
-player holds it on day ~22):
+| | casual | regular | whale |
+|---|---|---|---|
+| days to max | 26.3 → 26.9 → 26.8 | 18.6 → 18.6 → 19.0 | 12.7 → 12.9 → 13.0 |
+| star 7 | 18.3 → 18.1 → 17.4 | 10.9 → 10.6 → 10.5 | 7.1 → 6.9 → 6.8 |
+| star 8 | 23.0 → 23.1 → 24.1 | 16.4 → 16.1 → 15.6 | 11.6 → 11.0 → 11.1 |
+| star 9 | - → 28.6 → 28.5 | - → 19.8 → 20.0 | - → 13.3 → 13.5 |
+| star 10 | - → 34.4 → 34.3 | - → 23.6 → 24.0 | - → 15.7 → 16.0 |
+
+The casino level reaches 5 in the first session, 10-12 around the Table Pit, 16-18 around the Lounge, 25-26
+around the High Limit Room and 30 at max. Games of a later room may unlock a little before their room opens and
+get built in an earlier one. Specials bought on seed 7 (casual / regular / whale): the Red Carpet on day 2.3 /
+1.3 / 0.8, the VIP Booth 4.3 / 2.3 / 1.4, the Diamond Display 8.9 / 4.9 / 2.8, the Golden Slot Machine 13.3 /
+8.3 / 4.3, the Showcase Car 15.9 / 10.3 / 5.9, the Aquarium 17.3 / 13.8 / 7.4, the Ice Sculpture 18.9 / 14.3 /
+9.4, the Grand Fountain 22.9 / 15.5 / 11.4, and of the spend ones the Golden Statue, the Jackpot Sign and the
+Grand Piano (18.5 / 12.5 / 9.5); nobody buys the Champagne Bar before max (it pays back in 420 h).
+
+Day each star was first held (seed 7; 10 comes 3-8 days after max; star 8 stays at 120,000). Star days
+move a lot from seed to seed (casual star 7 lands between day 14 and 22): read the 24-seed means above.
 
 | profile | 1-3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---|---|---|---|---|---|---|---|
-| casual | 0.3 | 1.9 | 3.9 | 5.9 | 15.3 | 21.9 | 28.3 | 34.9 |
-| regular | 0.3 | 0.3 | 0.3 | 0.3 | 11.3 | 15.3 | 20.3 | 24.3 |
-| whale | 0.3 | 1.3 | 1.3 | 1.3 | 6.6 | 9.9 | 13.4 | 16.3 |
+| casual | 0.3 | 1.9 | 4.3 | 8.9 | 15.3 | 26.9 | 28.3 | 34.3 |
+| regular | 0.3 | 0.3 | 0.3 | 0.3 | 10.9 | 18.3 | 19.8 | 23.5 |
+| whale | 0.3 | 1.3 | 1.3 | 1.3 | 9.8 | 12.8 | 13.6 | 16.0 |
 
 Payback of single steps (chips ÷ expected coins an hour gained, at the stage they are bought; sim "Payback"):
-Limbo 11 h, Roulette 17 h; Decor 110-234 h; Hospitality 110-173 h; Marketing 181-338 h; game levels 3→4 and
-4→5 337-672 h (before the rework a level 4→5 took ~1,000 h and Decor 4 ~1,020 h); zones are gateways (the
+Limbo 11 h, Roulette 17 h; Hospitality 81-279 h; Marketing 176-340 h; game levels 3→4 and 4→5 320-672 h
+(before the rework a level 4→5 took ~1,000 h); the specials 179-652 h where they unlock; zones are gateways (the
 Lounge and the Penthouse ~2,300-2,700 h on their own).
 
 The first session lands 7-12 builds (a casual player's 15 minutes: 7-9, the Main Floor among them), all under
@@ -419,7 +581,7 @@ the median build takes 20-70 minutes in week one, two to seven hours in week two
 **The first hour and day.** A new player who plays the first hour through (Main Floor first, then the
 quickest step it can pay) has 10 builds by minute 36: the Main Floor (25 minutes, 3,600 chips), Limbo,
 Wheel, both starters to level 2-3, Cage and Marketing 1. After that the cage brings 500-800 coins an hour
-and the next steps cost 580-2,400 chips, so the rest of that hour is play and saving (the next goal, Decor 1
+and the next steps cost 580-2,400 chips, so the rest of that hour is play and saving (the next goal, Hospitality 1
 or a Main Floor game, is an evening's cage). From the second session on every session pays for 1-4 builds
 (Main Floor games at 1,500-2,000 chips, 5-14 minutes). The polish pass made three changes for that: the
 missions' floor went from 800 to 1,500 coins an hour (the first day's three missions and bonus pay ~3,750

@@ -4,7 +4,7 @@ import '@fontsource/fredoka/600.css'
 import { GAMES } from '#shared/games/registry'
 import type { FloorEngine, FloorView } from '~/utils/floor/engine'
 import { holdGlobalPixiResources } from '~/utils/floor/pixi-guard'
-import type { FloorApi, FloorMove, FloorRemote, FloorScene, FloorTarget } from '~/utils/floor/types'
+import type { ArrangeItem, ArrangeState, FloorApi, FloorMove, FloorRemote, FloorScene, FloorTarget, Tile } from '~/utils/floor/types'
 import { safeDestroy } from '~/utils/slot-pixi'
 
 /**
@@ -31,6 +31,14 @@ const emit = defineEmits<{
     ready: []
     /** WebGL could not start (or keeps failing): the page shows a fallback. */
     error: [error: unknown]
+    /** Arrange mode, nothing carried: the player lifted a game or a decoration (answer with `arrange({ carrying: item, at })`). */
+    arrangePick: [item: ArrangeItem]
+    /** The ghost moved to `at` (its origin tile); `problem` says why it can't stand there. Null, null: nothing in hand any more. */
+    arrangeHover: [at: Tile | null, problem: string | null]
+    /** Put down on a spot that fits: save it (on failure, `arrange({ carrying: null })` sends it back). */
+    arrangeDrop: [item: ArrangeItem, at: Tile]
+    /** The carry ended with nothing to save: Esc, or put back on its own spot. */
+    arrangeCancel: []
 }>()
 
 type Pixi = typeof import('pixi.js')
@@ -50,6 +58,8 @@ let rebuildTimer: ReturnType<typeof setTimeout> | null = null
 /** Recent rebuilds, to give up (and show the page's fallback) if the floor keeps breaking. */
 let rebuilds: number[] = []
 let releasePixi: (() => void) | null = null
+/** The last arrange state the page set, for a rebuilt engine. */
+let arrangeState: ArrangeState | null = null
 
 function hidden(): boolean {
     return !!props.paused || document.hidden
@@ -200,10 +210,26 @@ async function boot(resume: FloorView | null) {
             onInteract: target => emit('interact', target),
             onRenderError,
             onMove: move => emit('move', move),
+            onArrange: {
+                pick: (item) => {
+                    arrangeState = { carrying: item }
+                    emit('arrangePick', item)
+                },
+                hover: (at, problem) => emit('arrangeHover', at, problem),
+                drop: (item, at) => {
+                    if (arrangeState) arrangeState = { carrying: null }
+                    emit('arrangeDrop', item, at)
+                },
+                cancel: () => {
+                    if (arrangeState) arrangeState = { carrying: null }
+                    emit('arrangeCancel')
+                }
+            },
             resume
         })
         engine.setScene(props.scene)
         engine.setRemotes(props.remotes ?? [])
+        if (arrangeState) engine.arrange(arrangeState)
         // Dev only: poke the engine from the console (picking, context loss).
         if (import.meta.dev) (window as unknown as { __floor?: FloorEngine }).__floor = engine
     } catch (err) {
@@ -284,6 +310,10 @@ const api: FloorApi = {
         const box = host.value?.getBoundingClientRect()
         const to = options?.to && box ? { x: options.to.x - box.left, y: options.to.y - box.top } : undefined
         engine?.collected(amount, { currency: options?.currency, to })
+    },
+    arrange: (state) => {
+        arrangeState = state
+        engine?.arrange(state)
     }
 }
 

@@ -274,30 +274,6 @@ const towerWindows = Array.from({ length: 15 }, (_, i) => ({ x: 36 + (i % 3) * 1
         <polygon :points="star(16, 26, 3.4)" fill="#fff7c2" stroke-width="1.2" />
       </template>
 
-      <!-- Decor: a glowing chandelier -->
-      <template v-else-if="name === 'decor'">
-        <circle cx="50" cy="48" r="40" :fill="url('glow')" stroke="none" opacity="0.65" />
-        <path d="M50 0 V18" stroke-width="2.2" />
-        <circle cx="50" cy="20" r="3.4" :fill="url('gold')" stroke-width="1.8" />
-        <path d="M14 46 Q32 68 50 60 Q68 68 86 46" fill="none" stroke-width="6" />
-        <path d="M14 46 Q32 68 50 60 Q68 68 86 46" fill="none" stroke="#ffc93a" stroke-width="2.8" />
-        <path d="M28 38 Q40 52 50 46 Q60 52 72 38" fill="none" stroke-width="5.4" />
-        <path d="M28 38 Q40 52 50 46 Q60 52 72 38" fill="none" stroke="#ffc93a" stroke-width="2.4" />
-        <path d="M50 22 V66" stroke-width="5" />
-        <path d="M50 22 V66" stroke="#ffc93a" stroke-width="2" />
-        <ellipse cx="50" cy="44" rx="7" ry="9" :fill="url('gold')" stroke-width="2" />
-        <g v-for="[x, y] in candles" :key="`${x}`">
-          <rect :x="x - 3" :y="y - 12" width="6" height="11" rx="1.5" fill="#fff7ea" stroke-width="1.8" />
-          <path :d="`M${x} ${y - 21} C${x + 4} ${y - 16} ${x + 3} ${y - 13} ${x} ${y - 13} C${x - 3} ${y - 13} ${x - 4} ${y - 16} ${x} ${y - 21} Z`" fill="#ffb020" stroke-width="1.4" />
-          <ellipse :cx="x" :cy="y" rx="5" ry="2" :fill="url('gold')" stroke-width="1.6" />
-        </g>
-        <g fill="#bfeaff" stroke-width="1.4">
-          <path v-for="[x, y] in drops" :key="`d${x}`" :d="`M${x} ${y} L${x + 3.4} ${y + 6} L${x} ${y + 11} L${x - 3.4} ${y + 6} Z`" />
-        </g>
-        <polygon :points="star(84, 80, 4.5)" fill="#fff7c2" stroke-width="1.4" />
-        <polygon :points="star(16, 76, 3.4)" fill="#fff7c2" stroke-width="1.2" />
-      </template>
-
       <!-- Crew and Builder: a hard hat over a crossed hammer and wrench (the builder adds a plus) -->
       <template v-else-if="name === 'crew' || name === 'builder'">
         <g transform="rotate(-38 50 58)">

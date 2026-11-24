@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChartArea, Hammer, LayoutGrid, ListChecks, Megaphone, Plus, ScrollText, Sparkles, Timer, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
+import { ChartArea, Hammer, LayoutGrid, ListChecks, Megaphone, Plus, ScrollText, Sofa, Sparkles, Timer, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import { findZone, type ZoneId } from '#shared/tycoon'
 
@@ -7,7 +7,7 @@ import { findZone, type ZoneId } from '#shared/tycoon'
  * Everything laid over the floor: the resource bar and the cage jar up top,
  * the construction rings on the right and the round action buttons below.
  */
-const emit = defineEmits<{ build: [], games: [], cage: [], shop: [], zone: [id: ZoneId], popover: [open: boolean], campaigns: [], missions: [] }>()
+const emit = defineEmits<{ build: [], games: [], cage: [], shop: [], zone: [id: ZoneId], popover: [open: boolean], campaigns: [], missions: [], level: [], decor: [] }>()
 const tycoon = useTycoon()
 const { coins } = useCasinoSession()
 const sound = useTycoonSound()
@@ -19,6 +19,22 @@ const missionPop = ref(0)
 watch(() => tycoon.missionDone.value, done => done && missionPop.value++)
 
 const state = computed(() => tycoon.state.value)
+
+// The casino level: a gold coin with a ring of XP; it pops when the level goes up.
+const lv = computed(() => tycoon.level.value)
+const xpShare = computed(() => {
+    const { xp, levelXp, nextXp } = lv.value
+    return nextXp === null ? 1 : Math.max(0, Math.min(1, (xp - levelXp) / Math.max(1, nextXp - levelXp)))
+})
+const levelPop = ref(0)
+watch(() => tycoon.levelUp.value, up => up && levelPop.value++)
+/** What the specials on the floor do (rarity, spend, coins an hour), or null when none stands. */
+const specialsLine = computed(() => {
+    const st = state.value
+    if (!st) return null
+    const lift = specialsLift(st, st.serverNow)
+    return lift.rarity || lift.spend ? { lifts: [lift.rarity, lift.spend], gain: specialsGain(st, st.serverNow) } : null
+})
 /** A drawer covers most of a phone's floor: fold the HUD down to the money pills so the strip above shows the floor. */
 const openDrawers = useState<number>('tycoon:open-drawers', () => 0)
 const fold = computed(() => (openDrawers.value > 0 ? 'max-md:hidden' : ''))
@@ -248,7 +264,10 @@ useEventListener('keydown', (event: KeyboardEvent) => {
                   </p>
                   <p v-if="tycoon.rushActive.value" class="pt-0.5 text-right text-[11px] font-semibold text-[#ff9a2e]">Big Spenders: every guest ×2</p>
                 </div>
-                <p class="px-1 text-[12px] leading-4 text-[var(--g-muted)]">Richer guests spend more. Decor, Hospitality, new rooms and top machine levels bring them in.</p>
+                <p class="px-1 text-[12px] leading-4 text-[var(--g-muted)]">Richer guests spend more. Hospitality, new rooms, specials, wealth ads and top machine levels bring them in.</p>
+                <p v-if="specialsLine" class="flex flex-wrap items-center gap-1.5 px-1 text-[12px] leading-4 font-semibold" title="What the specials standing on your floor do (put away, they do nothing)">
+                  <Sparkles class="size-3.5 shrink-0 text-[#ffc93a]" :stroke-width="3" /> Specials <TycoonSpecialStat class="ml-auto" :lifts="specialsLine.lifts" :gain="specialsLine.gain" />
+                </p>
                 <p v-if="floorHint" class="px-1 text-[12px] leading-4 font-semibold text-[#ffb35c]">{{ floorHint }}</p>
                 <p v-if="waiting" class="px-1 text-[12px] leading-4 font-semibold text-[#ffb35c]">{{ waiting }} turned away just now: no free seat{{ rules.house.value && rules.house.value.rules.door !== 'open' ? ' or your door policy' : '' }}</p>
                 <p class="stat-row border-t border-white/10 pt-2" title="Luck makes some hours good and some quiet: the average is what this floor earns over time">
@@ -410,6 +429,18 @@ useEventListener('keydown', (event: KeyboardEvent) => {
       <span v-if="tycoon.claimable.value" class="dot g-num grid min-w-6 place-items-center px-1 text-xs leading-none" :class="reducedMotion ? '' : 'g-bounce'">{{ tycoon.claimable.value }}</span>
     </button>
 
+    <!-- The casino level: a ring of XP to the next level. Tap for what each level unlocks. -->
+    <button
+      type="button"
+      class="missions pointer-events-auto relative ml-2 grid size-[60px] shrink-0 place-items-center rounded-[22px] transition-transform active:scale-95"
+      :class="levelPop ? 'level-glow' : ''"
+      :title="lv.nextXp === null ? `Casino level ${lv.level}: the top` : `Casino level ${lv.level}: ${formatCoins(lv.xp - lv.levelXp)} / ${formatCoins(lv.nextXp - lv.levelXp)} XP to level ${lv.level + 1}`"
+      :aria-label="`Casino level ${lv.level}`"
+      @click="emit('level')"
+    >
+      <span :key="levelPop" class="grid" :class="levelPop ? 'g-pop' : ''"><TycoonLevelBadge :level="lv.level" :progress="xpShare" /></span>
+    </button>
+
     </div>
 
     <!-- Construction rings -->
@@ -438,8 +469,18 @@ useEventListener('keydown', (event: KeyboardEvent) => {
       </li>
     </ul>
 
+    <!-- Decorate: arrange the floor, buy decorations. In the corner, so the action bar stays three buttons. -->
+    <div :class="fold" class="pointer-events-auto absolute bottom-0 left-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:left-3">
+      <button type="button" data-tip="decor" class="action" aria-label="Decorate" title="Move things around and place decorations" @click="emit('decor')">
+        <span class="g-btn size-12 rounded-full" style="--face: #ff7ab0; --edge: #9c2f62"><Sofa class="size-5.5" :stroke-width="2.75" /></span>
+        <span class="action-label">Decor</span>
+      </button>
+    </div>
+
     <!-- Action bar -->
-    <nav :class="fold" class="pointer-events-auto absolute inset-x-0 bottom-0 flex items-end justify-center gap-5 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:gap-7">
+    <!-- The bar spans the width to centre its buttons; only the buttons take clicks (the Decor button and the floor stay reachable beside them). -->
+    <!-- Narrow phones: the bar centres beside the Decor button (left padding) with smaller gaps, so the two never overlap. -->
+    <nav :class="fold" class="pointer-events-none absolute inset-x-0 bottom-0 flex *:pointer-events-auto items-end justify-center gap-5 pb-[max(0.75rem,env(safe-area-inset-bottom))] max-[379px]:gap-3 max-[379px]:pl-14 sm:gap-7">
       <button type="button" data-tip="games" class="action" aria-label="Games" @click="openGames">
         <span class="g-btn g-blue size-14 rounded-full"><LayoutGrid class="size-6" :stroke-width="2.75" /></span>
         <span class="action-label">Games</span>
@@ -497,6 +538,12 @@ useEventListener('keydown', (event: KeyboardEvent) => {
   background: linear-gradient(180deg, #3b2c58, #2a1f3f 60%);
   border: 2px solid #120c1d;
   box-shadow: 0 4px 0 #120c1d, 0 10px 20px rgb(0 0 0 / 0.35), inset 0 2px 0 rgb(255 255 255 / 0.12);
+}
+.level-glow { animation: level-glow 1.6s ease-out 1; }
+@keyframes level-glow {
+  0%, 100% { box-shadow: 0 4px 0 #120c1d, 0 10px 20px rgb(0 0 0 / 0.35); }
+  20%, 60% { border-color: #a879ff; box-shadow: 0 4px 0 #120c1d, 0 0 0 3px rgb(168 121 255 / 0.6), 0 0 26px 6px rgb(168 121 255 / 0.55); }
+  40% { box-shadow: 0 4px 0 #120c1d, 0 0 0 0 rgb(168 121 255 / 0); }
 }
 .missions-ready {
   border-color: #1b8a33;

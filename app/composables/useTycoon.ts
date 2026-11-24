@@ -1,10 +1,12 @@
 import { toast } from 'vue-sonner'
+import { casinoLevel, gameUnlockLevel, type CasinoLevel } from '#shared/casino-level'
 import type { CosmeticBuyBody } from '#shared/cosmetics'
+import { placedSpecials, specialBonus, type BuyDecorBody, type OwnedDecor, type PlaceBody, type SpecialBonus } from '#shared/decor'
 import { normalizeCoins } from '#shared/money'
 import type { MissionKey, MissionView, WelcomeBack } from '#shared/missions'
 import {
     activeCampaigns, buildBlocker, campaignsOf, cageAt, campaignBlocker, campaignBoost, campaignCost, CAMPAIGNS, findCampaign, findTycoonGame, findUpgrade, findZone,
-    floorView, levelOf, nextCost, RUSH_GEMS, rushGems, skipGems, TYCOON_GAMES, UPGRADES, ZONES,
+    floorView, levelOf, newGameSpot, nextCost, RUSH_GEMS, rushGems, skipGems, TYCOON_GAMES, UPGRADES, ZONES,
     type BuildBody, type BuildKind, type CampaignDef, type CampaignId, type Construction, type Cost, type GemBody, type GemItem,
     type TycoonActionResponse, type TycoonState, type ZoneId
 } from '#shared/tycoon'
@@ -26,10 +28,14 @@ export interface BuildView {
     /** Next step's cost, or null when maxed. */
     cost: Cost | null
     running: QueuedConstruction | null
-    /** Name of the zone that must be opened first, or null. */
+    /** Name of the zone that must be opened first, or null (rooms and upgrades; games unlock by level). */
     lockZone: string | null
     /** Id of that zone, or null. */
     lockZoneId: ZoneId | null
+    /** A game not built yet whose casino level is still too low: the level it needs, else null. */
+    lockLevel: number | null
+    /** A new game with no free spot in any room you own. */
+    noRoom: boolean
     /** Every builder is busy (and this item is not one of them). */
     buildersFull: boolean
     maxed: boolean
@@ -110,6 +116,10 @@ export function useTycoon() {
     const welcome = useState<WelcomeBack | null>('tycoon:welcome', () => null)
     /** The latest mission that just reached its target (for a chime and a nudge). */
     const missionDone = useState<{ id: MissionKey, at: number } | null>('tycoon:mission-done', () => null)
+    /** Chips handed back for the removed Decor upgrade (once, on the read that paid them), until the note is closed. */
+    const decorRefund = useState<number | null>('tycoon:decor-refund', () => null)
+    /** The casino level just went up (for a celebration). */
+    const levelUp = useState<{ level: number, at: number } | null>('tycoon:level-up', () => null)
     const sound = useTycoonSound()
 
     /** Server time now (ms). */
@@ -128,6 +138,25 @@ export function useTycoon() {
     const rushLeftMs = computed(() => (state.value?.rushUntil ? Math.max(0, state.value.rushUntil - serverTime.value) : 0))
     /** Gems a guest rush costs now (priced from the casino, like the server does at purchase). */
     const rushPrice = computed(() => (state.value ? rushGems(state.value) : RUSH_GEMS))
+
+    /** The casino level, from what is built (XP from every finished build step). */
+    const casino = computed<CasinoLevel>(() => (state.value ? casinoLevel(state.value) : { level: 1, xp: 0, levelXp: 0, nextXp: null }))
+    /** Every decoration the casino owns; put-away ones have x = y = null. */
+    const decor = computed<OwnedDecor[]>(() => state.value?.decor ?? [])
+    /** Where every game on the floor stands (origin tiles). */
+    const placements = computed<Record<string, { x: number, y: number }>>(() => state.value?.placements ?? {})
+    /** Games not on the floor yet that no owned room has a free spot for (read once per state, not per tick). */
+    const roomless = computed(() => {
+        const s = state.value
+        const out = new Set<string>()
+        if (!s) return out
+        for (const game of TYCOON_GAMES) {
+            if ((s.games[game.slug] ?? 0) === 0 && !s.constructions.some(c => c.kind === 'game' && c.id === game.slug) && !newGameSpot(s, game.slug)) out.add(game.slug)
+        }
+        return out
+    })
+    /** What the specials standing on the floor add. */
+    const specials = computed<SpecialBonus>(() => specialBonus(placedSpecials(state.value?.decor ?? [])))
 
     /** The floor this tick: seated guests per tier, seats, the tick's rate and the expected one. */
     const floorNow = computed<FloorNow | null>(() => state.value?.floor ?? null)
@@ -203,10 +232,14 @@ export function useTycoon() {
         state.value = next
         wallet.followChips(next.chips)
         if (next.welcome) welcome.value = next.welcome
+        if (next.decorRefund && next.decorRefund > 0) decorRefund.value = next.decorRefund
         if (previous) {
             // Back after a while: the welcome card lists what finished instead.
             if (!next.welcome) announceFinished(previous.constructions, next)
             announceMissions(previous, next)
+            const before = casinoLevel(previous).level
+            const after = casinoLevel(next).level
+            if (after > before) levelUp.value = { level: after, at: Date.now() }
         }
     }
 
@@ -261,7 +294,10 @@ export function useTycoon() {
             const query = askWelcome ? { welcome: '1' } : undefined
             askWelcome = false
             try {
-                apply(await $fetch<TycoonState>('/api/tycoon', { query }))
+                const next = await $fetch<TycoonState>('/api/tycoon', { query })
+                apply(next)
+                // A read can confirm a star change too (chips moved without an action: a refund).
+                wallet.applyStars(next.stars)
                 loadFailed.value = false
             } catch (error) {
                 if (!session.handleUnauthorized(error) && !state.value) {
@@ -275,7 +311,7 @@ export function useTycoon() {
         return refreshing
     }
 
-    async function act(path: string, body?: BuildBody | GemBody | { id: CampaignId | MissionKey } | CosmeticBuyBody | RulesBody): Promise<TycoonActionResponse | null> {
+    async function act(path: string, body?: BuildBody | GemBody | { id: CampaignId | MissionKey } | CosmeticBuyBody | RulesBody | BuyDecorBody | PlaceBody): Promise<TycoonActionResponse | null> {
         if (busy.value) return null
         busy.value = true
         const run = (async () => {
@@ -327,6 +363,21 @@ export function useTycoon() {
         if (response) sound.play('campaign')
         return response
     }
+    /**
+     * Run an action after the one in flight (arrange-mode saves queue behind
+     * each other instead of being dropped silently). The busy check and the
+     * start happen in the same tick, so two waiters can't both start.
+     */
+    async function queued(path: string, body: BuyDecorBody | PlaceBody) {
+        for (;;) {
+            while (busy.value && inflight) await inflight.catch(() => null)
+            if (!busy.value || !inflight) return act(path, body)
+        }
+    }
+    /** Buy a decoration: with x and y it is placed there at once, else it goes to storage. Null when it failed (a toast says why). */
+    const buyDecor = (body: BuyDecorBody) => queued('/api/tycoon/decor', body)
+    /** Move a built game, or place, move or put away a decoration (free). Null when it failed (a toast says why). */
+    const place = (body: PlaceBody) => queued('/api/tycoon/place', body)
     /** Change house rules (only the given keys). Resolves with the response, or null when it failed (a toast says why). */
     const setRules = (body: RulesBody) => act('/api/tycoon/rules', body)
     /** Claim a finished mission (or the bonus): coins. Resolves with the coins paid (0 when it failed). */
@@ -366,7 +417,8 @@ export function useTycoon() {
     /** The zone `kind:id` waits for, or null. */
     function requiredZone(s: TycoonState, kind: BuildKind, id: string): ZoneId | null {
         if (kind === 'zone') return findZone(id)?.requires ?? null
-        if (kind === 'game') return findTycoonGame(id)?.zone ?? null
+        // Games unlock by the casino level and stand in any room you own.
+        if (kind === 'game') return null
         const upgrade = findUpgrade(id)
         return upgrade ? upgrade.requiresZone[s.upgrades[upgrade.id] ?? 0] ?? null : null
     }
@@ -391,11 +443,14 @@ export function useTycoon() {
         const zone = s ? requiredZone(s, kind, id) : null
         const lockZoneId = s && zone && !s.zones.includes(zone) ? zone : null
         const lockZone = lockZoneId ? findZone(lockZoneId)?.name ?? lockZoneId : null
+        const needs = kind === 'game' && level === 0 && !running ? gameUnlockLevel(id) : 0
+        const lockLevel = s && needs > casino.value.level ? needs : null
+        const noRoom = kind === 'game' && level === 0 && !running && !lockLevel && roomless.value.has(id)
         const buildersFull = !!s && !running && s.constructions.length >= s.builders
         const missingChips = cost ? Math.max(0, cost.chips - chips.value) : 0
         const affordable = missingChips === 0
         return {
-            kind, id, name: buildName(kind, id), level, maxLevel, cost, running, lockZone, lockZoneId, buildersFull,
+            kind, id, name: buildName(kind, id), level, maxLevel, cost, running, lockZone, lockZoneId, lockLevel, noRoom, buildersFull,
             maxed: !cost && !running,
             missingChips, affordable,
             canStart: !!s && !!cost && affordable && !running && !buildBlocker(s, kind, id)
@@ -451,10 +506,11 @@ export function useTycoon() {
     onMounted(start)
 
     return {
-        state, ready, loadFailed, chips, gems, busy, lastBuilt, serverTime, offset, welcome, missions, claimable, missionDone,
+        state, ready, loadFailed, chips, gems, busy, lastBuilt, serverTime, offset, welcome, missions, claimable, missionDone, levelUp, decorRefund,
+        level: casino, decor, placements, specials,
         cageStored, cageFill, rushActive, rushLeftMs, rushPrice, queue,
         seats, visitors, visitorTiers, waiting, occupied, perHour, expectedPerHour, floorNow, house, campaign, runningCampaigns, campaigns,
         startable, suggestion,
-        refresh, refreshSoon, collect, build, buyGem, buyCosmetic, equipCosmetic, startCampaign, claimMission, setRules, setChips, blocker, cost, skipPrice, view
+        refresh, refreshSoon, collect, build, buyDecor, place, buyGem, buyCosmetic, equipCosmetic, startCampaign, claimMission, setRules, setChips, blocker, cost, skipPrice, view
     }
 }

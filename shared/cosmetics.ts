@@ -106,6 +106,13 @@ export const COSMETICS: readonly CosmeticDef[] = [
     item('accessory', 'icechain', 'Ice Chain', '#9fe8ff', { chips: 250_000 }, true),
     // Zone skins
     item('skin', 'classic', 'Classic', '#b4404f'),
+    // The rooms' own colours, free on any room (BASIC_SKINS)
+    item('skin', 'oak', 'Oak Floor', '#d79d66'),
+    item('skin', 'ruby', 'Ruby Carpet', '#b4404f'),
+    item('skin', 'emerald', 'Emerald Carpet', '#2f8a64'),
+    item('skin', 'violet', 'Violet Carpet', '#7553c2'),
+    item('skin', 'sapphire', 'Sapphire Carpet', '#30509c'),
+    item('skin', 'ivory', 'Ivory Marble', '#f2ebe0'),
     item('skin', 'deco', 'Art Deco', '#1f2a2e', { chips: 2_400 }),
     item('skin', 'tropical', 'Tropical', '#2fa58f', { chips: 4_800 }),
     item('skin', 'western', 'Wild West', '#a8673a', { chips: 7_200 }),
@@ -135,9 +142,22 @@ export interface AvatarLook {
 
 export const DEFAULT_AVATAR: AvatarLook = { hat: 'none', outfit: 'classic', accessory: 'none', hair: AUTO, haircolor: AUTO, skintone: AUTO }
 
-export type SkinId = 'classic' | 'deco' | 'tropical' | 'western' | 'frost' | 'royal' | 'midnight' | 'vegas' | 'jade' | 'cosmic'
+export type SkinId = 'classic' | 'oak' | 'ruby' | 'emerald' | 'violet' | 'sapphire' | 'ivory' | 'deco' | 'tropical' | 'western' | 'frost' | 'royal' | 'midnight' | 'vegas' | 'jade' | 'cosmic'
 export const DEFAULT_SKIN: SkinId = 'classic'
 export const SKIN_IDS: readonly SkinId[] = COSMETICS.filter(c => c.slot === 'skin').map(c => c.id as SkinId)
+
+/**
+ * The free basic skins: each is one room's own (classic) colours, so any room
+ * can wear another room's carpet. A room's own basic skin is its classic look.
+ */
+export const BASIC_SKINS: Readonly<Partial<Record<SkinId, ZoneId>>> = {
+    oak: 'backroom',
+    ruby: 'main',
+    emerald: 'pit',
+    violet: 'lounge',
+    sapphire: 'highlimit',
+    ivory: 'penthouse'
+}
 
 /** The skin on each zone (missing = classic). */
 export type ZoneSkins = Partial<Record<ZoneId, SkinId>>

@@ -33,7 +33,7 @@ export type DoorRule = 'open' | 'limit' | 'closed'
 export interface HouseRules {
     /** Who gets in: everyone, Tourists capped at a share of the seats, or no Tourists. */
     door: DoorRule
-    /** The High Limit Room seats only High Rollers and Whales, who spend more there; staff cost per VIP guest. */
+    /** The High Limit Room's games (wherever they stand) seat only High Rollers and Whales, who spend more there; staff cost per VIP guest. */
     vip: boolean
 }
 
@@ -128,8 +128,9 @@ export interface NotableGuest {
 //
 // - Tiers: a guest arrives as a Tourist, a Regular, a High Roller or a Whale.
 //   The odds of tier k are weight_k × P^k over the unlocked tiers, normalised,
-//   where P is the casino's prestige: 1 + Decor + zones past the Backroom +
-//   game levels (`prestige`). Decor brings richer guests, Marketing more of them.
+//   where P is the casino's prestige: Hospitality, zones past the Backroom and
+//   game levels (`prestige`), × the prestige specials and the wealth ads.
+//   Hospitality brings richer guests (and a few more), Marketing more of them.
 // - Seats: every built game has seats (shared/tycoon.ts `seatsOf`: +1 a level),
 //   and each level makes a guest seated there spend LEVEL_SPEND more.
 // - A tick (TICK_MS): the crowd is seats × FILL × (1 + BRAND × Marketing) × the
@@ -147,6 +148,7 @@ export interface NotableGuest {
 // - `expectedPerHour` is the same model with fractional tier counts and the
 //   moods averaged out (no luck): prices, rewards and previews read it.
 
+import type { SpecialBonus } from './decor'
 import { COIN_UNITS, fromUnits } from './money'
 import { activeCampaigns, CAMPAIGNS, campaignBlocker, campaignEffect, campaignOf, campaignsOf, findCampaign, seatsOf, TYCOON_GAMES, ZONES, type CampaignId, type RunningCampaignRef, type UpgradeId, type ZoneId } from './tycoon'
 
@@ -177,8 +179,7 @@ export function seatedTotal(counts: VisitorCounts): number {
 export const VISITOR_MODEL = {
     /** Base weight of each tier (index = VISITOR_TIER_IDS), before prestige. */
     weights: [1, 0.2, 0.006, 0.00001] as number[],
-    /** Prestige multiplies: × (1 + this) per Decor level and per zone past the Backroom. */
-    prestigeDecor: 0.09,
+    /** Prestige multiplies: × (1 + this) per zone past the Backroom. */
     prestigeZone: 0.05,
     /** × (1 + this) per game at levels 1-5: the top machines draw richer guests, a maxed one most. */
     levelPrestige: [0, 0.002, 0.004, 0.008, 0.02] as number[],
@@ -201,9 +202,9 @@ export const VISITOR_MODEL = {
     hourMood: 0.3,
     dayMood: 0.1,
     tickMood: 0.15,
-    /** Hospitality (drinks, snacks, buffet, dining, champagne): each level × (1 + this) guests and × (1 + hospitalityPrestige) prestige. */
-    hospitalityCrowd: 0.04,
-    hospitalityPrestige: 0.045,
+    /** Hospitality (eight levels, from free drinks to a private chef): each level × (1 + this) guests and × (1 + hospitalityPrestige) prestige. */
+    hospitalityCrowd: 0.035,
+    hospitalityPrestige: 0.03,
     /** The VIP room: High Rollers and Whales spend this much more there, at a staff cost an hour per VIP guest. */
     vipSpend: 1.6,
     vipStaff: 10,
@@ -235,6 +236,12 @@ export interface FloorView {
     /** Every campaign (one per kind); `campaign` alone is read when this is missing. */
     campaigns?: readonly RunningCampaignRef[]
     rules?: HouseRules
+    /**
+     * The specials standing on the floor (shared/decor.ts): × (1 + spend) on
+     * what every guest spends, × (1 + prestige) on the prestige the tiers are
+     * drawn with. They bring no extra crowd. Missing = none.
+     */
+    specials?: SpecialBonus
 }
 
 export function emptyCounts(): VisitorCounts {
@@ -301,7 +308,7 @@ export function rulesOf(view: Pick<FloorView, 'zones' | 'games' | 'rules'>): Hou
 }
 
 /**
- * Prestige: × (1 + a share) per Decor and Hospitality level, zone past the
+ * Prestige: × (1 + a share) per Hospitality level, zone past the
  * Backroom and game level (multiplied, so each step lifts the odds alike), and
  * × an exclusive door's pull when the rules say so.
  */
@@ -314,17 +321,17 @@ export function prestige(view: Pick<FloorView, 'zones' | 'games' | 'upgrades' | 
         const level = Math.min(5, Math.floor(view.games[game.slug] ?? 0))
         if (level >= 1) machines *= 1 + (m.levelPrestige[level - 1] ?? 0)
     }
-    return (1 + m.prestigeDecor) ** Math.max(0, view.upgrades.decor ?? 0)
-        * (1 + m.hospitalityPrestige) ** Math.max(0, view.upgrades.hospitality ?? 0)
+    return (1 + m.hospitalityPrestige) ** Math.max(0, view.upgrades.hospitality ?? 0)
         * (1 + m.prestigeZone) ** zones * machines
         * (door === 'limit' ? m.doorPrestige.limit : door === 'closed' ? m.doorPrestige.closed : 1)
 }
 
 /** Share of arrivals per tier, 0..1 (locked tiers 0). */
-export function tierOdds(view: Pick<FloorView, 'zones' | 'games' | 'upgrades' | 'campaign' | 'campaigns' | 'rules'>, at?: number): VisitorCounts {
+export function tierOdds(view: Pick<FloorView, 'zones' | 'games' | 'upgrades' | 'campaign' | 'campaigns' | 'rules' | 'specials'>, at?: number): VisitorCounts {
     const zones = zonesOf(view)
     const wealth = wealthAt(view, at)
-    const p = prestige(view) * wealth.prestige
+    // The specials draw richer guests, not more of them: they lift the tier odds only.
+    const p = prestige(view) * wealth.prestige * (1 + Math.max(0, view.specials?.prestige ?? 0))
     const weights = VISITOR_TIERS.map((tier, k) => (tier.unlockZone === null || zones.includes(tier.unlockZone)
         ? VISITOR_MODEL.weights[k]! * p ** k * (k === 3 ? wealth.whales : 1)
         : 0))
@@ -385,7 +392,8 @@ function prepare(view: FloorView, at?: number): Prepared {
     const m = VISITOR_MODEL
     const zones = zonesOf(view)
     const rules = rulesOf(view)
-    // The VIP room is the High Limit Room (where the rule unlocks). Moving it up to a newer, emptier
+    // The VIP room is the High Limit Room (where the rule unlocks): its games by the catalog, wherever
+    // they stand, so moving a machine never changes income. Moving it up to a newer, emptier
     // room would make opening the Penthouse cost income.
     const vipZone = rules.vip && zones.includes(VIP_ZONE) ? VIP_ZONE : null
     const gSeats: number[] = []
@@ -423,7 +431,7 @@ function prepare(view: FloorView, at?: number): Prepared {
     return {
         odds: list,
         cumulative,
-        spends: VISITOR_TIERS.map(tier => tier.spend),
+        spends: VISITOR_TIERS.map(tier => tier.spend * (1 + Math.max(0, view.specials?.spend ?? 0))),
         general,
         vip,
         gSeats,
@@ -983,8 +991,8 @@ const RULE_TEXT: Record<string, RuleText> = {
     'door:open': { label: 'Open door', description: 'Everyone gets in.' },
     'door:limit': { label: 'Limit Tourists', description: 'Tourists take at most a third of the seats: more room for richer guests on a busy floor, empty seats on a quiet one.' },
     'door:closed': { label: 'No Tourists', description: 'Tourists stay out: only richer guests take the seats. A quiet floor stays half empty.' },
-    'vip:false': { label: 'No VIP room', description: 'The High Limit Room seats everyone.' },
-    'vip:true': { label: 'VIP room', description: `The High Limit Room seats only High Rollers and Whales, who spend ${Math.round((VISITOR_MODEL.vipSpend - 1) * 100)}% more there; ${VISITOR_MODEL.vipStaff} coins an hour staff per VIP guest. The room stops drawing the everyday crowd, so it pays on a busy floor.` }
+    'vip:false': { label: 'No VIP room', description: 'The High Limit games seat everyone.' },
+    'vip:true': { label: 'VIP room', description: `The High Limit games (Baccarat, Casino Hold'em, Aether Gates), wherever they stand, seat only High Rollers and Whales, who spend ${Math.round((VISITOR_MODEL.vipSpend - 1) * 100)}% more there; ${VISITOR_MODEL.vipStaff} coins an hour staff per VIP guest. The room stops drawing the everyday crowd, so it pays on a busy floor.` }
 }
 
 /** The rules panel (`TycoonState.house`): unlocked rules, their options with live expected deltas, the cooldown. */

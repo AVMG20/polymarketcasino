@@ -1,11 +1,12 @@
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
+import { DECOR } from '../shared/decor'
 import { db } from '../server/database'
-import { casinoProfiles, coinTransactions, dailyMissions } from '../server/database/schema'
+import { casinoDecor, casinoProfiles, coinTransactions, dailyMissions } from '../server/database/schema'
 import { claimMission, ensureMissions, parseMissionBody, recordMissions } from '../server/utils/missions'
 import { serverGame } from '../server/utils/games'
 import { playRound } from '../server/utils/rounds'
-import { collectCage, getTycoonState, luckSeed, startBuild, startCampaign } from '../server/utils/tycoon'
+import { accrueCage, collectCage, getTycoonState, luckSeed, peekCasino, startBuild, startCampaign } from '../server/utils/tycoon'
 import { writeTx } from '../server/database'
 import { amsterdamDay } from '../shared/economy'
 import {
@@ -94,7 +95,7 @@ describe('mission rules', () => {
     it('sizes rewards from the full guest income, with a floor for young casinos', () => {
         const young = { games: { plinko: 1, spinata: 1 } }
         expect(missionReward(young, 0.5)).toBe(MISSION_FLOOR_PER_HOUR * 0.5)
-        const big = { games: Object.fromEntries(TYCOON_GAMES.map(game => [game.slug, 5])), upgrades: { decor: 12 } }
+        const big = { games: Object.fromEntries(TYCOON_GAMES.map(game => [game.slug, 5])), upgrades: { hospitality: 8 } }
         expect(missionReward(big, 1)).toBeGreaterThan(MISSION_FLOOR_PER_HOUR)
         expect(missionReward(big, 1) % 10).toBe(0)
     })
@@ -251,7 +252,11 @@ describe('while you were away', () => {
         const t0 = Date.now()
         // A read, then a collect half a minute later (inside the snapshot's one-minute window).
         expect(getTycoonState(id, t0).cage.stored).toBe(STARTER_CAGE)
-        expect((await collectCage(id, t0 + 30_000)).collected).toBe(STARTER_CAGE)
+        // Half a minute of guest income may just reach a whole coin (luck by player id): the collect takes what the cage holds then.
+        const due = peekCasino(id, t0 + 30_000)
+        accrueCage(due, t0 + 30_000)
+        expect(Math.floor(due.cageStored)).toBeGreaterThanOrEqual(STARTER_CAGE)
+        expect((await collectCage(id, t0 + 30_000)).collected).toBe(Math.floor(due.cageStored))
         const t1 = t0 + 30_000 + 3 * HOUR
         const away = getTycoonState(id, t1, { welcome: true }).welcome!
         const income = incomeBetween(id, getTycoonState(id, t1), t0 + 30_000, t1)
@@ -262,12 +267,14 @@ describe('while you were away', () => {
     })
 
     it('lists the whales that came by while away', () => {
-        // A casino with every zone (seedPlayer builds them all), every game maxed and full Decor: whales come.
+        // A casino with every zone (seedPlayer builds them all), every game maxed, full Hospitality and every
+        // richer-guests special on the floor: whales come.
         const id = seedPlayer(0, 0, { origin: 'dev' })
         db.update(casinoProfiles).set({
             games: Object.fromEntries(TYCOON_GAMES.map(game => [game.slug, 5])),
-            upgrades: { cage: 5, marketing: 5, decor: 12, hospitality: 5, crew: 1 }
+            upgrades: { cage: 5, marketing: 5, hospitality: 8, crew: 1 }
         }).where(eq(casinoProfiles.playerId, id)).run()
+        for (const def of DECOR.filter(d => d.special?.stat === 'prestige')) db.insert(casinoDecor).values({ playerId: id, type: def.type, x: 0, y: 0, special: def.type }).run()
         const t0 = Date.now()
         getTycoonState(id, t0)
         const t1 = t0 + 3 * 24 * HOUR

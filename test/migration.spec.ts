@@ -167,3 +167,23 @@ describe('0011_visitor_tiers', () => {
         expect(sqlite.query(`select campaigns, door, vip, rules_at as rulesAt from casino_profiles where player_id = 'd0'`).get()).toEqual({ campaigns: '[]', door: 'open', vip: 0, rulesAt: null })
     })
 })
+
+describe('0012_decorations', () => {
+    it('gives every casino an empty placements map and guards one special and one grant per casino', () => {
+        const sqlite = new Database(join(scratch, `${crypto.randomUUID()}.sqlite`), { create: true, strict: true })
+        sqlite.exec('PRAGMA foreign_keys = ON')
+        const db = drizzle({ client: sqlite, schema })
+        migrate(db, { migrationsFolder: before('0012_decorations') })
+        sqlite.run(`insert into players (id, name, coins, peak_coins) values ('o1', 'Owner', 0, 0)`)
+        sqlite.run(`insert into casino_profiles (player_id, zones, games, upgrades, golden, cage_at) values ('o1', '["backroom"]', '{"plinko":1}', '{}', '[]', 0)`)
+        migrate(db, { migrationsFolder: DRIZZLE })
+        expect(sqlite.query(`select placements from casino_profiles where player_id = 'o1'`).get()).toEqual({ placements: '{}' })
+        sqlite.run(`insert into casino_decor (player_id, type, x, y, special) values ('o1', 'aquarium', 3, 4, 'aquarium')`)
+        expect(() => sqlite.run(`insert into casino_decor (player_id, type, special) values ('o1', 'aquarium', 'aquarium')`)).toThrow()
+        sqlite.run(`insert into casino_decor (player_id, type, grant_key) values ('o1', 'plant', 'backroom:plant:21,17')`)
+        expect(() => sqlite.run(`insert into casino_decor (player_id, type, grant_key) values ('o1', 'plant', 'backroom:plant:21,17')`)).toThrow()
+        // Plain decorations bought (no special, no grant) come as many as you like.
+        sqlite.run(`insert into casino_decor (player_id, type) values ('o1', 'plant'), ('o1', 'plant')`)
+        expect(sqlite.query(`select count(*) as n from casino_decor`).get()).toEqual({ n: 4 })
+    })
+})

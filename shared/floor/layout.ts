@@ -1,4 +1,4 @@
-import { TYCOON_GAMES, ZONES, type Archetype, type ZoneId } from '../tycoon'
+import { findTycoonGame, ZONES, type Archetype, type ZoneId } from '../tycoon'
 
 /**
  * The casino's floor plan, in grid tiles (see iso.ts). The building is a
@@ -40,7 +40,12 @@ export const ZONE_RECTS: Record<ZoneId, Rect> = {
     penthouse: { x: 0, y: 0, w: 14, h: 6 }
 }
 
-export const ZONE_ORDER: ZoneId[] = ZONES.map(zone => zone.id)
+/**
+ * The zones in catalog order (the same as ZONES). Written out, not read from
+ * ZONES: shared/tycoon.ts reaches this file through placement.ts, so nothing
+ * here may read the catalog while the modules load.
+ */
+export const ZONE_ORDER: ZoneId[] = ['backroom', 'main', 'pit', 'lounge', 'highlimit', 'penthouse']
 
 /** Tiles in front of the entrance, outside the building. */
 export const PORCH: Tile[] = [{ x: 18, y: 22 }, { x: 19, y: 22 }]
@@ -90,6 +95,7 @@ export const ARCH_SIZE: Record<Archetype, { w: number, h: number }> = {
     hilo: { w: 2, h: 2 }
 }
 
+/** Every game's home spot: where it stands until it is moved (and where a new one goes when there is room). */
 const PLOT_ORIGINS: Record<string, Tile> = {
     // Backroom
     wheel: { x: 14, y: 14 },
@@ -131,24 +137,47 @@ export interface PlotLayout {
     spots: Tile[]
 }
 
-function frontRow(rect: Rect): Tile[] {
+/** The row of tiles in front of a machine (machines face +gy): where guests stand to play. */
+export function frontRow(rect: Rect): Tile[] {
     return Array.from({ length: rect.w }, (_, i) => ({ x: rect.x + i, y: rect.y + rect.h }))
 }
 
-export const PLOTS: Record<string, PlotLayout> = Object.fromEntries(TYCOON_GAMES.map((game) => {
-    const origin = PLOT_ORIGINS[game.slug]
-    if (!origin) throw new Error(`floor layout: no plot for ${game.slug}`)
+/** A game's home spot (its origin tile), or null for an unknown game. */
+export function homeSpot(slug: string): Tile | null {
+    const origin = PLOT_ORIGINS[slug]
+    return origin ? { ...origin } : null
+}
+
+/** Where a game stands with its origin at `origin`: its rect, the avatar's tile and the guests' spots. */
+export function plotAt(slug: string, origin: Tile): PlotLayout | null {
+    const game = findTycoonGame(slug)
+    if (!game) return null
     const size = ARCH_SIZE[game.archetype]
     const rect = { x: origin.x, y: origin.y, w: size.w, h: size.h }
-    return [game.slug, {
+    return {
         id: game.slug,
         zone: game.zone,
         archetype: game.archetype,
         rect,
         front: { x: rect.x + Math.floor((rect.w - 1) / 2), y: rect.y + rect.h },
         spots: frontRow(rect)
-    }]
-}))
+    }
+}
+
+/**
+ * Every game at its home spot (`zone` is the room it belongs to in the
+ * catalog). Games can stand elsewhere now: the casino's `placements` say
+ * where (shared/floor/placement.ts). Built on first read, so loading this
+ * file never reads the catalog.
+ */
+export const PLOTS: Record<string, PlotLayout> = {}
+for (const slug of Object.keys(PLOT_ORIGINS)) {
+    let plot: PlotLayout | undefined
+    Object.defineProperty(PLOTS, slug, {
+        enumerable: true,
+        get: () => (plot ??= plotAt(slug, PLOT_ORIGINS[slug]!)!)
+    })
+}
 
 /** The cashier cage, by the entrance. */
 export const CAGE = { rect: { x: 20, y: 19, w: 2, h: 2 }, front: { x: 20, y: 21 } }
@@ -161,63 +190,68 @@ export interface PropLayout {
     kind: PropKind
     zone: ZoneId
     rect: Rect
-    /** Decor level that adds it (0 = always there). */
-    decor: number
+    /** The grant's key (unique per casino): `<zone>:<kind>:<x>,<y>`. */
+    key: string
 }
 
-const prop = (kind: PropKind, zone: ZoneId, x: number, y: number, decor: number, w = 1, h = 1): PropLayout => ({ kind, zone, rect: { x, y, w, h }, decor })
+const prop = (kind: PropKind, zone: ZoneId, x: number, y: number, w = 1, h = 1): PropLayout => ({ kind, zone, rect: { x, y, w, h }, key: `${zone}:${kind}:${x},${y}` })
 
-/** Furniture and decoration. Placed so no door, plot front or walkable tile is ever cut off, at any decor level. */
+/**
+ * The free furniture. It used to stand fixed; now a casino is **granted** each
+ * piece as a plain decoration (shared/decor.ts) once it owns the room, placed
+ * here when the spot is free, else put away (shared/floor/placement.ts `furnitureGrants`, applied by the server).
+ * The floor no longer draws this list: it draws the casino's decorations.
+ */
 export const PROPS: PropLayout[] = [
     // Backroom
-    prop('plant', 'backroom', 21, 17, 1),
-    prop('plant', 'backroom', 16, 14, 2),
-    prop('lamp', 'backroom', 21, 16, 3),
-    prop('palm', 'backroom', 17, 20, 5),
+    prop('plant', 'backroom', 21, 17),
+    prop('plant', 'backroom', 16, 14),
+    prop('lamp', 'backroom', 21, 16),
+    prop('palm', 'backroom', 17, 20),
     // Main floor
-    prop('plant', 'main', 13, 14, 1),
-    prop('plant', 'main', 6, 14, 2),
-    prop('rope', 'main', 7, 17, 3),
-    prop('rope', 'main', 7, 18, 3),
-    prop('lamp', 'main', 13, 15, 3),
-    prop('statue', 'main', 10, 20, 5),
+    prop('plant', 'main', 13, 14),
+    prop('plant', 'main', 6, 14),
+    prop('rope', 'main', 7, 17),
+    prop('rope', 'main', 7, 18),
+    prop('lamp', 'main', 13, 15),
+    prop('statue', 'main', 10, 20),
     // Table pit
-    prop('plant', 'pit', 14, 6, 1),
-    prop('plant', 'pit', 21, 13, 2),
-    prop('lamp', 'pit', 18, 6, 3),
-    prop('rope', 'pit', 15, 12, 3),
-    prop('rope', 'pit', 16, 12, 3),
-    prop('statue', 'pit', 14, 13, 5),
+    prop('plant', 'pit', 14, 6),
+    prop('plant', 'pit', 21, 13),
+    prop('lamp', 'pit', 18, 6),
+    prop('rope', 'pit', 15, 12),
+    prop('rope', 'pit', 16, 12),
+    prop('statue', 'pit', 14, 13),
     // Slot lounge
-    prop('plant', 'lounge', 13, 13, 1),
-    prop('plant', 'lounge', 6, 13, 2),
-    prop('lamp', 'lounge', 12, 10, 3),
-    prop('palm', 'lounge', 13, 8, 4),
-    prop('statue', 'lounge', 12, 12, 5),
+    prop('plant', 'lounge', 13, 13),
+    prop('plant', 'lounge', 6, 13),
+    prop('lamp', 'lounge', 12, 10),
+    prop('palm', 'lounge', 13, 8),
+    prop('statue', 'lounge', 12, 12),
     // High limit
-    prop('sofa', 'highlimit', 1, 20, 0, 2, 1),
-    prop('plant', 'highlimit', 0, 6, 1),
-    prop('plant', 'highlimit', 5, 21, 1),
-    prop('palm', 'highlimit', 0, 19, 2),
-    prop('lamp', 'highlimit', 0, 11, 3),
-    prop('rope', 'highlimit', 4, 15, 3),
-    prop('rope', 'highlimit', 4, 16, 3),
-    prop('statue', 'highlimit', 3, 20, 5),
+    prop('sofa', 'highlimit', 1, 20, 2, 1),
+    prop('plant', 'highlimit', 0, 6),
+    prop('plant', 'highlimit', 5, 21),
+    prop('palm', 'highlimit', 0, 19),
+    prop('lamp', 'highlimit', 0, 11),
+    prop('rope', 'highlimit', 4, 15),
+    prop('rope', 'highlimit', 4, 16),
+    prop('statue', 'highlimit', 3, 20),
     // Penthouse
-    prop('bar', 'penthouse', 5, 0, 0, 4, 1),
-    prop('piano', 'penthouse', 11, 1, 0, 2, 2),
-    prop('fountain', 'penthouse', 6, 3, 0, 2, 2),
-    prop('sofa', 'penthouse', 1, 1, 0, 2, 1),
-    prop('sofa', 'penthouse', 1, 3, 0, 2, 1),
-    prop('palm', 'penthouse', 0, 0, 0),
-    prop('palm', 'penthouse', 13, 0, 0),
-    prop('plant', 'penthouse', 4, 5, 1),
-    prop('plant', 'penthouse', 11, 5, 1),
-    prop('lamp', 'penthouse', 9, 0, 2),
-    prop('statue', 'penthouse', 13, 4, 4)
+    prop('bar', 'penthouse', 5, 0, 3, 1),
+    prop('piano', 'penthouse', 11, 1, 2, 2),
+    prop('fountain', 'penthouse', 6, 3, 2, 2),
+    prop('sofa', 'penthouse', 1, 1, 2, 1),
+    prop('sofa', 'penthouse', 1, 3, 2, 1),
+    prop('palm', 'penthouse', 0, 0),
+    prop('palm', 'penthouse', 13, 0),
+    prop('plant', 'penthouse', 4, 5),
+    prop('plant', 'penthouse', 11, 5),
+    prop('lamp', 'penthouse', 9, 0),
+    prop('statue', 'penthouse', 13, 4)
 ]
 
-/** Chandeliers hang over these tiles from decor level 4 (non-blocking). */
+/** Chandeliers hang over these tiles from room look 4 (`roomLook`, shared/casino-level.ts; non-blocking). */
 export const CHANDELIERS: { zone: ZoneId, at: Tile }[] = [
     { zone: 'backroom', at: { x: 17.5, y: 17.5 } },
     { zone: 'main', at: { x: 10, y: 16 } },

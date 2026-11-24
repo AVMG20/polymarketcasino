@@ -1,5 +1,9 @@
 import type { AvatarLook, SkinId } from '#shared/cosmetics'
+import type { DecorType } from '#shared/decor'
+import type { Rect, Tile } from '#shared/floor/layout'
 import type { Archetype, ZoneId } from '#shared/tycoon'
+
+export type { Rect, Tile }
 import type { VisitorCounts } from '#shared/visitors'
 
 /**
@@ -22,6 +26,11 @@ export interface FloorPlot {
     accent: string
     zone: ZoneId
     status: PlotStatus
+    /**
+     * Where it stands: its stored spot (built or building), or for a game not
+     * built yet the spot it would get (a dashed "build here" hint). Null: not drawn.
+     */
+    rect: Rect | null
     /** 0 when not built, else 1..5. Higher levels draw a bigger, shinier machine. */
     level: number
     golden: boolean
@@ -41,15 +50,25 @@ export interface FloorZone {
     skin?: SkinId
 }
 
+/** A decoration standing on the floor (put-away ones are not in the scene). */
+export interface FloorDecoration {
+    id: number
+    type: DecorType
+    x: number
+    y: number
+}
+
 export interface FloorScene {
     zones: FloorZone[]
     plots: FloorPlot[]
+    /** Placed decorations. Rugs lie under everything; the rest stand like furniture. */
+    decorations: FloorDecoration[]
     cage: {
         /** 0..1; a full cage glows and bounces. */
         fill: number
         stored: number
     }
-    /** Decor upgrade level 0..5: carpet, walls, lights, chandeliers. */
+    /** The room look 0..5 (from the casino level): carpet, walls, lights, chandeliers. Furniture is `decorations`. */
     decor: number
     /** Guest coins an hour: what the playing guests' coin pops add up to (and how busy the floor is without `visitors`). */
     guestsPerHour: number
@@ -134,6 +153,28 @@ export interface FloorApi {
      * (client) pixels. Without options: chips to the top right, as before.
      */
     collected(amount: number, options?: FloorCollectOptions): void
+    /**
+     * Arrange mode (move games, place decorations), or null to leave it. In
+     * it the floor shows a tile grid over the owned rooms, guests fade, the
+     * avatar hides and taps pick things up instead of walking. With an item
+     * `carrying`, a ghost of it follows the pointer, snapped to tiles, green
+     * where it fits and red where it doesn't. `{ carrying: null }` right after
+     * an `arrangeDrop` means the drop failed: the item flies back with a shake.
+     */
+    arrange(state: ArrangeState | null): void
+}
+
+/** What arrange mode carries. */
+export type ArrangeItem =
+    | { kind: 'game', id: string } // a built game being moved
+    | { kind: 'decor', id: number, type: DecorType } // an owned decoration (placed or from storage)
+    | { kind: 'new', type: DecorType } // one being bought: dropping it buys it
+
+export interface ArrangeState {
+    /** The item in hand (a ghost follows the pointer/finger, snapped to tiles), or null: tap an item to pick it up. */
+    carrying: ArrangeItem | null
+    /** Where the ghost starts (an item's current origin); missing = the tile at the centre of the screen. */
+    at?: Tile | null
 }
 
 /** Screen px a panel covers at the bottom (phone drawer) or the right (desktop side panel). */
