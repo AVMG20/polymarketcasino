@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChartArea, Hammer, LayoutGrid, ListChecks, Megaphone, ScrollText, Sofa, Sparkles, Timer, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
+import { ChartArea, ChartNoAxesColumn, Hammer, LayoutGrid, ListChecks, Megaphone, ScrollText, Shirt, Sofa, Sparkles, Timer, Trophy, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import { findZone, type ZoneId } from '#shared/tycoon'
 
@@ -12,6 +12,8 @@ const tycoon = useTycoon()
 const casinoStats = useCasinoStats()
 const { coins } = useCasinoSession()
 const sound = useTycoonSound()
+const leaderboard = useLeaderboard()
+const cosmetics = useCosmetics()
 
 // Daily missions: a ring of the ones cleared, a badge when one is ready to claim.
 const missions = computed(() => tycoon.missions.value)
@@ -341,21 +343,37 @@ useEventListener('keydown', (event: KeyboardEvent) => {
         </div>
       </div>
 
-      <!-- Sound on/off (shared with the games). -->
-      <button
-        type="button"
-        class="hud-hit pointer-events-auto relative shrink-0"
-        :class="fold"
-        :title="sound.muted.value ? 'Sound off' : 'Sound on'"
-        :aria-label="sound.muted.value ? 'Turn sound on' : 'Turn sound off'"
-        :aria-pressed="!sound.muted.value"
-        @click="sound.toggle()"
-      >
-        <span class="g-btn g-dark size-9 rounded-full sm:size-[2.6rem]">
-          <VolumeX v-if="sound.muted.value" class="size-5 opacity-70" :stroke-width="2.75" />
-          <Volume2 v-else class="size-5" :stroke-width="2.75" />
-        </span>
-      </button>
+      <!-- Top right: the leaderboard, your game stats and the sound. A column on narrow phones, so the coins and chips keep their row. -->
+      <div class="pointer-events-auto flex shrink-0 items-center gap-2 max-[379px]:flex-col sm:gap-2.5" :class="fold">
+        <button
+          type="button"
+          class="hud-hit relative"
+          title="Leaderboard"
+          aria-label="Leaderboard"
+          :aria-expanded="leaderboard.open.value"
+          @click="leaderboard.toggle()"
+        >
+          <span class="g-btn g-dark size-9 rounded-full sm:size-[2.6rem]"><Trophy class="size-5 text-[#ffc93a]" :stroke-width="2.75" /></span>
+        </button>
+        <!-- Your game stats (rounds, wins). The casino's guests and income charts open from the guests popover. -->
+        <NuxtLink to="/stats" class="hud-hit relative" title="Game stats" aria-label="Game stats">
+          <span class="g-btn g-dark size-9 rounded-full sm:size-[2.6rem]"><ChartNoAxesColumn class="size-5" :stroke-width="2.75" /></span>
+        </NuxtLink>
+        <!-- Sound on/off (shared with the games). -->
+        <button
+          type="button"
+          class="hud-hit relative"
+          :title="sound.muted.value ? 'Sound off' : 'Sound on'"
+          :aria-label="sound.muted.value ? 'Turn sound on' : 'Turn sound off'"
+          :aria-pressed="!sound.muted.value"
+          @click="sound.toggle()"
+        >
+          <span class="g-btn g-dark size-9 rounded-full sm:size-[2.6rem]">
+            <VolumeX v-if="sound.muted.value" class="size-5 opacity-70" :stroke-width="2.75" />
+            <Volume2 v-else class="size-5" :stroke-width="2.75" />
+          </span>
+        </button>
+      </div>
     </div>
 
     <!-- The cage -->
@@ -456,8 +474,8 @@ useEventListener('keydown', (event: KeyboardEvent) => {
 
     </div>
 
-    <!-- Construction rings -->
-    <ul v-if="tycoon.queue.value.length" :class="fold" class="pointer-events-auto absolute top-14 right-2 flex flex-col items-end gap-3 sm:top-16 sm:right-3">
+    <!-- Construction rings (on narrow phones under the column of top-right buttons) -->
+    <ul v-if="tycoon.queue.value.length" :class="fold" class="pointer-events-auto absolute top-14 right-2 flex flex-col items-end gap-3 max-[379px]:top-36 sm:top-16 sm:right-3">
       <li v-for="item in tycoon.queue.value" :key="`${item.kind}:${item.id}`" class="relative">
         <button
           type="button"
@@ -482,8 +500,13 @@ useEventListener('keydown', (event: KeyboardEvent) => {
       </li>
     </ul>
 
-    <!-- Decorate: arrange the floor, buy decorations. In the corner, so the action bar stays three buttons. -->
-    <div :class="fold" class="pointer-events-auto absolute bottom-0 left-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:left-3">
+    <!-- Your look and your floor, in the corner so the action bar stays three buttons: the wardrobe over Decor (arrange the floor, buy decorations). -->
+    <!-- Stacked, so on narrow phones the corner stays one button wide beside the bar (the Wardrobe sits above the bar's buttons). -->
+    <div :class="fold" class="pointer-events-auto absolute bottom-0 left-2 flex flex-col items-center gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:left-3">
+      <button type="button" class="action" aria-label="Wardrobe" title="Your look, outfits and room skins" @click="cosmetics.show()">
+        <span class="g-btn size-12 rounded-full" style="--face: #a879ff; --edge: #5b3aa0"><Shirt class="size-5.5" :stroke-width="2.75" /></span>
+        <span class="action-label">Wardrobe</span>
+      </button>
       <button type="button" data-tip="decor" class="action" aria-label="Decorate" title="Move things around and place decorations" @click="emit('decor')">
         <span class="g-btn size-12 rounded-full" style="--face: #ff7ab0; --edge: #9c2f62"><Sofa class="size-5.5" :stroke-width="2.75" /></span>
         <span class="action-label">Decor</span>

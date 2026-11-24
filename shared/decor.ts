@@ -89,14 +89,14 @@ export const DECOR: readonly DecorDef[] = [
     { type: 'piano', name: 'Piano', blurb: 'Someone always plays it.', chips: 3_500, level: 22, w: 2, h: 2, blocks: true },
     // Specials: one each, they lift the whole casino while placed.
     // Richer guests (prestige): the rarity ladder, one every few levels from early to late game.
-    { type: 'red-carpet', name: 'Red Carpet', blurb: 'A VIP welcome: more Regulars, fewer Tourists.', chips: PRESTIGE[0]![0], level: PRESTIGE[0]![1], w: 2, h: 1, blocks: false, special: { stat: 'prestige', bonus: PRESTIGE[0]![2] } },
-    { type: 'vip-booth', name: 'VIP Booth', blurb: 'A velvet booth for the regulars who matter.', chips: PRESTIGE[1]![0], level: PRESTIGE[1]![1], w: 2, h: 1, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[1]![2] } },
-    { type: 'diamond-display', name: 'Diamond Display', blurb: 'A rare diamond under glass draws High Rollers.', chips: PRESTIGE[2]![0], level: PRESTIGE[2]![1], w: 1, h: 1, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[2]![2] } },
-    { type: 'gold-slot', name: 'Golden Slot Machine', blurb: 'A solid gold slot on show: High Rollers come to look.', chips: PRESTIGE[3]![0], level: PRESTIGE[3]![1], w: 1, h: 1, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[3]![2] } },
-    { type: 'showcase-car', name: 'Showcase Car', blurb: 'A gleaming sports car: High Rollers stop to look.', chips: PRESTIGE[4]![0], level: PRESTIGE[4]![1], w: 2, h: 2, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[4]![2] } },
-    { type: 'aquarium', name: 'Aquarium', blurb: 'High Rollers love the sharks.', chips: PRESTIGE[5]![0], level: PRESTIGE[5]![1], w: 2, h: 1, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[5]![2] } },
+    { type: 'red-carpet', name: 'Red Carpet', blurb: 'A VIP welcome for richer guests.', chips: PRESTIGE[0]![0], level: PRESTIGE[0]![1], w: 2, h: 1, blocks: false, special: { stat: 'prestige', bonus: PRESTIGE[0]![2] } },
+    { type: 'vip-booth', name: 'VIP Booth', blurb: 'A velvet booth for the guests who matter.', chips: PRESTIGE[1]![0], level: PRESTIGE[1]![1], w: 2, h: 1, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[1]![2] } },
+    { type: 'diamond-display', name: 'Diamond Display', blurb: 'A rare diamond under glass draws richer guests.', chips: PRESTIGE[2]![0], level: PRESTIGE[2]![1], w: 1, h: 1, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[2]![2] } },
+    { type: 'gold-slot', name: 'Golden Slot Machine', blurb: 'A solid gold slot on show: big spenders come to look.', chips: PRESTIGE[3]![0], level: PRESTIGE[3]![1], w: 1, h: 1, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[3]![2] } },
+    { type: 'showcase-car', name: 'Showcase Car', blurb: 'A gleaming sports car: big spenders stop to look.', chips: PRESTIGE[4]![0], level: PRESTIGE[4]![1], w: 2, h: 2, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[4]![2] } },
+    { type: 'aquarium', name: 'Aquarium', blurb: 'Big spenders love the sharks.', chips: PRESTIGE[5]![0], level: PRESTIGE[5]![1], w: 2, h: 1, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[5]![2] } },
     { type: 'ice-sculpture', name: 'Ice Sculpture', blurb: 'A swan carved in ice, fresh every night.', chips: PRESTIGE[6]![0], level: PRESTIGE[6]![1], w: 1, h: 1, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[6]![2] } },
-    { type: 'grand-fountain', name: 'Grand Fountain', blurb: 'Whales notice a casino like this.', chips: PRESTIGE[7]![0], level: PRESTIGE[7]![1], w: 2, h: 2, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[7]![2] } },
+    { type: 'grand-fountain', name: 'Grand Fountain', blurb: 'The richest guests notice a casino like this.', chips: PRESTIGE[7]![0], level: PRESTIGE[7]![1], w: 2, h: 2, blocks: true, special: { stat: 'prestige', bonus: PRESTIGE[7]![2] } },
     // More spend: every guest bets a little more.
     { type: 'golden-statue', name: 'Golden Statue', blurb: 'Guests stop to admire it, then bet more.', chips: 3_000, level: 9, w: 1, h: 1, blocks: true, special: { stat: 'spend', bonus: 0.015 } },
     { type: 'jackpot-sign', name: 'Jackpot Sign', blurb: 'Every guest bets a little bigger.', chips: 8_000, level: 12, w: 2, h: 1, blocks: true, special: { stat: 'spend', bonus: 0.02 } },

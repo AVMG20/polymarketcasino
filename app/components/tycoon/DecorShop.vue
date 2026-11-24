@@ -83,10 +83,10 @@ function tap(c: Card) {
       <section class="space-y-2">
         <div class="px-1">
           <h3 class="flex items-center gap-1.5"><Sparkles class="size-4 text-[#ffc93a]" :stroke-width="3" /><span class="g-title text-lg">Specials</span></h3>
-          <p class="text-[12.5px] leading-4 text-[var(--g-muted)]">Specials: one of each. Some bring richer guests, some make every guest spend more.</p>
-          <p class="mt-1 flex items-center gap-3 text-[11.5px] font-semibold text-[var(--g-muted)]">
-            <span class="flex items-center gap-1" title="Richer guests: more of the rich guest tiers come in"><Gem class="size-3.5 text-[#c084fc]" :stroke-width="2.75" />Rarity</span>
-            <span class="flex items-center gap-1" title="Every guest spends more"><TrendingUp class="size-3.5 text-[#ffc93a]" :stroke-width="2.75" />Spend</span>
+          <p class="text-[12.5px] leading-4 text-[var(--g-muted)]">One of each, and they only count while they stand on your floor.</p>
+          <p class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] font-semibold text-[var(--g-muted)]">
+            <span class="flex items-center gap-1"><Gem class="size-3.5 shrink-0 text-[#c084fc]" :stroke-width="2.75" /><span><span class="text-[var(--g-ink)]">Rarity:</span> more of every richer guest type</span></span>
+            <span class="flex items-center gap-1"><TrendingUp class="size-3.5 shrink-0 text-[#ffc93a]" :stroke-width="2.75" /><span><span class="text-[var(--g-ink)]">Spend:</span> every guest spends more</span></span>
           </p>
           <p v-if="placed" class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px] font-semibold" title="What the specials on your floor do together">
             Now: <TycoonSpecialStat :lifts="placed.lifts" :gain="placed.gain" />
@@ -100,7 +100,7 @@ function tap(c: Card) {
               <span v-if="c.state === 'placed'" class="absolute top-1 right-1 grid size-6 place-items-center rounded-full border-2 border-black/50 bg-[#3fd25a]"><Check class="size-3.5 text-white" :stroke-width="4" /></span>
             </span>
             <p class="mt-1 truncate px-0.5 text-center text-[13px] font-semibold" :title="c.def.blurb">{{ c.def.name }}</p>
-            <TycoonSpecialStat class="mt-0.5 justify-center" :class="c.locked ? 'opacity-60' : ''" :lifts="[lifts[c.def.type]]" :gain="gains[c.def.type]" :stored="c.state === 'stored'" />
+            <TycoonSpecialStat class="mt-0.5 justify-center text-center" :class="c.locked ? 'opacity-60' : ''" :lifts="[lifts[c.def.type]]" :gain="gains[c.def.type]" :stored="c.state === 'stored'" />
             <span v-if="c.locked" class="state-pill mt-1 text-[#ffc93a]" :title="`Reach casino level ${c.def.level}`"><Lock class="size-3.5" :stroke-width="3" /><span class="g-num">Level {{ c.def.level }}</span></span>
             <span v-else-if="c.state === 'placed'" class="state-pill mt-1 text-[#7ee08f]" title="It stands on your floor: its bonus counts"><Check class="size-3.5" :stroke-width="3" />On the floor</span>
             <button v-else-if="c.state === 'stored'" type="button" class="g-btn g-blue mt-1 h-11 w-full rounded-xl px-1 text-[14px]" title="In storage: its bonus only counts on the floor" @click="tap(c)">

@@ -10,6 +10,7 @@ import {
 } from '#shared/tycoon'
 import { expectedFloor, richerLevel, RULE_UNLOCKS, seatedTotal, tierOdds, tierShift, VISITOR_MODEL, VISITOR_TIERS, type VisitorTierDef } from '#shared/visitors'
 import { formatFixed } from '~/utils/format-decimal'
+import { tierPlural } from '~/utils/visitor-tiers'
 import CasinoCoinIcon from '~/components/casino/CoinIcon.vue'
 
 /** The hand-drawn pictures of TycoonIllo (zones, upgrades, gem shop items). */
@@ -129,26 +130,36 @@ export function specialGain(state: StatState, type: DecorType, now: number): num
     return Math.max(0, Math.round(gain))
 }
 
+/** How many more of one richer guest tier come in (0.12: 12% more). */
+export interface TierRise {
+    tier: VisitorTierDef
+    rise: number
+}
+
 /**
- * What a special does, as one stat: the rarity lift (how many more of the
- * richest guest tier the casino gets, against the floor without it), the
- * next tier and its room when only Tourists come yet, or the spend lift.
+ * What a special does, as one stat. Rarity lifts every richer tier (Regulars,
+ * High Rollers, Whales) at once: `rises` holds the tiers that come already, in
+ * tier order, against the floor without it; `locked` the richer tiers whose
+ * room isn't open yet (they'll come more too once it is), and `room` the room
+ * that opens the first of those. Or the spend lift.
  */
 export type SpecialLift =
-    | { kind: 'rarity', tier: VisitorTierDef, rise: number }
-    | { kind: 'rarity-locked', tier: VisitorTierDef, room: string }
+    | { kind: 'rarity', rises: TierRise[], locked: VisitorTierDef[], room: string | null }
     | { kind: 'spend', share: number }
 
-/** The rarity lift of going from the `without` specials to the `with` ones: the richest open tier above Tourists. */
+/** The rarity lift of going from the `without` specials to the `with` ones, for every tier above Tourists. */
 function rarityLift(state: StatState, without: readonly string[], withThem: readonly string[], now: number): SpecialLift {
     const before = tierOdds(floorView(withSpecials(state, without)), now)
     const after = tierOdds(floorView(withSpecials(state, withThem)), now)
-    for (const tier of [...VISITOR_TIERS].reverse()) {
-        if (tier.id === 'tourist' || !(before[tier.id] > 0)) continue
-        return { kind: 'rarity', tier, rise: after[tier.id] / before[tier.id] - 1 }
+    const rises: TierRise[] = []
+    const locked: VisitorTierDef[] = []
+    for (const tier of VISITOR_TIERS) {
+        if (tier.id === 'tourist') continue
+        if (before[tier.id] > 0) rises.push({ tier, rise: after[tier.id] / before[tier.id] - 1 })
+        else locked.push(tier)
     }
-    const next = VISITOR_TIERS.find(tier => tier.unlockZone && !(state.zones ?? []).includes(tier.unlockZone as ZoneId)) ?? VISITOR_TIERS[1]!
-    return { kind: 'rarity-locked', tier: next, room: findZone(next.unlockZone ?? '')?.name ?? 'the next room' }
+    const room = locked[0]?.unlockZone ? findZone(locked[0].unlockZone)?.name ?? null : null
+    return { kind: 'rarity', rises, locked, room }
 }
 
 /** One special's stat, against the casino as it is (a placed one counts what it does now). */
@@ -172,25 +183,29 @@ export function specialsLift(state: StatState, now: number): { rarity: SpecialLi
 
 /**
  * What a set of specials standing on the floor does together, against the
- * floor with none: the rarity lift of every open tier above Tourists (in tier
- * order), the spend lift, and the coins an hour.
+ * floor with none: the rarity lift (every tier above Tourists), the spend
+ * lift, and the coins an hour.
  */
 export function specialsSummary(state: StatState, types: readonly string[], now: number): { lifts: SpecialLift[], gain: number } {
     const lifts: SpecialLift[] = []
     const bonus = specialBonus(types)
-    if (bonus.prestige > 0) {
-        const before = tierOdds(floorView(withSpecials(state, [])), now)
-        const after = tierOdds(floorView(withSpecials(state, types)), now)
-        for (const tier of VISITOR_TIERS) {
-            if (tier.id === 'tourist' || !(before[tier.id] > 0)) continue
-            lifts.push({ kind: 'rarity', tier, rise: after[tier.id] / before[tier.id] - 1 })
-        }
-        // Only Tourists come yet: say which room opens the next tier.
-        if (!lifts.length) lifts.push(rarityLift(state, [], types, now))
-    }
+    if (bonus.prestige > 0) lifts.push(rarityLift(state, [], types, now))
     if (bonus.spend > 0) lifts.push({ kind: 'spend', share: bonus.spend })
     const gain = types.length ? Math.max(0, Math.round(expected(withSpecials(state, types), now) - expected(withSpecials(state, []), now))) : 0
     return { lifts, gain }
+}
+
+/** "Regulars", "High Rollers & Whales", "Regulars, High Rollers & Whales". */
+export function tierList(tiers: readonly VisitorTierDef[]): string {
+    const names = tiers.map(t => tierPlural(t.id, 2))
+    return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} & ${names.at(-1)}`
+}
+
+/** The muted line under a rarity lift while richer tiers are still locked, or null. */
+export function lockedTiersHint(lift: SpecialLift): string | null {
+    if (lift.kind !== 'rarity' || !lift.locked.length) return null
+    const when = lift.locked.length === 1 && lift.room ? `once the ${lift.room} opens` : 'once their rooms open'
+    return `more ${tierList(lift.locked)} ${when}`
 }
 
 /** Coins an hour the specials standing on the floor add together. */

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, Crown, Glasses, Lock, Palette, PaintRoller, Scissors, Shirt, Smile } from 'lucide-vue-next'
+import { Check, Crown, Glasses, Lock, LogOut, Palette, PaintRoller, Scissors, Shirt, Smile } from 'lucide-vue-next'
 import { AUTO, LOOK_SLOTS, cosmeticsIn, findCosmetic, isFree, type AvatarLook, type AvatarSlot, type CosmeticDef, type LookSlot, type WearSlot } from '#shared/cosmetics'
 import { ZONES, type ZoneId } from '#shared/tycoon'
 import { nameLookIds } from '~/utils/floor/art/characters'
@@ -11,11 +11,13 @@ import type { WardrobeTab } from '~/composables/useCosmetics'
  * wears the lot), tabs for hats, outfits and accessories (tap to try, then
  * wear or buy with gems or chips), and Rooms: a skin for each zone you own,
  * previewed live on the floor. Opened by tapping your own avatar on the
- * floor, or from the shop.
+ * floor, or with the Wardrobe button beside Decor. On its own domain (not in
+ * the hub) the header also signs you out.
  */
 const tycoon = useTycoon()
 const cosmetics = useCosmetics()
 const session = useCasinoSession()
+const { embedded } = useHubBridge()
 
 const open = computed(() => cosmetics.wardrobe.value.open)
 const tab = computed({
@@ -128,6 +130,11 @@ const room = computed<ZoneId>({
 
 <template>
   <TycoonDrawer :open="open" title="Wardrobe" :icon="Shirt" color="#a879ff" :height="tab === 'rooms' ? ROOMS_HEIGHT : '78dvh'" @close="cosmetics.hide()">
+    <template v-if="!embedded && session.player.value" #extra>
+      <button type="button" class="g-btn g-dark size-11 shrink-0 rounded-full" :title="`Sign out (${name})`" :aria-label="`Sign out ${name}`" @click="session.signOut()">
+        <LogOut class="size-5" :stroke-width="3" />
+      </button>
+    </template>
     <div class="sticky top-0 z-10 grid grid-cols-5 gap-1.5 bg-gradient-to-b from-[#33264f] from-80% to-transparent px-3 pt-1 pb-3">
       <button
         v-for="t in TABS"

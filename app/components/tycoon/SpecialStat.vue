@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { Gem, TrendingUp } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
-import type { SpecialLift } from '~/utils/tycoon-art'
+import { lockedTiersHint, tierList, type SpecialLift } from '~/utils/tycoon-art'
 
 /**
  * A special's effect as compact stat chips, the same everywhere: rarity (a gem
- * in the guest tier's colour, "+15% High Rollers"), spend (a rising arrow,
- * "+3% spend"), and the coins an hour it adds when that is at least 1.
+ * in each richer guest tier's colour, "+12% Regulars", "+25% High Rollers",
+ * with a muted line for the tiers whose room isn't open yet), spend (a rising
+ * arrow, "+3% spend"), and the coins an hour it adds when that is at least 1.
  */
 const props = defineProps<{
     lifts: (SpecialLift | null | undefined)[]
@@ -17,6 +18,12 @@ const props = defineProps<{
 }>()
 
 const chips = computed(() => props.lifts.filter((l): l is SpecialLift => !!l))
+/** Richer tiers still locked, one line under the chips. */
+const hints = computed(() => chips.value.flatMap((l) => {
+    const text = lockedTiersHint(l)
+    // Nothing richer comes yet: the gem goes on the hint, it is the whole stat.
+    return text && l.kind === 'rarity' ? [{ text, gem: l.locked[0]!.color, alone: !l.rises.length }] : []
+}))
 const pct = (share: number) => {
     const n = Math.round(share * 100)
     return n < 1 && share > 0 ? '<1%' : `${n}%`
@@ -26,23 +33,18 @@ const pct = (share: number) => {
 <template>
   <span class="inline-flex max-w-full flex-wrap items-center gap-1">
     <template v-for="(l, i) in chips" :key="i">
-      <span
-        v-if="l.kind === 'rarity'"
-        class="chip"
-        :title="`Richer guests: ${pct(l.rise)} more ${tierPlural(l.tier.id, 2)} come in`"
-      >
-        <Gem class="size-3.5 shrink-0" :style="{ color: l.tier.color }" :stroke-width="2.75" />
-        <span class="g-num" :style="{ color: l.tier.color }">+{{ pct(l.rise) }}</span>
-        <span class="truncate">{{ tierPlural(l.tier.id, 2) }}</span>
-      </span>
-      <span
-        v-else-if="l.kind === 'rarity-locked'"
-        class="chip text-[var(--g-muted)]"
-        :title="`Richer guests: brings more ${tierPlural(l.tier.id, 2)} once you open the ${l.room}`"
-      >
-        <Gem class="size-3.5 shrink-0" :style="{ color: l.tier.color }" :stroke-width="2.75" />
-        <span class="truncate">{{ tierPlural(l.tier.id, 2) }}: open the {{ l.room }}</span>
-      </span>
+      <template v-if="l.kind === 'rarity'">
+        <span
+          v-for="r in l.rises"
+          :key="r.tier.id"
+          class="chip"
+          :title="`Rarity: more of every richer guest type (${tierList([...l.rises.map(x => x.tier), ...l.locked])}). ${pct(r.rise)} more ${tierPlural(r.tier.id, 2)} come in.`"
+        >
+          <Gem class="size-3.5 shrink-0" :style="{ color: r.tier.color }" :stroke-width="2.75" />
+          <span class="g-num" :style="{ color: r.tier.color }">+{{ pct(r.rise) }}</span>
+          <span class="truncate">{{ tierPlural(r.tier.id, 2) }}</span>
+        </span>
+      </template>
       <span v-else class="chip" :title="`Every guest spends ${pct(l.share)} more`">
         <TrendingUp class="size-3.5 shrink-0 text-[#ffc93a]" :stroke-width="2.75" />
         <span class="g-num text-[#ffc93a]">+{{ pct(l.share) }}</span>
@@ -53,6 +55,9 @@ const pct = (share: number) => {
       <CasinoCoinIcon class="size-3.5 shrink-0" />
       <span class="g-num">+{{ formatCoins(gain) }}/h</span>
       <span v-if="stored" class="font-normal">placed</span>
+    </span>
+    <span v-for="h in hints" :key="h.text" class="hint" title="Rarity: more of every richer guest type, once it can come">
+      <Gem v-if="h.alone" class="mr-0.5 inline size-3.5 align-[-2px]" :style="{ color: h.gem }" :stroke-width="2.75" />{{ h.text }}
     </span>
   </span>
 </template>
@@ -72,5 +77,14 @@ const pct = (share: number) => {
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
+}
+.hint {
+  flex-basis: 100%;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--g-muted);
+  text-align: inherit;
 }
 </style>

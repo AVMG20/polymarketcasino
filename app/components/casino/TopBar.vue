@@ -3,40 +3,29 @@ import { ChartNoAxesColumn, ChevronLeft, LogOut, Trophy } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 
 /**
- * Slim when embedded in the hub (the hub's own bar shows the player and
- * gems), fuller when the casino runs on its own domain.
+ * The slim bar over every page but My Casino (the floor's HUD has its
+ * buttons there): the way back to your casino, the leaderboard, your game
+ * stats and the balances. Gems convert in the Build menu's Gems tab.
+ * Slimmer when embedded in the hub (the hub's own bar shows the player and gems).
  */
 const { player, coins, signOut } = useCasinoSession()
-const { wallet, refresh, setGems } = useWallet()
-const { embedded, onHello } = useHubBridge()
+const { wallet } = useWallet()
+const { embedded } = useHubBridge()
 const tycoon = useTycoon()
 const route = useRoute()
-// Every page but My Casino gets the way back to it.
-const away = computed(() => route.path !== '/')
 const onStats = computed(() => route.path === '/stats')
 const casinoStats = useCasinoStats()
-// Visiting another casino: the bar blends into that floor too.
-const onFloor = computed(() => !away.value || route.path.startsWith('/visit/'))
+// Visiting another casino: the bar blends into that floor.
+const onFloor = computed(() => route.path.startsWith('/visit/'))
 const leaderboard = useLeaderboard()
-
-onMounted(() => {
-    if (!wallet.value) void refresh()
-    if (!tycoon.ready.value) void tycoon.refresh()
-    // The hub greets the iframe with the player's gem count.
-    onHello(gems => setGems(gems))
-})
 </script>
 
 <template>
-  <!-- On My Casino the bar blends into the floor; the HUD carries coins and chips there. -->
   <header class="sticky top-0 z-40 border-b" :class="onFloor ? 'dark border-white/10 bg-[#1c1424] text-white' : 'bg-background/85 backdrop-blur'">
     <div class="mx-auto flex max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-4" :class="embedded ? 'h-11' : 'h-14'">
-      <NuxtLink v-if="away" to="/" class="-ml-1.5 inline-flex h-11 min-w-11 items-center gap-1 rounded-lg px-1.5 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50">
+      <NuxtLink to="/" class="-ml-1.5 inline-flex h-11 min-w-11 items-center gap-1 rounded-lg px-1.5 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50">
         <ChevronLeft class="size-5 shrink-0 sm:size-4" />
         <span class="truncate max-sm:sr-only">My Casino</span>
-      </NuxtLink>
-      <NuxtLink v-else-if="!embedded" to="/" class="font-display text-lg font-extrabold tracking-tight whitespace-nowrap">
-        Polynux <span class="text-primary">Casino</span>
       </NuxtLink>
 
       <div class="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
@@ -50,21 +39,10 @@ onMounted(() => {
             <ChartNoAxesColumn class="size-4" />
           </NuxtLink>
         </Button>
-        <CasinoCoinChip v-if="away" :amount="coins" />
-        <!-- On My Casino the HUD shows the chips (animated). -->
-        <CasinoChipPill v-if="tycoon.ready.value && away" :amount="tycoon.chips.value" />
-        <!-- Phones keep coins, chips, stats and convert; the gem count and sign-out wait for sm. -->
-        <template v-if="!embedded && wallet?.hubAccount">
-          <CasinoGemChip :amount="wallet.gems" class="max-sm:hidden" />
-        </template>
-        <CasinoConvertDialog v-if="wallet?.hubAccount">
-          <template #default="{ available }">
-            <Button size="sm" variant="secondary" :disabled="!available" class="max-sm:size-11 max-sm:px-0" aria-label="Convert gems">
-              <CasinoGemIcon class="size-4 text-gem" />
-              <span class="max-sm:sr-only">Convert</span>
-            </Button>
-          </template>
-        </CasinoConvertDialog>
+        <CasinoCoinChip :amount="coins" />
+        <CasinoChipPill v-if="tycoon.ready.value" :amount="tycoon.chips.value" />
+        <!-- Phones keep coins and chips; the gem count and sign-out wait for sm. -->
+        <CasinoGemChip v-if="!embedded && wallet?.hubAccount" :amount="wallet.gems" class="max-sm:hidden" />
         <template v-if="!embedded && player">
           <span class="hidden text-sm font-medium sm:inline">{{ player.name }}</span>
           <Button size="icon-sm" variant="ghost" class="max-sm:hidden" title="Sign out" aria-label="Sign out" @click="signOut">
@@ -74,6 +52,4 @@ onMounted(() => {
       </div>
     </div>
   </header>
-  <TycoonLeaderboard />
-  <TycoonStatsSheet />
 </template>

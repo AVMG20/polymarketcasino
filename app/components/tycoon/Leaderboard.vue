@@ -6,11 +6,12 @@ import { ZONES } from '#shared/tycoon'
 /**
  * The casino leaderboard: every casino ranked by its value (the chips its
  * finished builds cost), the player's own row always pinned at the bottom. Tap a
- * row to visit that casino. Opened from the top bar on every page, so it
- * sits in its own layer under the bar instead of inside the floor page.
+ * row to visit that casino. Opened from the HUD on My Casino and from the top
+ * bar on the other pages, so it sits in its own layer (under the bar, where
+ * there is one) instead of inside the floor page.
  */
 const { open, close } = useLeaderboard()
-const { embedded } = useHubBridge()
+const topBar = useTopBar()
 const session = useCasinoSession()
 const router = useRouter()
 
@@ -69,7 +70,7 @@ const ZONE_LIST = ZONES.map(zone => ({ id: zone.id, name: zone.name, art: zoneAr
 
 <template>
   <Teleport to="body">
-    <div class="pointer-events-none fixed inset-x-0 bottom-0 z-50" :style="{ top: embedded ? '2.75rem' : '3.5rem' }">
+    <div class="pointer-events-none fixed inset-x-0 bottom-0 z-50" :style="{ top: topBar.height.value }">
       <TycoonDrawer class="pointer-events-auto" :open="open" dismissable title="Leaderboard" :icon="Trophy" color="#ffc93a" height="82dvh" @close="close()">
         <div class="flex min-h-full flex-col">
           <p class="flex items-center gap-1.5 px-4 pb-2 text-[13px] leading-4 text-[var(--g-muted)]">

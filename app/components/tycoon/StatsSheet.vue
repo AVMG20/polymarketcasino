@@ -10,7 +10,7 @@ import { VISITOR_TIERS, type HistoryHour, type HistoryResponse } from '#shared/v
  */
 const stats = useCasinoStats()
 const tycoon = useTycoon()
-const { embedded } = useHubBridge()
+const topBar = useTopBar()
 
 const range = ref<HistoryResponse['range']>('24h')
 const data = ref<HistoryResponse | null>(null)
@@ -42,7 +42,9 @@ const ticks = computed(() => {
 })
 
 const guestsOf = (h: HistoryHour) => countTotal(h.visitors)
-/** Tiers that came at all in this stretch, bottom to top. */
+/** Guests are averages over the hour: one decimal ("3,8"). */
+const guestNum = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 1 })
+/** Tiers that came at all in this stretch, cheapest first: one line each, every line from zero. */
 const tierSeries = computed(() => VISITOR_TIERS
     .filter(t => hours.value.some(h => (h.visitors[t.id] ?? 0) > 0))
     .map(t => ({ id: t.id, color: t.color, values: hours.value.map(h => h.visitors[t.id] ?? 0) })))
@@ -53,7 +55,7 @@ const empty = computed(() => !hours.value.some(h => guestsOf(h) > 0 || h.income 
 
 <template>
   <Teleport to="body">
-    <div class="pointer-events-none fixed inset-x-0 bottom-0 z-50" :style="{ top: embedded ? '2.75rem' : '3.5rem' }">
+    <div class="pointer-events-none fixed inset-x-0 bottom-0 z-50" :style="{ top: topBar.height.value }">
       <TycoonDrawer class="pointer-events-auto" :open="stats.open.value" dismissable title="Casino stats" :icon="ChartArea" color="#4aa6ff" height="82dvh" @close="stats.close()">
         <div class="space-y-3 px-3 pb-4">
           <div class="flex gap-2" role="group" aria-label="Range">
@@ -90,7 +92,20 @@ const empty = computed(() => !hours.value.some(h => guestsOf(h) > 0 || h.income 
               <p class="g-num mt-0.5 text-[13px] text-[var(--g-muted)]">
                 Now <span class="text-[var(--g-ink)]">{{ tycoon.visitors.value }}</span><template v-if="busiest && guestsOf(busiest) > 0"> · busiest {{ when(busiest.at) }}</template>
               </p>
-              <TycoonLineChart class="mt-2" stacked :series="tierSeries" />
+              <TycoonLineChart class="mt-2" :height="130" label="Guests per tier, hour by hour" :series="tierSeries">
+                <template #tip="{ index }">
+                  <p class="text-[11px] text-[var(--g-muted)]">{{ when(hours[index]!.at) }}</p>
+                  <p v-for="s in tierSeries" :key="s.id" class="flex items-center gap-1.5">
+                    <span class="size-2 shrink-0 rounded-full" :style="{ background: s.color }" />
+                    <span class="min-w-0 flex-1 truncate">{{ tierPlural(s.id, 2) }}</span>
+                    <span class="g-num ml-2" :style="{ color: s.color }">{{ guestNum.format(s.values[index] ?? 0) }}</span>
+                  </p>
+                  <p v-if="tierSeries.length > 1" class="mt-0.5 flex border-t border-white/10 pt-0.5">
+                    <span class="flex-1 text-[var(--g-muted)]">All</span>
+                    <span class="g-num ml-2">{{ guestNum.format(guestsOf(hours[index]!)) }}</span>
+                  </p>
+                </template>
+              </TycoonLineChart>
               <div class="g-num mt-1 flex justify-between text-[11px] text-[var(--g-muted)]"><span v-for="(t, i) in ticks" :key="i">{{ t }}</span></div>
               <p class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11.5px] font-semibold">
                 <span v-for="s in tierSeries" :key="s.id" class="flex items-center gap-1"><span class="size-2.5 rounded-full border border-black/50" :style="{ background: s.color }" />{{ tierPlural(s.id, 2) }}</span>
@@ -106,7 +121,12 @@ const empty = computed(() => !hours.value.some(h => guestsOf(h) > 0 || h.income 
               <p class="g-num mt-0.5 text-[13px] text-[var(--g-muted)]">
                 Now <span class="text-[#7ee08f]">{{ formatCoins(tycoon.perHour.value) }}/h</span><template v-if="best && best.income > 0"> · best hour {{ when(best.at) }}</template>
               </p>
-              <TycoonLineChart class="mt-2" :series="[{ color: '#7ee08f', values: hours.map(h => h.income) }]" />
+              <TycoonLineChart class="mt-2" label="Coins an hour into the cage" :series="[{ color: '#7ee08f', values: hours.map(h => h.income) }]">
+                <template #tip="{ index }">
+                  <p class="text-[11px] text-[var(--g-muted)]">{{ when(hours[index]!.at) }}</p>
+                  <p class="g-num flex items-center gap-1 text-[#7ee08f]"><CasinoCoinIcon class="size-3.5 shrink-0" />{{ formatCoins(hours[index]!.income) }}/h</p>
+                </template>
+              </TycoonLineChart>
               <div class="g-num mt-1 flex justify-between text-[11px] text-[var(--g-muted)]"><span v-for="(t, i) in ticks" :key="i">{{ t }}</span></div>
             </section>
           </template>

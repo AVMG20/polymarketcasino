@@ -1,7 +1,7 @@
 /** When the panel last closed: a tap outside it (on the trophy button too) closes it first. */
 let closedAt = 0
 
-/** The casino leaderboard panel (opened from the top bar's trophy button). */
+/** The casino leaderboard panel (opened from the trophy button: the HUD's on My Casino, the top bar's elsewhere). */
 export function useLeaderboard() {
     const open = useState('social:leaderboard', () => false)
 
