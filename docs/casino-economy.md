@@ -440,8 +440,12 @@ Three missions a player per Amsterdam day, drawn on the day's first read or even
 campaign), and one more of anything left, a visit included (3 rounds at someone else's casino). A mission
 the casino can't do isn't drawn (no live table built, nothing left to build, a week of ads queued, no other
 casino). A 5× win is one bet paying 5× (or more) itself: one Pegfall ball, one Magic Hands hand, one roulette
-spot, one blackjack hand or side bet, a baccarat spot, the pair plus or AA bonus; a single-bet game, the round. Rewards are
-**coins**, fixed when the day's missions are drawn: 0.5-1 hour of the casino's full guest income each
+spot, one blackjack hand or side bet, a baccarat spot, the pair plus or AA bonus; a single-bet game, the round.
+Now and then the play mission is a hard one: win 25×, 50×, 75× or 100× your bet (1.5 / 2 / 2.5 / 3 hours of
+income), counted the same way against what that bet cost (a bought bonus against its buy price, so a 100× bonus
+on a 100× buy is 1×). They are drawn by weight (0.15 / 0.12 / 0.1 / 0.08 against 1 for the others), at most one a
+day: about one day in six has one. Rewards are
+**coins**, fixed when the day's missions are drawn: 0.5-1 hour of the casino's full guest income each (the hard ones 1.5-3)
 (`missionReward`: hours of `fullIncomePerHour`, every seat taken at the default rules, at least 3,500 coins an
 hour, so a new casino gets 1,750-3,500 a mission and about 9,000 for the first day), plus 0.75 hours for
 clearing all three (the bonus). The floor was 1,500 before the visitor tiers: a young floor is half empty now,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ArrowRight, Check, Timer } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
-import type { MissionId, MissionKey, MissionView } from '#shared/missions'
+import { HARD_MISSIONS, type MissionId, type MissionKey, type MissionView } from '#shared/missions'
 import type { IlloName } from '~/utils/tycoon-art'
 
 /**
@@ -17,6 +17,10 @@ const LOOK: Record<MissionId, { illo: IlloName, color: string }> = {
     'rounds': { illo: 'dice', color: '#4aa6ff' },
     'slot-wins': { illo: 'cherry', color: '#ff5470' },
     'big-win': { illo: 'bigwin', color: '#ff9a2e' },
+    'win-25x': { illo: 'bigwin', color: '#c084fc' },
+    'win-50x': { illo: 'bigwin', color: '#a879ff' },
+    'win-75x': { illo: 'bigwin', color: '#ff5470' },
+    'win-100x': { illo: 'bigwin', color: '#ffc93a' },
     'table-hands': { illo: 'cards', color: '#3fd25a' },
     'collects': { illo: 'coins', color: '#ffc93a' },
     'build': { illo: 'crew', color: '#3fd25a' },
@@ -59,7 +63,7 @@ async function claim(m: MissionView) {
           <TycoonIllo :name="LOOK[m.id as MissionId]?.illo ?? 'chest'" :color="LOOK[m.id as MissionId]?.color" plain class="size-9! drop-shadow-[0_2px_0_rgb(0_0_0/0.3)]" />
         </span>
         <span class="min-w-0 flex-1">
-          <span class="g-title line-clamp-2 text-[15px] leading-5 sm:text-base">{{ m.title }}</span>
+          <span class="g-title line-clamp-2 text-[15px] leading-5 sm:text-base">{{ m.title }}<span v-if="HARD_MISSIONS.includes(m.id as MissionId)" class="hard ml-1.5 inline-block rounded-full px-1.5 align-[2px] text-[10px] leading-4 tracking-wide uppercase" title="A hard one: it takes some luck and playing, and pays more">Hard</span></span>
           <span class="mt-1 flex items-center gap-2">
             <span class="g-well block h-2.5 min-w-0 flex-1 overflow-hidden rounded-full">
               <span class="block h-full rounded-full bg-gradient-to-r transition-[width] duration-500" :class="done(m) ? 'from-[#1fb84a] to-[#7ef09a]' : 'from-[#f08a00] to-[#ffe066]'" :style="{ width: `${(m.progress / m.target) * 100}%` }" />
@@ -126,6 +130,12 @@ async function claim(m: MissionView) {
 </template>
 
 <style scoped>
+.hard {
+  background: linear-gradient(180deg, #ff7a59, #e2443a);
+  border: 1.5px solid #6b1b14;
+  color: #fff;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.35);
+}
 .badge {
   background: radial-gradient(circle at 30% 22%, color-mix(in oklab, var(--tone) 55%, white), var(--tone) 50%, color-mix(in oklab, var(--tone) 60%, black));
   box-shadow: 0 3px 0 rgb(0 0 0 / 0.4), inset 0 2px 0 rgb(255 255 255 / 0.35);

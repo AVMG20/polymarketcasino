@@ -10,7 +10,7 @@ import { accrueCage, collectCage, getTycoonState, luckSeed, peekCasino, startBui
 import { writeTx } from '../server/database'
 import { amsterdamDay } from '../shared/economy'
 import {
-    BONUS_MISSION, bestMultiple, MISSION_FLOOR_PER_HOUR, MISSIONS, missionReward, pickMissions, roundMissionEvents, WELCOME_AFTER_MS,
+    BONUS_MISSION, bestMultiple, findMission, HARD_MISSIONS, MISSION_FLOOR_PER_HOUR, MISSIONS, missionReward, pickMissions, roundMissionEvents, WELCOME_AFTER_MS,
     type MissionId
 } from '../shared/missions'
 import { seededRng } from '../shared/rng'
@@ -84,6 +84,34 @@ describe('mission rules', () => {
             expect(roundMissionEvents({ playerId: 'a', game: 'plinko', stake: outcome.stake, payout: outcome.payout, multiple: outcome.multiple })).toContain('big-win')
         }
         expect(checked).toBe(3)
+    })
+
+    it('counts the hard 25-100× missions against what the bet cost', () => {
+        expect(roundMissionEvents({ playerId: 'a', game: 'limbo', stake: 10, payout: 250 })).toEqual(['rounds', 'big-win', 'win-25x'])
+        expect(roundMissionEvents({ playerId: 'a', game: 'limbo', stake: 10, payout: 1000 })).toEqual(['rounds', 'big-win', 'win-25x', 'win-50x', 'win-75x', 'win-100x'])
+        expect(roundMissionEvents({ playerId: 'a', game: 'plinko', stake: 100, payout: 400, multiple: 290 })).toContain('win-100x')
+        // A bought bonus: 100× the bet back on a 100× buy is 1× what it cost.
+        expect(roundMissionEvents({ playerId: 'a', game: 'trashpanda', stake: 1_000, payout: 1_000 })).toEqual(['rounds'])
+    })
+
+    it('draws at most one hard mission a day, and the hard ones only now and then', () => {
+        const all = MISSIONS.map(m => m.id)
+        let days = 0
+        let withHard = 0
+        for (let seed = 1; seed <= 2_000; seed++) {
+            const picked = pickMissions(seededRng(seed), all)
+            const hard = picked.filter(id => HARD_MISSIONS.includes(id)).length
+            expect(hard).toBeLessThanOrEqual(1)
+            expect(new Set(picked).size).toBe(picked.length)
+            days++
+            if (hard) withHard++
+        }
+        expect(withHard / days).toBeGreaterThan(0.05)
+        expect(withHard / days).toBeLessThan(0.25)
+        // Harder pays more.
+        const hours = HARD_MISSIONS.map(id => findMission(id)!.hours)
+        expect([...hours].sort((a, b) => a - b)).toEqual(hours)
+        expect(hours[0]!).toBeGreaterThan(findMission('big-win')!.hours)
     })
 
     it('takes the best single bet of a round', () => {

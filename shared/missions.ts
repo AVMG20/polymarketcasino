@@ -15,7 +15,7 @@ import type { HistoryHour, NotableGuest } from './visitors'
  * drawn: `hours` of it, never under MISSION_FLOOR_PER_HOUR × `hours`.
  */
 
-export type MissionId = 'rounds' | 'slot-wins' | 'big-win' | 'table-hands' | 'collects' | 'build' | 'campaign' | 'visit'
+export type MissionId = 'rounds' | 'slot-wins' | 'big-win' | 'win-25x' | 'win-50x' | 'win-75x' | 'win-100x' | 'table-hands' | 'collects' | 'build' | 'campaign' | 'visit'
 export const BONUS_MISSION = 'bonus'
 export type MissionKey = MissionId | typeof BONUS_MISSION
 
@@ -29,12 +29,21 @@ export interface MissionDef {
     /** The reward in hours of the casino's full guest income. */
     hours: number
     group: MissionGroup
+    /** A win this many times its own bet (or more) counts (the big-win kind). */
+    multiple?: number
+    /** How often it is drawn against the others in its slot (default 1). The hard ones come now and then. */
+    weight?: number
 }
 
 export const MISSIONS: readonly MissionDef[] = [
     { id: 'rounds', title: 'Play 20 rounds', target: 20, hours: 0.5, group: 'play' },
     { id: 'slot-wins', title: 'Win 3 times on slots', target: 3, hours: 0.75, group: 'play' },
-    { id: 'big-win', title: 'Win 5× your bet', target: 1, hours: 1, group: 'play' },
+    { id: 'big-win', title: 'Win 5× your bet', target: 1, hours: 1, group: 'play', multiple: 5 },
+    // Hard ones: a lucky hit that takes some playing, now and then, for a bigger reward.
+    { id: 'win-25x', title: 'Win 25× your bet', target: 1, hours: 1.5, group: 'play', multiple: 25, weight: 0.15 },
+    { id: 'win-50x', title: 'Win 50× your bet', target: 1, hours: 2, group: 'play', multiple: 50, weight: 0.12 },
+    { id: 'win-75x', title: 'Win 75× your bet', target: 1, hours: 2.5, group: 'play', multiple: 75, weight: 0.1 },
+    { id: 'win-100x', title: 'Win 100× your bet', target: 1, hours: 3, group: 'play', multiple: 100, weight: 0.08 },
     { id: 'table-hands', title: 'Play 5 hands at a live table', target: 5, hours: 0.75, group: 'play' },
     { id: 'collects', title: 'Collect the cage twice', target: 2, hours: 0.5, group: 'casino' },
     { id: 'build', title: 'Start a build', target: 1, hours: 0.5, group: 'casino' },
@@ -55,9 +64,13 @@ export const MISSION_FLOOR_PER_HOUR = 3_500
 /**
  * A win this many times its own bet (or more) counts for `big-win`: one
  * Pegfall ball, one Magic Hands hand, one roulette or side bet, or the
- * whole round when it is a single bet.
+ * whole round when it is a single bet. The hard missions (`multiple` on the
+ * def) count the same way: against what that bet cost, so a bought bonus
+ * counts against its buy price.
  */
 export const BIG_WIN_MULTIPLE = 5
+/** Missions with a `multiple` above the 5× one: at most one of these a day. */
+export const HARD_MISSIONS: readonly MissionId[] = ['win-25x', 'win-50x', 'win-75x', 'win-100x']
 
 /** One bet of a round and what it returned (stake included). */
 export interface BetReturn {
@@ -97,12 +110,28 @@ export function pickMissions(rng: Rng, eligible: readonly MissionId[]): MissionI
     const pool = MISSIONS.filter(mission => eligible.includes(mission.id))
     const picked: MissionId[] = []
     const take = (from: readonly MissionDef[]) => {
-        const left = from.filter(mission => !picked.includes(mission.id))
-        if (left.length) picked.push(left[Math.floor(rng.next() * left.length)]!.id)
+        // One hard mission a day at most; the rest are drawn by weight.
+        const hardTaken = picked.some(id => HARD_MISSIONS.includes(id))
+        const left = from.filter(mission => !picked.includes(mission.id) && !(hardTaken && HARD_MISSIONS.includes(mission.id)))
+        if (!left.length) return
+        const total = left.reduce((sum, mission) => sum + (mission.weight ?? 1), 0)
+        let roll = rng.next() * total
+        for (const mission of left) {
+            roll -= mission.weight ?? 1
+            if (roll < 0) {
+                picked.push(mission.id)
+                return
+            }
+        }
+        picked.push(left[left.length - 1]!.id)
     }
     take(pool.filter(mission => mission.group === 'play'))
     take(pool.filter(mission => mission.group === 'casino'))
-    while (picked.length < MISSIONS_PER_DAY && pool.some(mission => !picked.includes(mission.id))) take(pool)
+    while (picked.length < MISSIONS_PER_DAY) {
+        const before = picked.length
+        take(pool)
+        if (picked.length === before) break
+    }
     return picked
 }
 
@@ -117,7 +146,9 @@ export function roundMissionEvents(round: { playerId: string, game: string, stak
     if (info?.kind === 'slot' && round.payout > round.stake) events.push('slot-wins')
     const multiple = Math.max(round.multiple ?? 0, bestMultiple([round]))
     // Payouts round down to 0.0001: a hair under 5× is still the 5× the game showed.
-    if (multiple >= BIG_WIN_MULTIPLE - 1e-6) events.push('big-win')
+    for (const mission of MISSIONS) {
+        if (mission.multiple && multiple >= mission.multiple - 1e-6) events.push(mission.id)
+    }
     if (info?.live) events.push('table-hands')
     if (round.host && round.host !== round.playerId) events.push('visit')
     return events
