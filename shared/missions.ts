@@ -1,6 +1,7 @@
 import { findGame } from './games/registry'
 import type { Rng } from './rng'
 import { fullIncomePerHour, type BuildKind, type CampaignId, type TycoonState } from './tycoon'
+import type { HistoryHour, NotableGuest } from './visitors'
 
 /**
  * Daily missions and the "while you were away" card (My Casino).
@@ -50,7 +51,7 @@ export const BONUS_HOURS = 0.75
  * reward hour (about a casino with the Main Floor open), so the first day's
  * missions add half again to the starter cage.
  */
-export const MISSION_FLOOR_PER_HOUR = 1_500
+export const MISSION_FLOOR_PER_HOUR = 3_500
 /**
  * A win this many times its own bet (or more) counts for `big-win`: one
  * Pegfall ball, one Magic Hands hand, one roulette or side bet, or the
@@ -82,7 +83,7 @@ export function isMissionKey(id: unknown): id is MissionKey {
 }
 
 /** Coins for `hours` of the casino's full guest income (whole tens, at least the floor). */
-export function missionReward(state: Pick<TycoonState, 'games'>, hours: number): number {
+export function missionReward(state: Pick<TycoonState, 'games'> & { zones?: readonly string[], upgrades?: Partial<TycoonState['upgrades']> }, hours: number): number {
     const coins = Math.max(MISSION_FLOOR_PER_HOUR * hours, fullIncomePerHour(state) * hours)
     return Math.round(coins / 10) * 10
 }
@@ -168,6 +169,12 @@ export interface WelcomeBack {
     /** Visitors on the floor now, and the seats. */
     visitors: number
     seats: number
+    /** The floor hour by hour while away (whole hours, at most the last three days). */
+    hours: HistoryHour[]
+    /** Whales that came by while away (the biggest spenders, oldest first). */
+    notable: NotableGuest[]
+    /** How many Whale visits there were in all (`notable` lists the biggest few). */
+    whales: number
 }
 
 /** Away this long (or more) and the next read says what happened. */

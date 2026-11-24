@@ -5,7 +5,8 @@ import { findGame } from '#shared/games/registry'
 import { formatCoins, formatCoinsExact } from '#shared/money'
 import { skinOf } from '#shared/cosmetics'
 import type { CasinoVisit, LikeResponse } from '#shared/social'
-import { findCampaign, findTycoonGame, findZone, MAX_LEVEL, seatsOf, TYCOON_GAMES, ZONES, type ZoneId } from '#shared/tycoon'
+import { emptyCounts } from '#shared/visitors'
+import { decorLook, findCampaign, findTycoonGame, findZone, MAX_LEVEL, seatsOf, TYCOON_GAMES, ZONES, type ZoneId } from '#shared/tycoon'
 import CasinoFloor from '~/components/tycoon/CasinoFloor.vue'
 import { QUICK_GAMES } from '~/utils/game-embed'
 import type { FloorApi, FloorPlot, FloorScene, FloorTarget, FloorZone } from '~/utils/floor/types'
@@ -109,10 +110,10 @@ const scene = computed<FloorScene | null>(() => {
         plots,
         // The cage is the owner's: drawn empty.
         cage: { fill: 0, stored: 0 },
-        decor: v.decor,
+        decor: decorLook(v.decor),
         guestsPerHour: 0,
-        visitors: v.visitors,
-        queue: v.queue,
+        visitors: v.floor?.visitors ?? { ...emptyCounts(), tourist: v.visitors },
+        queue: v.floor?.turnedAway ?? v.queue,
         campaign: v.campaign,
         rush: false,
         player: { name: session.player.value?.name ?? 'You', image: session.player.value?.image ?? null, avatar: tycoon.state.value?.cosmetics?.avatar ?? null },
@@ -253,7 +254,10 @@ useHead({ title: () => ownerName.value ? `${ownerName.value}'s casino` : 'Visiti
           <p class="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[13px] leading-4 font-semibold">
             <span v-if="visit.rank" class="g-num flex items-center gap-1 text-[#ffc93a]" title="Leaderboard rank"><Trophy class="size-3.5" :stroke-width="3" />#{{ visit.rank }}</span>
             <span class="g-num flex items-center gap-1" :title="`Casino value: ${formatCoinsExact(visit.value)} chips`"><CasinoChipIcon class="size-3.5" />{{ formatCoins(visit.value) }}</span>
-            <span class="g-num flex items-center gap-1 text-[#9fd7ff]" :title="`${visit.visitors} visitors in ${visit.seats} seats`"><Users class="size-3.5" :stroke-width="3" />{{ visit.visitors }}/{{ visit.seats }}</span>
+            <span v-if="visit.floor" class="g-num flex items-center gap-1" :title="`${visit.visitors} guests in ${visit.seats} seats`">
+              <TycoonVisitorDots :counts="visit.floor.visitors" size="sm" /><span class="text-[var(--g-muted)]">/{{ visit.seats }}</span>
+            </span>
+            <span v-else class="g-num flex items-center gap-1 text-[#9fd7ff]" :title="`${visit.visitors} visitors in ${visit.seats} seats`"><Users class="size-3.5" :stroke-width="3" />{{ visit.visitors }}/{{ visit.seats }}</span>
             <span v-if="campaign" class="flex items-center gap-1 text-[#ffb35c]" :title="`${campaign.name} running`"><Megaphone class="size-3.5" :stroke-width="3" /><span class="max-sm:sr-only">{{ campaign.name }}</span></span>
           </p>
         </div>

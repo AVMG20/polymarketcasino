@@ -20,7 +20,9 @@ import {
 } from '#shared/floor/layout'
 import { NavGrid } from '#shared/floor/nav'
 import { Picker } from './pick'
-import { MAX_REMOTES, type FloorApi, type FloorCollectOptions, type FloorFocusOptions, type FloorMove, type FloorPlot, type FloorRemote, type FloorScene, type FloorTarget } from './types'
+import { VISITOR_TIER_IDS, type VisitorCounts, type VisitorTierId } from '#shared/visitors'
+import { TIERS } from '~/utils/visitor-tiers'
+import { MAX_GUESTS, MAX_REMOTES, type FloorApi, type FloorCollectOptions, type FloorFocusOptions, type FloorMove, type FloorPlot, type FloorRemote, type FloorScene, type FloorTarget } from './types'
 import { CageView, DeskView, PlotView, SaleSignView, plotKey, type PlotShow, type ViewContext } from './views'
 
 type Pixi = typeof import('pixi.js')
@@ -124,6 +126,28 @@ function shifted(c: { ox: number, oy: number }, sx: number, sy: number): { ox: n
 
 function boxOf(rect: Rect, height: number): DepthBox {
     return { minX: rect.x, minY: rect.y, maxX: rect.x + rect.w, maxY: rect.y + rect.h, height }
+}
+
+const TIER_COLORS = Object.fromEntries(TIERS.map(t => [t.id, t.color])) as Record<VisitorTierId, string>
+/** What a tier spends, relative (1 when the catalog has no number yet). */
+const TIER_SPEND = Object.fromEntries(TIERS.map(t => [t.id, t.spend > 0 ? t.spend : 1])) as Record<VisitorTierId, number>
+
+/** Guests to draw per tier: the counts, scaled down to MAX_GUESTS (largest remainder) on a huge floor. */
+export function drawnGuests(counts: VisitorCounts): VisitorCounts {
+    const clean = { tourist: 0, regular: 0, highroller: 0, whale: 0 }
+    for (const id of VISITOR_TIER_IDS) clean[id] = Math.max(0, Math.round(counts[id] ?? 0))
+    const total = VISITOR_TIER_IDS.reduce((sum, id) => sum + clean[id], 0)
+    if (total <= MAX_GUESTS) return clean
+    const scaled = VISITOR_TIER_IDS.map(id => ({ id, exact: (clean[id] * MAX_GUESTS) / total }))
+    const out = { tourist: 0, regular: 0, highroller: 0, whale: 0 }
+    for (const s of scaled) out[s.id] = Math.floor(s.exact)
+    let left = MAX_GUESTS - VISITOR_TIER_IDS.reduce((sum, id) => sum + out[id], 0)
+    for (const s of [...scaled].sort((a, b) => (b.exact % 1) - (a.exact % 1))) {
+        if (left <= 0) break
+        out[s.id]++
+        left--
+    }
+    return out
 }
 
 /** NPC count for a guest income: busier floors look busier, capped for phones. */
@@ -440,10 +464,12 @@ export class FloorEngine implements FloorApi {
         this.pruneFigures()
         this.setCage(scene.cage.fill, scene.cage.stored)
         this.partyOn = scene.rush
-        const visitors = scene.visitors ?? guestCount(scene.guestsPerHour, scene.rush)
-        this.guests.setCount(visitors, scene.rush)
-        // Playing guests pop coins off their machines, labelled with their real share of the income.
-        this.guests.earnPerSec = Math.max(0, scene.guestsPerHour) / Math.max(1, visitors) / 3600
+        const mix = drawnGuests(scene.visitors ?? { tourist: guestCount(scene.guestsPerHour, scene.rush), regular: 0, highroller: 0, whale: 0 })
+        this.guests.setMix(mix, TIER_COLORS, scene.rush)
+        // Playing guests pop coins off their machines, labelled with their real share of the income (by what their tier spends).
+        const weight = VISITOR_TIER_IDS.reduce((sum, id) => sum + mix[id] * TIER_SPEND[id], 0)
+        const perUnit = weight > 0 ? Math.max(0, scene.guestsPerHour) / weight / 3600 : 0
+        this.guests.earnPerSec = { tourist: perUnit * TIER_SPEND.tourist, regular: perUnit * TIER_SPEND.regular, highroller: perUnit * TIER_SPEND.highroller, whale: perUnit * TIER_SPEND.whale }
         if (this.firstScene) {
             this.firstScene = false
             if (this.resume) {

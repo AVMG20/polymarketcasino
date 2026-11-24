@@ -1,5 +1,5 @@
 import { skinOf } from '#shared/cosmetics'
-import { activeCampaign, TYCOON_GAMES, visitorCount, visitorQueue, ZONES, type TableOccupancy } from '#shared/tycoon'
+import { activeCampaign, decorLook, TYCOON_GAMES, ZONES, type TableOccupancy } from '#shared/tycoon'
 import type { FloorPlot, FloorScene, FloorZone } from '~/utils/floor/types'
 
 const TABLES_POLL_MS = 10_000
@@ -81,12 +81,11 @@ export function useFloorScene() {
             zones,
             plots,
             cage,
-            decor: s.upgrades.decor ?? 0,
-            guestsPerHour: s.cage.perHour,
-            // From the state's own clock, so the scene is not rebuilt every tick (a rush ending re-reads the state).
-            // A campaign running out re-reads the state too (useTycoon's ticker).
-            visitors: visitorCount(s, s.serverNow),
-            queue: visitorQueue(s, s.serverNow),
+            decor: decorLook(s.upgrades.decor ?? 0),
+            guestsPerHour: s.floor.perHour,
+            // The floor's tick, from the state: a new tick, a rush or a campaign running out re-reads it (useTycoon's ticker).
+            visitors: s.floor.visitors,
+            queue: s.floor.turnedAway,
             campaign: activeCampaign(s, s.serverNow)?.id ?? null,
             rush: tycoon.rushActive.value,
             player: { name: session.player.value?.name ?? 'You', image: session.player.value?.image ?? null, avatar: s.cosmetics?.avatar ?? null },

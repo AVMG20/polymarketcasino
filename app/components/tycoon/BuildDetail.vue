@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowBigUp, ArrowRight, ChevronLeft, Clock, Crown, Eye, Footprints, HardHat, Lock } from 'lucide-vue-next'
+import { ArrowBigUp, ArrowRight, ChevronLeft, Clock, Crown, Eye, Footprints, Gem, HardHat, Lock } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import { formatCoins } from '#shared/money'
 import { findUpgrade, type BuildKind, type ZoneId } from '#shared/tycoon'
@@ -13,9 +13,23 @@ const emit = defineEmits<{ back: [], started: [], play: [slug: string], open: [k
 
 const tycoon = useTycoon()
 const v = computed(() => tycoon.view(props.kind, props.id))
+// The level the stats start from (-1: maxed), as a number, so the stats are not redone every clock tick.
+const statLevel = computed(() => (v.value.maxed ? -1 : v.value.running ? v.value.running.level - 1 : v.value.level))
 /** What the next step changes, now → next. */
-const stats = computed(() => (v.value.maxed ? [] : buildStats(props.kind, props.id, v.value.running ? v.value.running.level - 1 : v.value.level, tycoon.state.value, tycoon.serverTime.value)))
+const stats = computed(() => (statLevel.value < 0 ? [] : buildStats(props.kind, props.id, statLevel.value, tycoon.state.value, tycoon.state.value?.serverNow ?? 0)))
 const game = computed(() => (props.kind === 'game' ? findGame(props.id) : undefined))
+/** A top machine level: one line above the rows saying it draws richer guests. */
+const headline = computed(() => {
+    if (statLevel.value >= 0) return buildHeadline(props.kind, props.id, statLevel.value)
+    // A maxed machine keeps saying what its top level does.
+    return props.kind === 'game' && RICHER_LEVELS.includes(v.value.level) ? 'Max level: draws High Rollers and Whales' : null
+})
+/** A maxed game still shows its one income number (the same as its tile badge). */
+const maxedEarns = computed(() => {
+    const s = tycoon.state.value
+    if (props.kind !== 'game' || !v.value.maxed || !s) return null
+    return gameIncomePerHour(s, props.id, v.value.level, s.serverNow)
+})
 const blurb = computed(() => buildLine(props.kind, props.id, v.value.level) ?? (props.kind === 'upgrade' ? findUpgrade(props.id)?.description : null) ?? null)
 /** The level the next step (or the running one) reaches. */
 const target = computed(() => (v.value.running ? v.value.running.level : v.value.maxed ? v.value.level : v.value.level + 1))
@@ -49,7 +63,7 @@ async function start() {
       <div class="min-w-0 flex-1 space-y-1.5 pr-10">
         <h3 class="g-title text-[1.6rem] leading-[1.05]">{{ v.name }}</h3>
         <div v-if="v.maxLevel > 1" class="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <TycoonPips :level="v.level" :max="v.maxLevel" size="md" :next="!v.maxed" />
+          <TycoonPips :level="v.level" :max="v.maxLevel" size="md" :next="!v.maxed" :marks="kind === 'game' ? RICHER_LEVELS : undefined" />
           <span v-if="!v.maxed" class="g-num flex items-center gap-1 text-sm text-[var(--g-muted)]">Lv {{ v.level }}<ArrowRight class="size-3.5" :stroke-width="3" /><span class="text-[#ffc93a]">{{ target }}</span></span>
         </div>
         <p v-if="blurb" class="text-[13px] leading-snug text-[var(--g-muted)]">{{ blurb }}</p>
@@ -57,6 +71,12 @@ async function start() {
     </div>
 
     <!-- What the next step changes -->
+    <p v-if="headline" class="flex items-center gap-1.5 rounded-xl bg-[#ffc93a]/12 px-3 py-1.5 text-sm font-bold text-[#ffc93a]"><Gem class="size-4 shrink-0" :stroke-width="2.75" />{{ headline }}</p>
+    <p v-if="maxedEarns !== null" class="g-well flex min-h-10 items-center gap-2.5 rounded-2xl px-3 py-1" title="Coins an hour this game brings into your cage on average">
+      <span class="grid size-7 shrink-0 place-items-center rounded-lg bg-black/30"><CasinoCoinIcon class="size-4" /></span>
+      <span class="min-w-0 flex-1 truncate text-sm font-semibold">This game earns</span>
+      <span class="g-num text-base text-[#7ee08f]">{{ formatCoins(maxedEarns) }}/h</span>
+    </p>
     <ul v-if="stats.length" class="g-well divide-y divide-white/5 rounded-2xl px-3 py-1">
       <li v-for="stat in stats" :key="stat.label" class="flex min-h-10 items-center gap-2.5" :title="stat.title">
         <span class="grid size-7 shrink-0 place-items-center rounded-lg bg-black/30"><component :is="stat.icon" class="size-4" :style="{ color: stat.color }" :stroke-width="2.75" /></span>
@@ -67,7 +87,8 @@ async function start() {
             <ArrowRight class="size-3.5 text-[var(--g-muted)]" :stroke-width="3" />
           </template>
           <span v-else-if="stat.now === null" class="rounded-full bg-[#3fd25a] px-1.5 text-[10px] leading-4 text-[#0b3a17] [text-shadow:none]">NEW</span>
-          <span class="text-[#7ee08f]">{{ stat.next }}</span>
+          <span :class="(stat.trend ?? 1) < 0 ? 'text-[#ff8a8a]' : stat.trend === 0 ? 'text-white' : 'text-[#7ee08f]'">{{ stat.next }}</span>
+          <span v-if="stat.arrow && stat.trend" class="text-xs" :class="stat.trend < 0 ? 'text-[#ff8a8a]' : 'text-[#7ee08f]'">{{ stat.trend < 0 ? '▼' : '▲' }}</span>
         </span>
       </li>
     </ul>

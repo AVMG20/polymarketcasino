@@ -2,11 +2,11 @@
 import { Check, PaintRoller } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import { findGame } from '#shared/games/registry'
-import { fullIncomePerHour, TYCOON_GAMES, type ZoneId } from '#shared/tycoon'
+import { fullIncomePerHour, guestsPerHour, TYCOON_GAMES, type ZoneId } from '#shared/tycoon'
 
 /**
  * What a zone brings, on its detail card: the games it holds (with their
- * level once built), the coins an hour they can add at level 1, and, once the zone is
+ * level once built), the coins an hour they can add on average once built, and, once the zone is
  * open, its skins (previewed live on the floor).
  */
 const props = defineProps<{ id: ZoneId }>()
@@ -17,8 +17,18 @@ const games = computed(() => TYCOON_GAMES.filter(game => game.zone === props.id)
     name: findGame(game.slug)?.name ?? game.slug,
     level: tycoon.state.value?.games[game.slug] ?? 0
 })))
-/** Cage coins an hour these games add at level 1 with every seat taken. */
-const income = computed(() => fullIncomePerHour({ games: Object.fromEntries(games.value.map(game => [game.slug, 1])) }))
+/**
+ * Cage coins an hour on average these games add with each one built (at least
+ * level 1) and the zone open: the casino with them minus as it is now.
+ */
+const income = computed(() => {
+    const s = tycoon.state.value
+    const all = Object.fromEntries(games.value.map(game => [game.slug, Math.max(1, game.level)]))
+    if (!s) return fullIncomePerHour({ games: all })
+    const zones = s.zones.includes(props.id) ? s.zones : [...s.zones, props.id]
+    const gain = guestsPerHour({ ...s, zones, games: { ...s.games, ...all } }, s.serverNow) - guestsPerHour(s, s.serverNow)
+    return Math.max(0, Math.round(gain))
+})
 const owned = computed(() => !!tycoon.state.value?.zones.includes(props.id))
 </script>
 
@@ -27,7 +37,7 @@ const owned = computed(() => !!tycoon.state.value?.zones.includes(props.id))
     <div class="g-well rounded-2xl p-2">
       <div class="mb-1.5 flex items-center justify-between px-1">
         <span class="text-[11px] font-semibold tracking-wider text-[var(--g-muted)] uppercase">{{ games.length }} games</span>
-        <span class="g-num flex items-center gap-1 text-sm text-[#ffc93a]" :title="`Up to ${formatCoins(income)} more coins an hour for your cage with every game here built`"><CasinoCoinIcon class="size-4" />+{{ formatCoins(income) }}/h</span>
+        <span class="g-num flex items-center gap-1 text-sm text-[#ffc93a]" :title="`About ${formatCoins(income)} more coins an hour on average for your cage with every game here built`"><CasinoCoinIcon class="size-4" />+{{ formatCoins(income) }}/h</span>
       </div>
       <div class="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
         <div

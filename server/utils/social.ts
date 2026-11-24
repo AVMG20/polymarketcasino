@@ -4,8 +4,9 @@ import { casinoConstructions, casinoLikes, casinoProfiles, players } from '../da
 import { normalizeAvatar, normalizeSkins, type ZoneSkins } from '../../shared/cosmetics'
 import { amsterdamDay } from '../../shared/economy'
 import { casinoTier, casinoValue, LEADERBOARD_SIZE, type CasinoOwner, type CasinoVisit, type LeaderboardEntry, type LeaderboardResponse, type LikeResponse } from '../../shared/social'
-import { activeCampaign, floorSeats, progressOf, visitorCount, visitorQueue, ZONES, type UpgradeId, type ZoneId } from '../../shared/tycoon'
-import { peekCasino } from './tycoon'
+import { activeCampaign, progressOf, ZONES, type UpgradeId, type ZoneId } from '../../shared/tycoon'
+import { floorNow, seatedTotal } from '../../shared/visitors'
+import { casinoView, peekCasino } from './tycoon'
 
 /**
  * The casino leaderboard and visits (shared/social.ts). Reads only, except
@@ -139,7 +140,8 @@ export function getCasinoVisit(visitorId: string, ownerId: string, now = Date.no
     const casino = peekCasino(ownerId, now)
     const campaign = activeCampaign(casino, now)
     // A rush (a gem purchase) changes income, not visitors: it stays the owner's.
-    const view = { games: casino.games, upgrades: casino.upgrades, rushUntil: null, campaign: campaign ? casino.campaign : null }
+    const floor = floorNow(casinoView({ ...casino, rushUntil: null }), casino.seed, now)
+    const seated = seatedTotal(floor.visitors)
     const liked = db.select({ day: casinoLikes.day }).from(casinoLikes)
         .where(and(eq(casinoLikes.ownerId, ownerId), eq(casinoLikes.visitorId, visitorId), eq(casinoLikes.day, amsterdamDay(new Date(now)))))
         .get()
@@ -156,9 +158,10 @@ export function getCasinoVisit(visitorId: string, ownerId: string, now = Date.no
         decor: casino.upgrades.decor ?? 0,
         // Skins on owned zones only (a skin is never put on a zone that isn't open).
         skins: Object.fromEntries(Object.entries(skins).filter(([zone]) => casino.zones.includes(zone as ZoneId))),
-        visitors: visitorCount(view, now),
-        seats: floorSeats(view),
-        queue: visitorQueue(view, now),
+        visitors: seated,
+        seats: floor.seats,
+        queue: floor.turnedAway,
+        floor: { visitors: floor.visitors, seats: floor.seats, turnedAway: floor.turnedAway },
         campaign: campaign?.id ?? null,
         likes: likeCount(ownerId),
         likedToday: !!liked

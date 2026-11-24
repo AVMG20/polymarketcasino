@@ -11,6 +11,7 @@
  * buy it (a gem skip only makes a build finish sooner).
  */
 
+import type { FloorNow } from './visitors'
 import type { AvatarLook, ZoneSkins } from './cosmetics'
 import { TYCOON_GAMES, UPGRADES, ZONES, type CampaignId, type ZoneId } from './tycoon'
 
@@ -104,6 +105,8 @@ export interface CasinoVisit {
     visitors: number
     seats: number
     queue: number
+    /** Who is on the floor now (seated guests per tier, seats, turned away; the owner's income stays private). Missing on old payloads. */
+    floor?: Pick<FloorNow, 'visitors' | 'seats' | 'turnedAway'>
     /** The ad campaign running now, or null. */
     campaign: CampaignId | null
     likes: number

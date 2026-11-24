@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { X } from 'lucide-vue-next'
-import { nextCost } from '#shared/tycoon'
+import type { BuildKind } from '#shared/tycoon'
 
 /**
  * First-visit pointer: one short bubble at a time, pointing at the thing to
@@ -10,7 +10,7 @@ import { nextCost } from '#shared/tycoon'
  * account on the same device gets the tips too.
  */
 const props = defineProps<{ paused?: boolean }>()
-const emit = defineEmits<{ cage: [], games: [], limbo: [] }>()
+const emit = defineEmits<{ cage: [], games: [], limbo: [], build: [kind: BuildKind, id: string] }>()
 const tycoon = useTycoon()
 const { player } = useCasinoSession()
 const playerId = computed(() => player.value?.id ?? null)
@@ -61,15 +61,16 @@ function markCollected() {
 }
 defineExpose({ markCollected })
 
+/** The player built something already (a construction running, a level, a game or upgrade past the starters). */
 const limboDone = computed(() => {
     const s = tycoon.state.value
-    return !s || (s.games.limbo ?? 0) >= 1 || s.constructions.some(c => c.kind === 'game' && c.id === 'limbo')
+    if (!s) return true
+    return s.constructions.length > 0
+        || Object.entries(s.games).some(([slug, level]) => level > 1 || !['plinko', 'spinata'].includes(slug))
+        || Object.values(s.upgrades).some(level => level > 0)
 })
-/** What Limbo costs to build (its first level), so the Build tip waits until it is affordable. */
-const limboPrice = computed(() => {
-    const s = tycoon.state.value
-    return s ? (nextCost(s, 'game', 'limbo')?.chips ?? 0) : 0
-})
+/** The first build the tip points at: the cheapest one that can start now (what the Build badge and the goal use too). */
+const firstBuild = computed(() => tycoon.startable.value[0] ?? null)
 // Winning chips is the lesson: once there are chips, the loop tip is done.
 watch(() => tycoon.chips.value, (chips) => {
     if (chips > 0 && collected.value && !looped.value) {
@@ -82,13 +83,17 @@ const step = computed<'cage' | 'loop' | 'limbo' | null>(() => {
     if (!collected.value) return 'cage'
     if (tycoon.chips.value <= 0) return looped.value ? null : 'loop'
     // Point at Build only once the chips are there: "Build Limbo!" with nothing to pay is a dead end.
-    if (limboDone.value || tycoon.chips.value < limboPrice.value) return null
+    if (limboDone.value || !firstBuild.value) return null
     return 'limbo'
 })
-const TEXT = { cage: 'Collect your coins!', loop: 'Bet coins, win chips. Chips build your casino!', limbo: 'Build Limbo!' }
+const TEXT = computed(() => ({
+    cage: 'Collect your coins!',
+    loop: 'Bet coins, win chips. Chips build your casino!',
+    limbo: firstBuild.value ? `${firstBuild.value.level > 0 ? 'Upgrade' : 'Build'} ${firstBuild.value.name}!` : 'Build something!'
+}))
 // The loop tip points at Games (its tap opens them): under the chip pill it covered the cage and missions buttons.
 const ANCHOR = { cage: 'cage', loop: 'games', limbo: 'build' }
-const text = computed(() => (step.value ? TEXT[step.value] : ''))
+const text = computed(() => (step.value ? TEXT.value[step.value] : ''))
 
 // Where the bubble points: the HUD element marked data-tip="<anchor>".
 const root = ref<HTMLElement | null>(null)
@@ -137,7 +142,8 @@ function go() {
         save()
         return emit('games')
     }
-    emit('limbo')
+    if (firstBuild.value) emit('build', firstBuild.value.kind, firstBuild.value.id)
+    else emit('limbo')
 }
 </script>
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Hammer, LayoutGrid, ListChecks, Megaphone, Plus, Timer, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
+import { ChartArea, Hammer, LayoutGrid, ListChecks, Megaphone, Plus, ScrollText, Sparkles, Timer, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
-import type { BuildKind, ZoneId } from '#shared/tycoon'
+import { findZone, type BuildKind, type ZoneId } from '#shared/tycoon'
 
 /**
  * Everything laid over the floor: the resource bar and the cage jar up top,
@@ -32,11 +32,68 @@ const visitorMax = computed(() => tycoon.seats.value)
 const floorFull = computed(() => visitorMax.value > 0 && visitors.value >= visitorMax.value)
 const waiting = computed(() => tycoon.waiting.value)
 const perHour = computed(() => tycoon.perHour.value)
+/** The average for this floor and these rules (null from a server without visitor tiers). */
+const expected = computed(() => tycoon.expectedPerHour.value)
+const floorNow = computed(() => tycoon.floorNow.value)
+/** Tiers that can visit now, and the next one still to open (for the guests popover). */
+const tiers = computed(() => openTiers(floorNow.value).map(t => ({ ...t, n: tycoon.visitorTiers.value[t.id] ?? 0, odds: floorNow.value?.odds[t.id] ?? 0 })))
+/** The house rules' running costs this tick (VIP staff), taken off the rows, in whole coins as shown. */
+const ruleCosts = computed(() => Math.floor(floorNow.value?.costs ?? 0))
+/** Every tier, the locked ones too: who is in, what each spends and what they bring together. */
+const tierRows = computed(() => {
+    const rows = TIERS.map((t) => {
+        const open = tiers.value.find(o => o.id === t.id)
+        const n = open?.n ?? 0
+        // What the tier brings this tick (level and VIP bonuses, a rush) and one guest's share of it.
+        const brings = floorNow.value?.income?.[t.id] ?? n * t.spend
+        const each = n > 0 ? Math.round(brings / n) : t.spend
+        return { ...t, open: !!open, n, odds: open?.odds ?? 0, brings, shown: perHour.value >= 10 ? Math.floor(brings) : brings, each, zone: t.unlockZone ? findZone(t.unlockZone)?.name ?? t.unlockZone : null }
+    })
+    // Whole coins that add up: the rows minus the costs make the "now" rate the jar shows
+    // (largest remainder: the coins rounding dropped go to the rows that lost the most).
+    if (perHour.value >= 10 && rows.some(r => r.brings > 0)) {
+        let left = Math.floor(perHour.value) + ruleCosts.value - rows.reduce((sum, r) => sum + r.shown, 0)
+        const order = rows.filter(r => r.brings > 0).sort((a, b) => (left > 0 ? (b.brings - b.shown) - (a.brings - a.shown) : (a.brings - a.shown) - (b.brings - b.shown)))
+        for (let i = 0; left !== 0 && order.length && i < order.length * 3; i++) {
+            const row = order[i % order.length]!
+            if (left < 0 && row.shown <= 0) continue
+            row.shown += Math.sign(left)
+            left -= Math.sign(left)
+        }
+    }
+    return rows
+})
+/** The floor's state in one line: full and turning guests away, or seats to fill. */
+const floorHint = computed(() => {
+    if (floorFull.value && waiting.value > 0) return 'Floor full: build seats, or go for richer guests'
+    if (visitorMax.value > 0 && tycoon.occupied.value < 0.8) return 'Empty seats: an ad fills them'
+    return null
+})
+const guestsOpen = ref(false)
+function toggleGuests() {
+    info.value = false
+    guestsOpen.value = !guestsOpen.value
+}
+const pct = (share: number) => (share > 0 && share < 0.005 ? '<1%' : `${Math.round(share * 100)}%`)
+
+// House rules: hidden until the casino unlocks one; a "New" bubble the first time.
+const rules = useHouseRules()
+const hasRules = computed(() => rules.unlocked.value.length > 0)
+const freshRule = computed(() => (rules.fresh.value ? RULE_INFO[rules.fresh.value] : null))
+function openRules() {
+    info.value = false
+    guestsOpen.value = false
+    rules.show()
+}
 const campaign = computed(() => tycoon.campaign.value)
+/** Other ads running beside the one that ends first (one per kind). */
+const moreCampaigns = computed(() => Math.max(0, tycoon.runningCampaigns.value.length - 1))
+const campaignsTitle = computed(() => `${tycoon.runningCampaigns.value.map(c => `${c.def.name}: ${formatCountdown(c.leftMs)} left`).join(' · ')} · tap to extend or add`)
 /** Empty seats and no campaign: the megaphone asks for attention. */
 const nudge = computed(() => !campaign.value && visitorMax.value > 0 && tycoon.occupied.value < 0.999)
 function openCampaigns() {
     info.value = false
+    guestsOpen.value = false
     emit('campaigns')
 }
 /** Time until the cage is full at the current rate (ms), or null when it never fills. */
@@ -48,9 +105,11 @@ const fullInMs = computed(() => {
 /** A countdown to a full cage is only worth showing when it is close. */
 const SOON_MS = 2 * 3_600_000
 const info = ref(false)
-watch(info, open => emit('popover', open))
+watch(info, open => open && (guestsOpen.value = false))
+watch(() => info.value || guestsOpen.value, open => emit('popover', open))
 function collect() {
     info.value = false
+    guestsOpen.value = false
     emit('cage')
 }
 
@@ -101,8 +160,9 @@ const skipItem = computed(() => tycoon.queue.value.find(c => `${c.kind}:${c.id}`
 watch(skipItem, item => !item && (skipFor.value = null))
 // Escape closes the cage details and the skip popover, like a tap outside does.
 useEventListener('keydown', (event: KeyboardEvent) => {
-    if (event.key !== 'Escape' || (!info.value && !skipFor.value)) return
+    if (event.key !== 'Escape' || (!info.value && !skipFor.value && !guestsOpen.value)) return
     info.value = false
+    guestsOpen.value = false
     skipFor.value = null
 })
 </script>
@@ -131,32 +191,99 @@ useEventListener('keydown', (event: KeyboardEvent) => {
 
         <!-- Visitors and the ad campaign: one group, so on a phone they wrap together onto a second row. -->
         <div class="flex items-center gap-x-1.5 sm:gap-2.5" :class="fold">
-          <!-- Visitors on the floor / seats. A queue at the door shows as +N. -->
-          <span
-            class="hud-pill visitors relative gap-1.5"
-            :title="waiting ? `${waiting} waiting at the door: build games or level them up for more seats` : `Visitors: ${Math.round(tycoon.occupied.value * 100)}% of the seats taken`"
-          >
-            <Users class="size-4 shrink-0 text-[#7dd3fc]" :stroke-width="3" />
-            <span class="g-num text-[15px] leading-none sm:text-lg" :class="floorFull ? 'text-[#ffb35c]' : ''">{{ visitors }}/{{ visitorMax }}</span>
-            <span v-if="waiting" class="g-num rounded-full bg-[#ff9a2e] px-1 text-[10px] leading-[14px] text-white">+{{ waiting }}</span>
-            <span class="absolute inset-x-3 bottom-[3px] block h-[3px] overflow-hidden rounded-full bg-black/50">
-              <span class="block h-full rounded-full bg-gradient-to-r transition-[width] duration-500" :class="floorFull ? 'from-[#ff9a2e] to-[#ffc93a]' : 'from-[#4aa6ff] to-[#7dd3fc]'" :style="{ width: `${tycoon.occupied.value * 100}%` }" />
-            </span>
-          </span>
+          <!-- Guests on the floor per tier / seats. Turned away at the door shows as +N. Tap for the tiers and the rate. -->
+          <div class="relative z-30">
+            <button
+              type="button"
+              class="hud-pill hud-hit visitors relative gap-1.5 active:scale-95"
+              :title="waiting ? `${waiting} turned away just now: build games or level them up for more seats` : `Guests: ${Math.round(tycoon.occupied.value * 100)}% of the seats taken`"
+              :aria-label="`Guests: ${visitors} of ${visitorMax} seats`"
+              :aria-expanded="guestsOpen"
+              @click="toggleGuests"
+            >
+              <TycoonVisitorDots v-if="floorNow" :counts="tycoon.visitorTiers.value" class="text-[15px] sm:text-lg" />
+              <template v-else>
+                <Users class="size-4 shrink-0 text-[#7dd3fc]" :stroke-width="3" />
+                <span class="g-num text-[15px] leading-none sm:text-lg">{{ visitors }}</span>
+              </template>
+              <span class="g-num text-[13px] leading-none sm:text-[15px]" :class="floorFull ? 'text-[#ffb35c]' : 'text-[var(--g-muted)]'">/{{ visitorMax }}</span>
+              <span v-if="waiting" class="g-num rounded-full bg-[#ff9a2e] px-1 text-[10px] leading-[14px] text-white">+{{ waiting }}</span>
+              <span class="absolute inset-x-3 bottom-[3px] block h-[3px] overflow-hidden rounded-full bg-black/50">
+                <span class="block h-full rounded-full bg-gradient-to-r transition-[width] duration-500" :class="floorFull ? 'from-[#ff9a2e] to-[#ffc93a]' : 'from-[#4aa6ff] to-[#7dd3fc]'" :style="{ width: `${tycoon.occupied.value * 100}%` }" />
+              </span>
+            </button>
+
+            <Transition name="pop">
+              <div v-if="guestsOpen" class="g-panel absolute top-full left-0 mt-2.5 w-[min(21rem,calc(100vw-1.5rem))] space-y-2 rounded-2xl p-3 text-sm">
+                <p class="flex items-center gap-1.5 font-semibold">
+                  <Users class="size-4 text-[#7dd3fc]" :stroke-width="3" /> Guests
+                  <span class="g-num ml-auto" :class="floorFull ? 'text-[#ffb35c]' : ''">{{ visitors }} / {{ visitorMax }} seats</span>
+                </p>
+                <!-- Every tier: how many are in, what one spends, what they bring together. Richer guests, more income. -->
+                <div class="g-well rounded-xl px-2.5 py-1.5">
+                  <p class="grid grid-cols-[1fr_2rem_3.5rem_4rem] gap-x-1.5 pb-1 text-[10.5px] font-bold tracking-wide text-[var(--g-muted)] uppercase">
+                    <span>Guest</span><span class="text-right">In</span><span class="text-right">Each</span><span class="text-right">Bring</span>
+                  </p>
+                  <p
+                    v-for="t in tierRows"
+                    :key="t.id"
+                    class="grid grid-cols-[1fr_2rem_3.5rem_4rem] items-center gap-x-1.5 py-1"
+                    :class="t.open ? '' : 'opacity-55'"
+                    :title="t.open ? `${tierBlurb(t.id)} ${pct(t.odds)} of new guests are ${tierPlural(t.id, 2)}.` : `${tierPlural(t.id, 2)} ${tierUnlockLine(t.id)}`"
+                  >
+                    <span class="flex min-w-0 items-center gap-1.5 font-semibold">
+                      <span class="size-2.5 shrink-0 rounded-full border border-black/50" :style="{ background: t.color, boxShadow: t.id === 'whale' && t.open ? `0 0 6px 1px ${t.color}` : undefined }" />
+                      <span class="truncate">{{ tierPlural(t.id, 2) }}</span>
+                    </span>
+                    <template v-if="t.open">
+                      <span class="g-num text-right">{{ t.n }}</span>
+                      <span class="g-num text-right text-[var(--g-muted)]">{{ formatCoins(t.each) }}/h</span>
+                      <span class="g-num text-right" :class="t.brings ? 'text-[#7ee08f]' : 'text-[var(--g-muted)]'">{{ t.brings ? `${formatCoins(t.shown)}/h` : '–' }}</span>
+                    </template>
+                    <span v-else class="col-span-3 truncate text-right text-[12px] font-semibold text-[var(--g-muted)]">🔒 {{ t.zone }}</span>
+                  </p>
+                  <p v-if="ruleCosts > 0" class="grid grid-cols-[1fr_2rem_3.5rem_4rem] items-center gap-x-1.5 border-t border-white/10 py-1" title="The VIP room's staff, paid from what the guests bring">
+                    <span class="font-semibold">House rules</span><span /><span />
+                    <span class="g-num text-right text-[#ff8a8a]">−{{ formatCoins(ruleCosts) }}/h</span>
+                  </p>
+                  <p v-if="tycoon.rushActive.value" class="pt-0.5 text-right text-[11px] font-semibold text-[#ff9a2e]">Big Spenders: every guest ×2</p>
+                </div>
+                <p class="px-1 text-[12px] leading-4 text-[var(--g-muted)]">Richer guests spend more. Decor, Hospitality, new rooms and top machine levels bring them in.</p>
+                <p v-if="floorHint" class="px-1 text-[12px] leading-4 font-semibold text-[#ffb35c]">{{ floorHint }}</p>
+                <p v-if="waiting" class="px-1 text-[12px] leading-4 font-semibold text-[#ffb35c]">{{ waiting }} turned away just now: no free seat{{ rules.house.value && rules.house.value.rules.door !== 'open' ? ' or your door policy' : '' }}</p>
+                <p class="stat-row border-t border-white/10 pt-2" title="Luck makes some hours good and some quiet: the average is what this floor earns over time">
+                  <CasinoCoinIcon class="size-4" />
+                  <span v-if="full" class="g-num text-[#ffb35c]">Cage full: collect</span>
+                  <span v-else class="g-num text-[#7ee08f]">{{ formatCoins(perHour) }}/h now</span>
+                  <span v-if="expected !== null" class="g-num ml-auto text-[var(--g-muted)]">~{{ formatCoins(expected) }} avg</span>
+                </p>
+                <div class="flex gap-2">
+                  <NuxtLink to="/casino-stats" class="g-btn g-dark h-11 flex-1 rounded-xl text-[15px]" @click="guestsOpen = false">
+                    <ChartArea class="size-4.5" :stroke-width="2.75" /> Charts
+                  </NuxtLink>
+                  <button v-if="hasRules" type="button" class="g-btn g-dark relative h-11 flex-1 rounded-xl text-[15px]" @click="openRules">
+                    <ScrollText class="size-4.5" :stroke-width="2.75" /> Rules
+                    <span v-if="freshRule" class="absolute -top-1 -right-1 size-3 rounded-full border-2 border-white bg-[#ff3b5c]" />
+                  </button>
+                </div>
+              </div>
+            </Transition>
+          </div>
 
           <!-- Marketing: the running campaign with its countdown, or a megaphone. -->
           <button
             v-if="campaign"
             type="button"
             class="hud-pill hud-hit gap-1.5 pl-1! active:scale-95"
-            :title="`${campaign.def.name}: ${formatCountdown(campaign.leftMs)} left · tap to extend`"
-            :aria-label="`${campaign.def.name} campaign, ${formatCountdown(campaign.leftMs)} left`"
+            :title="campaignsTitle"
+            :aria-label="`${campaign.def.name} campaign, ${formatCountdown(campaign.leftMs)} left${moreCampaigns ? `, ${moreCampaigns} more running` : ''}`"
             @click="openCampaigns"
           >
             <TycoonRing :progress="campaign.fuel" :size="28" :stroke="3" :color="campaignColor(campaign.def.id)">
               <span class="block size-[20px] overflow-hidden rounded-full"><TycoonCampaignArt :id="campaign.def.id" /></span>
             </TycoonRing>
             <span class="g-num text-[13px] leading-none whitespace-nowrap sm:text-base">{{ formatCountdown(campaign.leftMs) }}</span>
+            <span v-if="moreCampaigns" class="g-num rounded-full bg-[#4aa6ff]/25 px-1.5 text-[12px] leading-5 text-[#9fd0ff]">+{{ moreCampaigns }}</span>
           </button>
           <button
             v-else
@@ -167,7 +294,7 @@ useEventListener('keydown', (event: KeyboardEvent) => {
             aria-label="Ad campaigns"
             @click="openCampaigns"
           >
-            <span class="g-btn g-blue size-9 rounded-full sm:size-[2.6rem]"><Megaphone class="size-5 -rotate-12" :stroke-width="2.75" /></span>
+            <span class="g-btn g-blue size-11 rounded-full"><Megaphone class="size-5 -rotate-12" :stroke-width="2.75" /></span>
           </button>
         </div>
       </div>
@@ -215,7 +342,7 @@ useEventListener('keydown', (event: KeyboardEvent) => {
           <span class="flex items-center gap-1 text-[11px] leading-none font-semibold text-[var(--g-muted)]">
             <span v-if="full" class="text-[#ffb35c]">Income stopped</span>
             <span v-else class="flex items-center gap-0.5 text-[#7ee08f]"><CasinoCoinIcon class="size-3" />+{{ formatCoins(perHour) }}/h</span>
-            <span v-if="tycoon.rushActive.value && !full" class="g-num rounded-full bg-[#ff9a2e] px-1 text-[9px] leading-[14px] text-white" title="High Rollers: guest income ×2">×2</span>
+            <span v-if="tycoon.rushActive.value && !full" class="g-num rounded-full bg-[#ff9a2e] px-1 text-[9px] leading-[14px] text-white" title="Big Spenders: guest income ×2">×2</span>
             <template v-if="fullInMs !== null && fullInMs < SOON_MS"><Timer class="ml-0.5 size-3" :stroke-width="3" />{{ formatDuration(fullInMs) }}</template>
           </span>
         </span>
@@ -231,13 +358,37 @@ useEventListener('keydown', (event: KeyboardEvent) => {
             {{ campaign.def.name }} <span class="g-num text-[#7dd3fc]">{{ formatBoost(tycoon.campaigns.value.find(c => c.running)?.boost ?? 1) }}</span>
             <span class="g-num ml-auto">{{ formatCountdown(campaign.leftMs) }}</span>
           </p>
-          <p v-if="tycoon.rushActive.value" class="stat-row"><Zap class="size-4 text-[#ff9a2e]" :stroke-width="3" /> High Rollers ×2 <span class="g-num ml-auto">{{ formatCountdown(tycoon.rushLeftMs.value) }}</span></p>
+          <p v-if="expected !== null" class="stat-row" title="Luck makes some hours good and some quiet: this is what your floor earns over time">
+            <CasinoCoinIcon class="size-4 opacity-70" /> On average <span class="g-num ml-auto text-[var(--g-muted)]">~{{ formatCoins(expected) }}/h</span>
+          </p>
+          <p v-if="tycoon.rushActive.value" class="stat-row"><Zap class="size-4 text-[#ff9a2e]" :stroke-width="3" /> Big Spenders ×2 <span class="g-num ml-auto">{{ formatCountdown(tycoon.rushLeftMs.value) }}</span></p>
           <div class="flex gap-2 pt-1">
             <button type="button" class="g-btn g-green h-11 flex-1 rounded-xl text-base" title="Walk to the cage and collect" @click="collect">
               <CasinoCoinIcon class="size-5" /> Collect
             </button>
+            <button v-if="hasRules" type="button" class="g-btn g-dark relative size-11 shrink-0 rounded-xl" title="House rules" aria-label="House rules" @click="openRules">
+              <ScrollText class="size-5" :stroke-width="2.75" />
+              <span v-if="freshRule" class="absolute -top-1 -right-1 size-3 rounded-full border-2 border-white bg-[#ff3b5c]" />
+            </button>
           </div>
         </div>
+      </Transition>
+
+      <!-- A rule just unlocked: one small bubble until the player has looked at it. -->
+      <Transition name="pop">
+        <button
+          v-if="freshRule && !info"
+          type="button"
+          class="new-rule g-panel absolute top-full left-0 mt-2.5 flex min-h-11 items-center gap-2 rounded-2xl py-1.5 pr-3 pl-2 text-left whitespace-nowrap"
+          :title="`${freshRule.name} unlocked: tap to see the house rules`"
+          @click="openRules"
+        >
+          <span class="grid size-8 shrink-0 place-items-center rounded-full bg-black/30"><component :is="freshRule.icon" class="size-4.5" :style="{ color: freshRule.color }" :stroke-width="3" /></span>
+          <span class="flex flex-col">
+            <span class="flex items-center gap-1 text-[11px] leading-3 font-semibold tracking-wide text-[#ffc93a] uppercase"><Sparkles class="size-3" :stroke-width="3" />New</span>
+            <span class="g-title text-[15px] leading-5">{{ freshRule.name }}</span>
+          </span>
+        </button>
       </Transition>
     </div>
 
@@ -308,7 +459,7 @@ useEventListener('keydown', (event: KeyboardEvent) => {
     </nav>
 
     <!-- A tap anywhere closes the skip popover. -->
-    <div v-if="skipFor || info" class="pointer-events-auto fixed inset-0 -z-10" @pointerdown="skipFor = null; info = false" />
+    <div v-if="skipFor || info || guestsOpen" class="pointer-events-auto fixed inset-0 -z-10" @pointerdown="skipFor = null; info = false; guestsOpen = false" />
   </div>
 </template>
 
@@ -386,6 +537,19 @@ useEventListener('keydown', (event: KeyboardEvent) => {
   font-weight: 600;
 }
 .full-glow { animation: full-glow 1.2s ease-in-out infinite; }
+/* The "New rule" bubble: a little tail up to the cage. */
+.new-rule::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  left: 22px;
+  width: 12px;
+  height: 12px;
+  background: var(--g-panel-hi);
+  border-left: 2px solid var(--g-panel-edge);
+  border-top: 2px solid var(--g-panel-edge);
+  transform: rotate(45deg);
+}
 /* The megaphone calls: a ring that grows and fades, and a little wobble. */
 .nudge::before {
   content: '';

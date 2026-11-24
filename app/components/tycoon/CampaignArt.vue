@@ -117,6 +117,29 @@ const bulbs: [number, number][] = [10, 18, 26, 34, 42, 50].map((x): [number, num
         <path d="M5.5 13 V40" stroke="#fff" stroke-opacity="0.55" stroke-width="1.6" />
       </template>
 
+      <!-- VIP Invitations: a gold-edged envelope with a crown seal -->
+      <template v-else-if="id === 'invites'">
+        <rect x="7" y="18" width="50" height="34" rx="4" fill="#fff3e0" stroke-width="2.4" />
+        <path d="M7 20 L32 40 L57 20" fill="none" stroke-width="2.4" />
+        <path d="M7 52 L26 35 M57 52 L38 35" stroke-width="1.8" />
+        <rect x="9" y="20" width="46" height="30" rx="3" fill="none" stroke="#ffc93a" stroke-width="1.6" />
+        <circle cx="32" cy="40" r="8" :fill="url('red')" stroke-width="2" />
+        <path d="M27 42 L28 36 L30.5 39 L32 35 L33.5 39 L36 36 L37 42 Z" :fill="url('gold')" stroke-width="1.2" />
+        <polygon :points="star(53, 12, 4)" :fill="url('gold')" stroke-width="1.4" />
+      </template>
+
+      <!-- Private Jet: a white jet climbing past a gold sun -->
+      <template v-else-if="id === 'jet'">
+        <circle cx="46" cy="18" r="9" :fill="url('gold')" stroke-width="2" />
+        <g transform="rotate(-18 32 36)">
+          <path d="M6 36 Q8 31 16 31 H46 Q56 31 58 36 Q56 41 46 41 H16 Q8 41 6 36 Z" fill="#f4f1ff" stroke-width="2.2" />
+          <path d="M26 31 L36 18 H41 L35 31 Z M26 41 L36 54 H41 L35 41 Z" fill="#d9d3f2" stroke-width="2" />
+          <path d="M9 31 L6 23 H11 L15 31 Z" fill="#d9d3f2" stroke-width="1.8" />
+          <path d="M48 33.5 H53" stroke="#4aa6ff" stroke-width="3" />
+          <circle cx="22" cy="36" r="1.4" fill="#4aa6ff" stroke="none" /><circle cx="28" cy="36" r="1.4" fill="#4aa6ff" stroke="none" /><circle cx="34" cy="36" r="1.4" fill="#4aa6ff" stroke="none" />
+        </g>
+      </template>
+
       <!-- Retro TV with a star on screen -->
       <template v-else>
         <path d="M32 18 L22 5 M32 18 L43 6" stroke-width="2" />

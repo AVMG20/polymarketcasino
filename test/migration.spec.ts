@@ -134,3 +134,36 @@ describe('0006_economy_v2', () => {
         sqlite.close()
     })
 })
+
+/** A copy of drizzle/ whose journal stops before `tag`. */
+function before(tag: string): string {
+    const folder = join(scratch, `drizzle-${crypto.randomUUID()}`)
+    cpSync(DRIZZLE, folder, { recursive: true })
+    const journalPath = join(folder, 'meta/_journal.json')
+    const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: { tag: string }[] }
+    const at = journal.entries.findIndex(entry => entry.tag === tag)
+    expect(at).toBeGreaterThan(0)
+    journal.entries = journal.entries.slice(0, at)
+    writeFileSync(journalPath, JSON.stringify(journal))
+    return folder
+}
+
+describe('0011_visitor_tiers', () => {
+    it('moves Decor from the old 5 levels onto the new 12, running constructions included', () => {
+        const sqlite = new Database(join(scratch, `${crypto.randomUUID()}.sqlite`), { create: true, strict: true })
+        sqlite.exec('PRAGMA foreign_keys = ON')
+        const db = drizzle({ client: sqlite, schema })
+        migrate(db, { migrationsFolder: before('0011_visitor_tiers') })
+        for (let decor = 0; decor <= 5; decor++) {
+            sqlite.run(`insert into players (id, name, coins, peak_coins) values (?, 'Owner', 0, 0)`, [`d${decor}`])
+            sqlite.run(`insert into casino_profiles (player_id, zones, games, upgrades, golden, cage_at) values (?, '["backroom"]', '{}', ?, '[]', 0)`, [`d${decor}`, JSON.stringify({ cage: 1, marketing: 2, decor, crew: 0 })])
+        }
+        sqlite.run(`insert into casino_constructions (id, player_id, kind, target, level, started_at, ready_at) values ('k1', 'd2', 'upgrade', 'decor', 3, 0, 1)`)
+        migrate(db, { migrationsFolder: DRIZZLE })
+        const decor = sqlite.query(`select player_id as id, json_extract(upgrades, '$.decor') as decor, json_extract(upgrades, '$.marketing') as marketing from casino_profiles order by player_id`).all()
+        expect(decor).toEqual([0, 2, 4, 6, 9, 12].map((level, old) => ({ id: `d${old}`, decor: level, marketing: 2 })))
+        expect(sqlite.query(`select level from casino_constructions where id = 'k1'`).get()).toEqual({ level: 6 })
+        // The new columns read as defaults.
+        expect(sqlite.query(`select campaigns, door, vip, rules_at as rulesAt from casino_profiles where player_id = 'd0'`).get()).toEqual({ campaigns: '[]', door: 'open', vip: 0, rulesAt: null })
+    })
+})

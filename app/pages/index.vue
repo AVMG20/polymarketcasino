@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { HardHat, ListChecks, Megaphone, RotateCcw } from 'lucide-vue-next'
+import { HardHat, ListChecks, Megaphone, RotateCcw, ScrollText } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import type { MissionId } from '#shared/missions'
 import { findTycoonGame, type BuildKind, type ZoneId } from '#shared/tycoon'
@@ -16,6 +16,7 @@ const { scene, startPolling } = useFloorScene()
 const cosmetics = useCosmetics()
 const sound = useTycoonSound()
 const leaderboard = useLeaderboard()
+const houseRules = useHouseRules()
 const session = useCasinoSession()
 // Visitors walking around your casino (and you, in your other tabs' eyes).
 const presence = useFloorPresence(() => session.player.value?.id)
@@ -88,6 +89,7 @@ function onFloorReady() {
 
 function openGame(slug: string) {
     cosmetics.hide()
+    houseRules.open.value = false
     gamesOpen.value = false
     buildOpen.value = false
     campaignsOpen.value = false
@@ -124,6 +126,7 @@ watch(() => route.query.build, (value) => {
 }, { immediate: true })
 
 function openCard(kind: BuildKind, id: string) {
+    houseRules.open.value = false
     gamesOpen.value = false
     buildOpen.value = false
     campaignsOpen.value = false
@@ -136,6 +139,7 @@ function openCard(kind: BuildKind, id: string) {
 
 function openMenu(tab = 'games') {
     cosmetics.hide()
+    houseRules.open.value = false
     card.value = null
     gamesOpen.value = false
     campaignsOpen.value = false
@@ -150,6 +154,7 @@ function openPanel(panel: 'campaigns' | 'builders' | 'missions') {
     card.value = null
     gamesOpen.value = false
     buildOpen.value = false
+    houseRules.open.value = false
     campaignsOpen.value = panel === 'campaigns'
     buildersOpen.value = panel === 'builders'
     missionsOpen.value = panel === 'missions'
@@ -223,11 +228,23 @@ function onInteract(target: FloorTarget) {
 // The wardrobe takes the place of any other panel.
 watch(() => cosmetics.wardrobe.value.open, (open) => {
     if (!open) return
+    houseRules.open.value = false
     card.value = null
     gamesOpen.value = false
     buildOpen.value = false
     campaignsOpen.value = false
     buildersOpen.value = false
+})
+// The house rules take the place of any other panel too.
+watch(() => houseRules.open.value, (open) => {
+    if (!open) return
+    cosmetics.hide()
+    card.value = null
+    gamesOpen.value = false
+    buildOpen.value = false
+    campaignsOpen.value = false
+    buildersOpen.value = false
+    missionsOpen.value = false
 })
 // A skin picker shows a zone: frame it beside the panel.
 watch(() => cosmetics.preview.value?.zone, (zone) => {
@@ -278,7 +295,7 @@ function retry() {
 }
 
 const hudPopover = ref(false)
-const overlayOpen = computed(() => !floorReady.value || buildOpen.value || gamesOpen.value || campaignsOpen.value || buildersOpen.value || !!card.value || !!playSlug.value || hudPopover.value || cosmetics.wardrobe.value.open || missionsOpen.value || leaderboard.open.value || !!tycoon.welcome.value)
+const overlayOpen = computed(() => !floorReady.value || buildOpen.value || gamesOpen.value || campaignsOpen.value || buildersOpen.value || !!card.value || !!playSlug.value || hudPopover.value || cosmetics.wardrobe.value.open || missionsOpen.value || houseRules.open.value || leaderboard.open.value || !!tycoon.welcome.value)
 
 onMounted(() => {
     void tycoon.refresh({ welcome: true })
@@ -307,7 +324,7 @@ useHead({ title: 'My Casino' })
 
     <template v-if="scene">
       <TycoonHud @build="openMenu()" @games="gamesOpen = true" @cage="walkFloor({ kind: 'cage' })" @shop="openMenu('gems')" @zone="id => openCard('zone', id)" @popover="open => (hudPopover = open)" @campaigns="openPanel('campaigns')" @missions="openPanel('missions')" @goal="openCard" />
-      <TycoonOnboarding ref="onboarding" :paused="overlayOpen" @cage="walkFloor({ kind: 'cage' })" @games="gamesOpen = true" @limbo="openCard('game', 'limbo')" />
+      <TycoonOnboarding ref="onboarding" :paused="overlayOpen" @cage="walkFloor({ kind: 'cage' })" @games="gamesOpen = true" @limbo="openCard('game', 'limbo')" @build="(kind, id) => openCard(kind, id)" />
     </template>
 
     <TycoonBuildMenu :open="buildOpen" :tab="buildTab" @close="buildOpen = false" @play="openGame" />
@@ -318,6 +335,9 @@ useHead({ title: 'My Casino' })
     </TycoonDrawer>
     <TycoonDrawer :open="buildersOpen" card dismissable title="Builders" :icon="HardHat" color="#ffc93a" @close="buildersOpen = false">
       <div class="px-3 pb-3"><TycoonBuilders @build="openMenu()" @open="openCard" /></div>
+    </TycoonDrawer>
+    <TycoonDrawer :open="houseRules.open.value" card dismissable title="House rules" :icon="ScrollText" color="#a879ff" height="80dvh" @close="houseRules.open.value = false">
+      <TycoonHouseRules />
     </TycoonDrawer>
     <TycoonWardrobe />
     <TycoonDrawer :open="missionsOpen" card dismissable title="Missions" :icon="ListChecks" color="#ff9a2e" height="80dvh" @close="missionsOpen = false">

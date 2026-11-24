@@ -27,6 +27,8 @@ export interface Look {
     /** A player's avatar cosmetics (shared/cosmetics.ts). Set on players only, never on guests. */
     outfit?: Outfit
     accessory?: Accessory
+    /** A guest dressed by visitor tier (art/visitors.ts): its outfit looks are a fixed set, kept out of the players' key space. */
+    npc?: boolean
 }
 
 export type Pose = 'front' | 'back' | 'sit'
@@ -43,7 +45,8 @@ export const FIGURE_FOOT = { x: 20, y: 70 }
 export function lookKey(look: Look): string {
     const base = [look.skin, look.hair, look.style, look.shirt, look.pants, look.hat, look.hatColor, look.dealer ? 'd' : ''].join('|')
     // A player's look (outfit set) gets its own key space, so its textures can be freed without touching a guest's.
-    return look.outfit ? `p|${look.outfit}|${look.accessory ?? 'none'}|${base}` : base
+    if (!look.outfit) return base
+    return `${look.npc ? 'g' : 'p'}|${look.outfit}|${look.accessory ?? 'none'}|${base}`
 }
 
 /** Every look key of a player's avatar starts with this (see lookKey). */

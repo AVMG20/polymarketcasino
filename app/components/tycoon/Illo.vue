@@ -253,6 +253,27 @@ const towerWindows = Array.from({ length: 15 }, (_, i) => ({ x: 36 + (i % 3) * 1
         <polygon :points="star(14, 22, 4)" fill="#fff7c2" stroke-width="1.4" />
       </template>
 
+      <!-- Hospitality: two champagne glasses clinking over a tray -->
+      <template v-else-if="name === 'hospitality'">
+        <circle cx="50" cy="44" r="36" :fill="url('glow')" stroke="none" opacity="0.5" />
+        <ellipse cx="50" cy="82" rx="34" ry="7" :fill="url('steel')" stroke-width="2.2" />
+        <g transform="rotate(-14 36 50)">
+          <path d="M27 18 H45 L42 40 Q36 48 30 40 Z" fill="#fff3c4" stroke-width="2.2" />
+          <path d="M28.5 26 H43.5 L41.6 39 Q36 45.5 30.4 39 Z" :fill="url('gold')" stroke="none" />
+          <path d="M36 46 V72 M28 74 H44" stroke-width="2.6" />
+        </g>
+        <g transform="rotate(14 64 50)">
+          <path d="M55 18 H73 L70 40 Q64 48 58 40 Z" fill="#fff3c4" stroke-width="2.2" />
+          <path d="M56.5 26 H71.5 L69.6 39 Q64 45.5 58.4 39 Z" :fill="url('gold')" stroke="none" />
+          <path d="M64 46 V72 M56 74 H72" stroke-width="2.6" />
+        </g>
+        <g fill="#fff7c2" stroke="none">
+          <circle cx="50" cy="12" r="2.4" /><circle cx="44" cy="7" r="1.6" /><circle cx="56" cy="6" r="1.8" />
+        </g>
+        <polygon :points="star(84, 22, 4.5)" fill="#fff7c2" stroke-width="1.4" />
+        <polygon :points="star(16, 26, 3.4)" fill="#fff7c2" stroke-width="1.2" />
+      </template>
+
       <!-- Decor: a glowing chandelier -->
       <template v-else-if="name === 'decor'">
         <circle cx="50" cy="48" r="40" :fill="url('glow')" stroke="none" opacity="0.65" />
@@ -301,7 +322,7 @@ const towerWindows = Array.from({ length: 15 }, (_, i) => ({ x: 36 + (i % 3) * 1
         </template>
       </template>
 
-      <!-- High Rollers: a top hat full of money, lightning-fast -->
+      <!-- Big Spenders (the rush): a top hat full of money, lightning-fast -->
       <template v-else-if="name === 'rush'">
         <g transform="rotate(-10 50 60)">
           <ellipse cx="50" cy="74" rx="36" ry="10" fill="#2b2236" />

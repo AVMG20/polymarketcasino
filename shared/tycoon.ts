@@ -33,6 +33,18 @@ import { COINS_PER_GEM } from './economy'
 import type { MissionsState, WelcomeBack } from './missions'
 import { findGame } from './games/registry'
 import { normalizeCoins, roundCoins } from './money'
+import {
+    bestFullFloorPerHour,
+    expectedFloor,
+    expectedPerHour,
+    fullFloorPerHour,
+    DEFAULT_RULES,
+    seatedTotal,
+    type FloorNow,
+    type FloorView,
+    type HouseRules,
+    type HouseState
+} from './visitors'
 
 // ── Zones ────────────────────────────────────────────────────────────────
 
@@ -81,13 +93,11 @@ export interface TycoonGameDef {
     starter?: true
     /** Level 1 = built. Index 0 is the build itself, index n-1 the upgrade to level n. */
     levels: readonly Cost[]
-    /** Guest income this game adds at each level, coins per hour with every seat full, before INCOME_SCALE (index 0 = level 1). */
-    guestsPerHour: readonly number[]
 }
 
 // ── Casino upgrades ──────────────────────────────────────────────────────
 
-export type UpgradeId = 'cage' | 'marketing' | 'decor' | 'crew'
+export type UpgradeId = 'cage' | 'marketing' | 'decor' | 'hospitality' | 'crew'
 
 export interface UpgradeDef {
     id: UpgradeId
@@ -152,13 +162,19 @@ export interface TycoonState {
         stored: number
         /** The most coins it holds. */
         capacity: number
-        /** Coins an hour it fills at now. */
+        /** Coins an hour it fills at now: the current tick's rate, luck included (= `floor.perHour`). */
         perHour: number
     }
+    /** The floor now: seated guests per tier, the tick's rate and the expected rate (shared/visitors.ts). */
+    floor: FloorNow
+    /** The house rules and their options. Only on the owner's own reads. */
+    house?: HouseState
     /** Guest rush active until (ms), or null. */
     rushUntil: number | null
-    /** The running ad campaign, or null. */
-    campaign: { id: CampaignId, until: number } | null
+    /** The running ad campaign that ends first, or null (older screens show one; `campaigns` has them all). */
+    campaign: RunningCampaignRef | null
+    /** Every ad campaign running, one per kind, with when its queue ends. Missing on old payloads. */
+    campaigns?: RunningCampaignRef[]
     /** Games with the golden skin. */
     golden: string[]
     /** Share of everything buildable that is built, 0..1. */
@@ -281,10 +297,11 @@ export const MAX_LEVEL = 5
  * converted gem, the star thresholds), so the cage carries a casino's
  * income and gems stay a boost, not a skip.
  */
-const CHIP_SCALE = 6
+const CHIP_SCALE = 5
 /** The Construction Crew (+1 builder for chips): the mid-game goal after the Slot Lounge. Before CHIP_SCALE. */
 const CREW_CHIPS = 8_000
 const CREW_MS = 4 * HOUR
+/** Cage sizes and the starter cage, in coins, are written small and multiplied by this. */
 const GUEST_SCALE = 30
 
 function roundChips(chips: number): number {
@@ -330,41 +347,34 @@ function gameLevels(chips: number, ms: number, starter = false): Cost[] {
         : cost(chips * factor, Math.min(MAX_BUILD_MS, roundMs(Math.max(LEVEL_MIN_MS[i]!, ms * LEVEL_TIME[i]!)))))
 }
 
-/** Guest income per level against level 1. */
-const LEVEL_GUESTS = [1.3, 1.7, 2.05, 2.3, 2.45] as const
-
-function guests(base: number): number[] {
-    return LEVEL_GUESTS.map(factor => Math.round(base * factor * GUEST_SCALE * 10) / 10)
-}
-
 export const TYCOON_GAMES: readonly TycoonGameDef[] = [
     // Backroom
-    { slug: 'plinko', zone: 'backroom', archetype: 'plinko', accent: '#06b6d4', starter: true, levels: gameLevels(40, MIN, true), guestsPerHour: guests(4) },
-    { slug: 'spinata', zone: 'backroom', archetype: 'slot', accent: '#f43f5e', starter: true, levels: gameLevels(40, MIN, true), guestsPerHour: guests(4) },
-    { slug: 'limbo', zone: 'backroom', archetype: 'rocket', accent: '#38bdf8', levels: gameLevels(80, 10 * SEC), guestsPerHour: guests(2) },
-    { slug: 'wheel', zone: 'backroom', archetype: 'wheel', accent: '#facc15', levels: gameLevels(200, 45 * SEC), guestsPerHour: guests(2) },
+    { slug: 'plinko', zone: 'backroom', archetype: 'plinko', accent: '#06b6d4', starter: true, levels: gameLevels(40, MIN, true) },
+    { slug: 'spinata', zone: 'backroom', archetype: 'slot', accent: '#f43f5e', starter: true, levels: gameLevels(40, MIN, true) },
+    { slug: 'limbo', zone: 'backroom', archetype: 'rocket', accent: '#38bdf8', levels: gameLevels(80, 10 * SEC) },
+    { slug: 'wheel', zone: 'backroom', archetype: 'wheel', accent: '#facc15', levels: gameLevels(200, 45 * SEC) },
     // Main floor
-    { slug: 'roulette', zone: 'main', archetype: 'roulette', accent: '#ef4444', levels: gameLevels(250, 5 * MIN), guestsPerHour: guests(2) },
-    { slug: 'trashpanda', zone: 'main', archetype: 'slot', accent: '#84cc16', levels: gameLevels(270, 8 * MIN), guestsPerHour: guests(2) },
-    { slug: 'fireinthehole', zone: 'main', archetype: 'slot', accent: '#f97316', levels: gameLevels(290, 10 * MIN), guestsPerHour: guests(2) },
-    { slug: 'candymadness', zone: 'main', archetype: 'slot', accent: '#ec4899', levels: gameLevels(310, 12 * MIN), guestsPerHour: guests(2) },
-    { slug: 'dice', zone: 'main', archetype: 'dice', accent: '#22c55e', levels: gameLevels(330, 14 * MIN), guestsPerHour: guests(1.5) },
+    { slug: 'roulette', zone: 'main', archetype: 'roulette', accent: '#ef4444', levels: gameLevels(250, 5 * MIN) },
+    { slug: 'trashpanda', zone: 'main', archetype: 'slot', accent: '#84cc16', levels: gameLevels(270, 8 * MIN) },
+    { slug: 'fireinthehole', zone: 'main', archetype: 'slot', accent: '#f97316', levels: gameLevels(290, 10 * MIN) },
+    { slug: 'candymadness', zone: 'main', archetype: 'slot', accent: '#ec4899', levels: gameLevels(310, 12 * MIN) },
+    { slug: 'dice', zone: 'main', archetype: 'dice', accent: '#22c55e', levels: gameLevels(330, 14 * MIN) },
     // Table pit
-    { slug: 'blackjack', zone: 'pit', archetype: 'cards', accent: '#10b981', levels: gameLevels(450, 30 * MIN), guestsPerHour: guests(2.5) },
-    { slug: 'three-card-poker', zone: 'pit', archetype: 'cards', accent: '#6366f1', levels: gameLevels(470, 35 * MIN), guestsPerHour: guests(2.5) },
-    { slug: 'polymasters', zone: 'pit', archetype: 'flight', accent: '#0ea5e9', levels: gameLevels(450, 30 * MIN), guestsPerHour: guests(2.5) },
+    { slug: 'blackjack', zone: 'pit', archetype: 'cards', accent: '#10b981', levels: gameLevels(450, 30 * MIN) },
+    { slug: 'three-card-poker', zone: 'pit', archetype: 'cards', accent: '#6366f1', levels: gameLevels(470, 35 * MIN) },
+    { slug: 'polymasters', zone: 'pit', archetype: 'flight', accent: '#0ea5e9', levels: gameLevels(450, 30 * MIN) },
     // Slot lounge
-    { slug: 'bookofshadows', zone: 'lounge', archetype: 'slot', accent: '#a855f7', levels: gameLevels(720, 55 * MIN), guestsPerHour: guests(3) },
-    { slug: 'xenoslot', zone: 'lounge', archetype: 'slot', accent: '#14b8a6', levels: gameLevels(750, 60 * MIN), guestsPerHour: guests(3) },
-    { slug: 'emberportals', zone: 'lounge', archetype: 'slot', accent: '#fb923c', levels: gameLevels(770, 65 * MIN), guestsPerHour: guests(3) },
-    { slug: 'magichands', zone: 'lounge', archetype: 'hands', accent: '#c084fc', levels: gameLevels(750, 65 * MIN), guestsPerHour: guests(3) },
+    { slug: 'bookofshadows', zone: 'lounge', archetype: 'slot', accent: '#a855f7', levels: gameLevels(720, 55 * MIN) },
+    { slug: 'xenoslot', zone: 'lounge', archetype: 'slot', accent: '#14b8a6', levels: gameLevels(750, 60 * MIN) },
+    { slug: 'emberportals', zone: 'lounge', archetype: 'slot', accent: '#fb923c', levels: gameLevels(770, 65 * MIN) },
+    { slug: 'magichands', zone: 'lounge', archetype: 'hands', accent: '#c084fc', levels: gameLevels(750, 65 * MIN) },
     // High limit
-    { slug: 'baccarat', zone: 'highlimit', archetype: 'cards', accent: '#b91c1c', levels: gameLevels(1_030, 100 * MIN), guestsPerHour: guests(3.5) },
-    { slug: 'casino-holdem', zone: 'highlimit', archetype: 'cards', accent: '#1d4ed8', levels: gameLevels(1_060, 100 * MIN), guestsPerHour: guests(3.5) },
-    { slug: 'aethergates', zone: 'highlimit', archetype: 'slot', accent: '#eab308', levels: gameLevels(1_090, 135 * MIN), guestsPerHour: guests(3.5) },
+    { slug: 'baccarat', zone: 'highlimit', archetype: 'cards', accent: '#b91c1c', levels: gameLevels(1_030, 100 * MIN) },
+    { slug: 'casino-holdem', zone: 'highlimit', archetype: 'cards', accent: '#1d4ed8', levels: gameLevels(1_060, 100 * MIN) },
+    { slug: 'aethergates', zone: 'highlimit', archetype: 'slot', accent: '#eab308', levels: gameLevels(1_090, 135 * MIN) },
     // Penthouse
-    { slug: 'mines', zone: 'penthouse', archetype: 'mines', accent: '#10b981', levels: gameLevels(1_150, 115 * MIN), guestsPerHour: guests(2.5) },
-    { slug: 'hilo', zone: 'penthouse', archetype: 'hilo', accent: '#8b5cf6', levels: gameLevels(1_200, 135 * MIN), guestsPerHour: guests(2.5) }
+    { slug: 'mines', zone: 'penthouse', archetype: 'mines', accent: '#10b981', levels: gameLevels(1_150, 115 * MIN) },
+    { slug: 'hilo', zone: 'penthouse', archetype: 'hilo', accent: '#8b5cf6', levels: gameLevels(1_200, 135 * MIN) }
 ]
 
 export const UPGRADES: readonly UpgradeDef[] = [
@@ -378,16 +388,30 @@ export const UPGRADES: readonly UpgradeDef[] = [
     {
         id: 'marketing',
         name: 'Marketing',
-        description: 'A known name draws more visitors, unlocks bigger ad campaigns (Billboard at 2, TV at 4) and makes every campaign stronger.',
+        description: 'More guests: a known name draws more visitors, unlocks bigger ad campaigns and makes every campaign stronger.',
         levels: [cost(150, MIN), cost(1_000, 30 * MIN), cost(2_500, 3 * HOUR), cost(5_500, 8 * HOUR), cost(8_800, 9 * HOUR)],
         requiresZone: [null, 'main', 'pit', 'lounge', 'highlimit']
     },
     {
         id: 'decor',
         name: 'Decor',
-        description: 'Carpet, lights and chandeliers: a nicer casino draws more visitors.',
-        levels: [cost(400, 3 * MIN), cost(1_400, 45 * MIN), cost(3_000, 4 * HOUR), cost(6_600, 9 * HOUR), cost(9_900, 9 * HOUR)],
-        requiresZone: ['main', 'pit', 'lounge', 'highlimit', 'penthouse']
+        description: 'Richer guests: carpet, lights and chandeliers draw more High Rollers and Whales, fewer Tourists.',
+        // Twelve smaller steps, gated by the rooms: the main way to richer guests.
+        levels: [
+            cost(150, 3 * MIN), cost(300, 20 * MIN),
+            cost(500, 45 * MIN), cost(750, 90 * MIN),
+            cost(1_000, 2 * HOUR), cost(1_350, 3 * HOUR),
+            cost(1_700, 4 * HOUR), cost(2_100, 5 * HOUR), cost(2_500, 6 * HOUR),
+            cost(2_900, 7 * HOUR), cost(3_300, 8 * HOUR), cost(3_700, 9 * HOUR)
+        ],
+        requiresZone: ['main', 'main', 'pit', 'pit', 'lounge', 'lounge', 'highlimit', 'highlimit', 'highlimit', 'penthouse', 'penthouse', 'penthouse']
+    },
+    {
+        id: 'hospitality',
+        name: 'Hospitality',
+        description: 'More and richer guests: free drinks, then snacks, a buffet, fine dining and a champagne bar.',
+        levels: [cost(900, 2 * HOUR), cost(1_800, 4 * HOUR), cost(3_200, 6 * HOUR), cost(5_000, 8 * HOUR), cost(7_500, 9 * HOUR)],
+        requiresZone: ['pit', 'lounge', 'highlimit', 'highlimit', 'penthouse']
     },
     {
         id: 'crew',
@@ -437,8 +461,7 @@ export const GOLDEN_GEMS = 30
 export const STARTER_CAGE = 250 * GUEST_SCALE
 
 /** Cage capacity in coins by Cashier Cage level 0-5. */
-const CAGE_CAPACITY = [250, 400, 600, 800, 1_000, 1_200].map(coins => coins * GUEST_SCALE)
-const RUSH_FACTOR = 2
+const CAGE_CAPACITY = [300, 400, 600, 850, 1_100, 1_400].map(coins => coins * GUEST_SCALE)
 
 function levelIndex(level: number, max: number): number {
     return Number.isFinite(level) ? Math.max(0, Math.min(max, Math.floor(level))) : 0
@@ -448,6 +471,12 @@ export function cageCapacity(level: number): number {
     return CAGE_CAPACITY[levelIndex(level, CAGE_CAPACITY.length - 1)]!
 }
 
+/** The Decor level as the floor draws it (0-5: its carpet, lights and chandeliers), from the upgrade's 0-12. */
+export function decorLook(level: number): number {
+    const max = findUpgrade('decor')?.levels.length ?? MAX_LEVEL
+    return Math.max(0, Math.min(MAX_LEVEL, Math.round(Math.max(0, level) * MAX_LEVEL / max)))
+}
+
 /** Builders a casino has: 1, +1 with the Construction Crew built, +1 with the gem builder hired. */
 export function builderCount(upgrades: Partial<Record<UpgradeId, number>>, gemBuilder: boolean): number {
     return 1 + ((upgrades.crew ?? 0) >= 1 ? 1 : 0) + (gemBuilder ? 1 : 0)
@@ -455,59 +484,92 @@ export function builderCount(upgrades: Partial<Record<UpgradeId, number>>, gemBu
 
 // ── Visitors ─────────────────────────────────────────────────────────────
 //
-// Every built game has seats; visitors come for the games (each draws by its
-// seats, so a card table pulls more than a slot; higher levels draw more), the decor and the casino's name (Marketing), and an ad
-// campaign multiplies that for a while. Visitors on the floor = the smaller
-// of demand and seats; the rest queue at the door. Guest income is what the
-// floor earns with every seat taken, times the share of seats in use: so a
-// casino without a campaign runs part empty, and one with too few seats
-// turns people away. A guest rush makes every visitor spend double.
+// Every built game has seats; guests come in tiers (Tourist, Regular, High
+// Roller, Whale) and spend by tier, by the level of the game they sit at and
+// by the house rules: the model lives in shared/visitors.ts. Marketing brings
+// more guests, Decor richer ones, an ad campaign multiplies the crowd for a
+// while and a gem rush doubles what they spend. The helpers below are the
+// expected (no luck) numbers for a state; the cage itself accrues through the
+// per-tick model (`runFloor`).
 
-export type CampaignId = 'flyers' | 'billboard' | 'tv'
+export type CampaignId = 'flyers' | 'billboard' | 'tv' | 'invites' | 'jet'
+
+/** A campaign running (or queued) until `until` (ms). */
+export interface RunningCampaignRef {
+    id: CampaignId
+    until: number
+}
+
+/** What a campaign buys: more guests (fills empty seats), or richer ones (worth most on a full floor). */
+export type CampaignGoal = 'guests' | 'wealth'
 
 export interface CampaignDef {
     id: CampaignId
     name: string
+    /** One line: what it does. */
     description: string
+    goal: CampaignGoal
     /** How long it runs, ms. */
     ms: number
-    /** Demand multiplier at Marketing 0. */
-    boost: number
+    /**
+     * A guests campaign: the share of the seats it adds to the crowd while it
+     * runs (several running at once each add their own share, so only all of
+     * them together fill the floor).
+     */
+    fills: number
+    /** A wealth campaign: prestige it adds while it runs, as a share (0.6: × 1.6), at Marketing 0 (richer guests, and a few more). */
+    prestige: number
+    /** A wealth campaign: Whale odds multiplier while it runs, at Marketing 0. */
+    whales: number
     /** Marketing level needed to run it. */
     requiresMarketing: number
+    /** Zone that must be open (the tier it brings comes with it), or null. */
+    requiresZone: ZoneId | null
     /**
-     * Price in hours of the floor's full income (at least MIN_CAMPAIGN_CHIPS).
-     * About 0.23 of an hour per hour run (the TV Ad 0.17: a day-long run loses
-     * the night to a full cage unless the cage is collected all day long, so
-     * it is the most active player's pick): a campaign that fills the floor pays
-     * back while under ~78% of the seats are taken (more the emptier the
-     * floor, and only as far as the cage has room between collects).
+     * Price in hours of the floor's full income (`fullIncomePerHour`: every
+     * seat taken, default rules; at least MIN_CAMPAIGN_CHIPS). Tuned with `bun scripts/tycoon-sim.ts`: each
+     * pays back in its own situation (guests ads on a floor with empty seats,
+     * wealth ads on a floor full of Tourists), as far as the cage has room.
      */
     costHours: number
 }
 
 export const CAMPAIGNS: readonly CampaignDef[] = [
-    { id: 'flyers', name: 'Flyers', description: 'Hand out flyers on the street.', ms: 2 * HOUR, boost: 1.5, requiresMarketing: 0, costHours: 0.45 },
-    { id: 'billboard', name: 'Billboard', description: 'Your name on a billboard downtown.', ms: 8 * HOUR, boost: 1.8, requiresMarketing: 2, costHours: 1.8 },
-    { id: 'tv', name: 'TV Ad', description: 'A prime-time ad on every screen.', ms: 24 * HOUR, boost: 2.4, requiresMarketing: 4, costHours: 4 }
+    { id: 'flyers', name: 'Flyers', description: 'More guests for 2 hours: about an eighth of your seats more.', goal: 'guests', ms: 2 * HOUR, fills: 0.12, prestige: 0, whales: 1, requiresMarketing: 0, requiresZone: null, costHours: 0.17 },
+    { id: 'billboard', name: 'Billboard', description: 'More guests for 8 hours: about a sixth of your seats more.', goal: 'guests', ms: 8 * HOUR, fills: 0.18, prestige: 0, whales: 1, requiresMarketing: 2, requiresZone: null, costHours: 0.75 },
+    { id: 'tv', name: 'TV Ad', description: 'Many more guests for a day: a quarter of your seats more.', goal: 'guests', ms: 24 * HOUR, fills: 0.25, prestige: 0, whales: 1, requiresMarketing: 4, requiresZone: null, costHours: 2.8 },
+    { id: 'invites', name: 'VIP Invitations', description: 'Richer guests for 8 hours: more High Rollers in the same seats, and with Marketing more Whales.', goal: 'wealth', ms: 8 * HOUR, fills: 0, prestige: 0.45, whales: 1, requiresMarketing: 1, requiresZone: 'highlimit', costHours: 0.5 },
+    { id: 'jet', name: 'Private Jet', description: 'Fly in Whales for 12 hours: far more Whales and a few more High Rollers.', goal: 'wealth', ms: 12 * HOUR, fills: 0, prestige: 0.15, whales: 4, requiresMarketing: 3, requiresZone: 'highlimit', costHours: 1 }
 ]
-export const MIN_CAMPAIGN_CHIPS = 20 * CHIP_SCALE
+export const MIN_CAMPAIGN_CHIPS = roundChips(20 * CHIP_SCALE)
 
 /** Seats per archetype at level 1; every level adds one. */
 const SEATS: Readonly<Record<Archetype, number>> = { slot: 2, dice: 3, rocket: 2, wheel: 3, flight: 2, hands: 2, roulette: 4, cards: 5, plinko: 3, mines: 3, hilo: 3 }
-/** Full-floor income against the catalog's per-game numbers. */
-const INCOME_SCALE = 1.8
-/** Demand per built game and per extra level; decor and Marketing add a share. */
-const DEMAND_BASE = 2
-/** Each built game draws visitors by its seats at level 1 (a five-seat card table pulls more than a two-seat slot). */
-const DEMAND_PER_SEAT = 0.32
-const DEMAND_PER_LEVEL = 0.5
-const DECOR_DEMAND = 0.06
-const MARKETING_DEMAND = 0.05
-/** Each Marketing level makes a campaign's boost this much stronger. */
-const MARKETING_CAMPAIGN = 0.15
+/** Each Marketing level makes a campaign this much stronger. */
+const MARKETING_CAMPAIGN = 0.1
 
-type VisitorView = Pick<TycoonState, 'games' | 'upgrades' | 'rushUntil' | 'campaign'>
+/** What the visitor helpers read of a state: the build, the rush and campaign, and (when known) the zones and the rules. */
+export type VisitorView = Pick<TycoonState, 'games' | 'upgrades' | 'rushUntil' | 'campaign'> & {
+    campaigns?: readonly RunningCampaignRef[]
+    zones?: readonly string[]
+    rules?: HouseRules
+    house?: Pick<HouseState, 'rules'>
+}
+
+/** A state as the visitor model reads it. */
+export function floorView(state: VisitorView): FloorView {
+    return {
+        zones: state.zones,
+        games: state.games,
+        upgrades: state.upgrades,
+        rushUntil: state.rushUntil,
+        campaign: state.campaign,
+        campaigns: state.campaigns,
+        rules: state.rules ?? state.house?.rules ?? DEFAULT_RULES
+    }
+}
+
+type FullView = Pick<TycoonState, 'games'> & { zones?: readonly string[], upgrades?: Partial<Record<UpgradeId, number>> }
 
 export function findCampaign(id: string): CampaignDef | undefined {
     return CAMPAIGNS.find(campaign => campaign.id === id)
@@ -516,7 +578,7 @@ export function findCampaign(id: string): CampaignDef | undefined {
 function builtGames(state: Pick<TycoonState, 'games'>) {
     const built: { def: TycoonGameDef, level: number }[] = []
     for (const def of TYCOON_GAMES) {
-        const level = levelIndex(state.games[def.slug] ?? 0, def.guestsPerHour.length)
+        const level = levelIndex(state.games[def.slug] ?? 0, def.levels.length)
         if (level > 0) built.push({ def, level })
     }
     return built
@@ -533,62 +595,88 @@ export function floorSeats(state: Pick<TycoonState, 'games'>): number {
     return builtGames(state).reduce((sum, { def, level }) => sum + seatsOf(def.slug, level), 0)
 }
 
-/** What the floor earns an hour with every seat taken, before a rush. */
-export function fullIncomePerHour(state: Pick<TycoonState, 'games'>): number {
-    const base = builtGames(state).reduce((sum, { def, level }) => sum + def.guestsPerHour[level - 1]!, 0)
-    return Math.round(base * INCOME_SCALE * 100) / 100
+/**
+ * What the floor spends an hour with every seat taken, at the expected tier
+ * mix and the default rules (no rush, no costs): what campaigns and mission
+ * rewards are priced from. Without zones they are read from the built games.
+ */
+export function fullIncomePerHour(state: FullView): number {
+    return fullFloorPerHour({ zones: state.zones, games: state.games, upgrades: state.upgrades ?? {} }, DEFAULT_RULES)
 }
 
-/** The campaign running at `now`, or null. */
-export function activeCampaign(state: Pick<TycoonState, 'campaign'>, now: number): CampaignDef | null {
-    return state.campaign && now < state.campaign.until ? findCampaign(state.campaign.id) ?? null : null
+type CampaignHolder = { campaign?: RunningCampaignRef | null, campaigns?: readonly RunningCampaignRef[] }
+
+/** Every campaign a state holds (running or run out), one per kind: `campaigns`, or the single `campaign` of an older payload. */
+export function campaignsOf(state: CampaignHolder): RunningCampaignRef[] {
+    if (state.campaigns) return [...state.campaigns]
+    return state.campaign ? [state.campaign] : []
 }
 
-/** A campaign's demand multiplier at this Marketing level. */
-export function campaignBoost(id: CampaignId, marketing: number): number {
+/** The campaigns running at `now`, soonest to end first. */
+export function activeCampaigns(state: CampaignHolder, now: number): (CampaignDef & { until: number })[] {
+    return campaignsOf(state)
+        .filter(c => now < c.until)
+        .sort((a, b) => a.until - b.until)
+        .flatMap((c) => {
+            const def = findCampaign(c.id)
+            return def ? [{ ...def, until: c.until }] : []
+        })
+}
+
+/** The running campaign that ends first at `now`, or null. */
+export function activeCampaign(state: CampaignHolder, now: number): CampaignDef | null {
+    return activeCampaigns(state, now)[0] ?? null
+}
+
+/** The campaign of kind `id` in a state (running or run out), or null. */
+export function campaignOf(state: CampaignHolder, id: CampaignId): RunningCampaignRef | null {
+    return campaignsOf(state).find(c => c.id === id) ?? null
+}
+
+/**
+ * What a campaign does at this Marketing level: the share of the seats it
+ * adds to the crowd (guests ads; Marketing brings the crowd itself), and the
+ * prestige and Whale odds it adds (wealth ads; every Marketing level makes
+ * those MARKETING_CAMPAIGN stronger).
+ */
+export function campaignEffect(id: CampaignId, marketing: number): { fills: number, prestige: number, whales: number } {
     const def = findCampaign(id)
-    if (!def) return 1
-    return 1 + (def.boost - 1) * (1 + MARKETING_CAMPAIGN * levelIndex(marketing, MAX_LEVEL))
+    if (!def) return { fills: 0, prestige: 0, whales: 1 }
+    const strength = 1 + MARKETING_CAMPAIGN * levelIndex(marketing, MAX_LEVEL)
+    return { fills: def.fills, prestige: def.prestige * strength, whales: 1 + (def.whales - 1) * strength }
 }
 
-/** How many visitors want in at `now` (may exceed the seats). */
+/** A guests campaign's share of the seats it adds to the crowd (0 for a wealth campaign). */
+export function campaignBoost(id: CampaignId, marketing: number): number {
+    return campaignEffect(id, marketing).fills
+}
+
+/** Guests arriving a tick on average at `now` (may exceed the seats). */
 export function visitorDemand(state: VisitorView, now: number): number {
-    const built = builtGames(state)
-    const levels = built.reduce((sum, { level }) => sum + level - 1, 0)
-    const pull = built.reduce((sum, { def }) => sum + SEATS[def.archetype], 0)
-    const decor = 1 + DECOR_DEMAND * levelIndex(state.upgrades.decor ?? 0, MAX_LEVEL)
-    const brand = 1 + MARKETING_DEMAND * levelIndex(state.upgrades.marketing ?? 0, MAX_LEVEL)
-    const campaign = activeCampaign(state, now)
-    const boost = campaign ? campaignBoost(campaign.id, state.upgrades.marketing ?? 0) : 1
-    return (DEMAND_BASE + DEMAND_PER_SEAT * pull + DEMAND_PER_LEVEL * levels) * decor * brand * boost
+    return expectedFloor(floorView(state), now).demand
 }
 
-/** Share of seats in use at `now`, 0..1. */
+/** Expected share of seats in use at `now`, 0..1. */
 export function occupancy(state: VisitorView, now: number): number {
-    const seats = floorSeats(state)
-    return seats > 0 ? Math.min(1, visitorDemand(state, now) / seats) : 0
+    const floor = expectedFloor(floorView(state), now)
+    const seated = seatedTotal(floor.visitors)
+    return floor.seats > 0 ? Math.min(1, seated / floor.seats) : 0
 }
 
-/** Visitors on the floor at `now`. */
+/** Expected visitors on the floor at `now` (no luck: `TycoonState.floor` has the tick's own). */
 export function visitorCount(state: VisitorView, now: number): number {
-    return Math.round(Math.min(visitorDemand(state, now), floorSeats(state)))
+    const floor = expectedFloor(floorView(state), now)
+    return Math.round(seatedTotal(floor.visitors))
 }
 
-/** Visitors turned away at the door at `now`: build more seats. */
-export function visitorQueue(state: VisitorView, now: number): number {
-    return Math.max(0, Math.round(visitorDemand(state, now) - floorSeats(state)))
-}
-
-/** Guest income at `now`, coins per hour: full income × occupancy, doubled in a rush. */
+/** Expected guest income at `now`, coins per hour (rules, campaign and rush included; no luck). */
 export function guestsPerHour(state: VisitorView, now: number): number {
-    const rate = fullIncomePerHour(state) * occupancy(state, now)
-    const rushed = state.rushUntil !== null && now < state.rushUntil ? rate * RUSH_FACTOR : rate
-    return Math.round(rushed * 100) / 100
+    return expectedPerHour(floorView(state), now)
 }
 
-/** Guest income without a campaign or rush (what an idle casino earns). */
-export function baseGuestsPerHour(state: Pick<TycoonState, 'games' | 'upgrades'>): number {
-    return guestsPerHour({ ...state, rushUntil: null, campaign: null }, 0)
+/** Expected guest income without a campaign or rush (what an idle casino earns). */
+export function baseGuestsPerHour(state: Pick<TycoonState, 'games' | 'upgrades'> & Omit<Partial<VisitorView>, 'games' | 'upgrades'>): number {
+    return expectedPerHour(floorView({ ...state, rushUntil: null, campaign: null, campaigns: [] }))
 }
 
 /** Each run already stacked on a campaign makes the next one this much dearer. */
@@ -600,7 +688,7 @@ export const CAMPAIGN_STACK_FACTOR = 1.5
  * already queued (×CAMPAIGN_STACK_FACTOR per run left), so a long idle costs
  * real chips: 1×, 1,5×, 2,25×, 3,4×…
  */
-export function campaignCost(state: Pick<TycoonState, 'games'> & Partial<Pick<TycoonState, 'campaign'>>, id: CampaignId, now?: number): number {
+export function campaignCost(state: FullView & CampaignHolder, id: CampaignId, now?: number): number {
     const def = findCampaign(id)
     if (!def) return 0
     const base = Math.max(MIN_CAMPAIGN_CHIPS, roundChips(fullIncomePerHour(state) * def.costHours))
@@ -608,22 +696,25 @@ export function campaignCost(state: Pick<TycoonState, 'games'> & Partial<Pick<Ty
 }
 
 /** How many runs of this campaign are still queued at `now` (0 when none runs). */
-export function campaignStacks(state: Partial<Pick<TycoonState, 'campaign'>>, id: CampaignId, now?: number): number {
+export function campaignStacks(state: CampaignHolder, id: CampaignId, now?: number): number {
     const def = findCampaign(id)
-    const running = state.campaign
-    if (!def || now === undefined || !running || running.id !== id || running.until <= now) return 0
+    const running = campaignOf(state, id)
+    if (!def || now === undefined || !running || running.until <= now) return 0
     return Math.ceil((running.until - now) / def.ms)
 }
 
-/** Why a campaign can't start now, or null. Running the same one again extends it. */
-export function campaignBlocker(state: Pick<TycoonState, 'upgrades' | 'campaign'>, id: string, now: number): string | null {
+/**
+ * Why a campaign can't start now, or null. Campaigns of different kinds run
+ * side by side; running the same one again extends it (up to a week queued).
+ */
+export function campaignBlocker(state: { upgrades: Partial<Record<UpgradeId, number>> } & CampaignHolder & { zones?: readonly string[] }, id: string, now: number): string | null {
     const def = findCampaign(id)
     if (!def) return 'No such campaign'
+    if (def.requiresZone && state.zones && !state.zones.includes(def.requiresZone)) return `Open the ${findZone(def.requiresZone)?.name ?? 'next zone'} first`
     if ((state.upgrades.marketing ?? 0) < def.requiresMarketing) return `Needs Marketing ${def.requiresMarketing}`
-    const running = activeCampaign(state, now)
-    if (running && running.id !== def.id) return `${running.name} is still running`
-    const until = running && state.campaign ? state.campaign.until : now
-    if (until + def.ms - now > MAX_CAMPAIGN_QUEUE_MS) return 'A week of campaigns is queued already'
+    const running = campaignOf(state, def.id)
+    const until = running && running.until > now ? running.until : now
+    if (until + def.ms - now > MAX_CAMPAIGN_QUEUE_MS) return 'A week of this campaign is queued already'
     return null
 }
 
@@ -631,35 +722,16 @@ export function campaignBlocker(state: Pick<TycoonState, 'upgrades' | 'campaign'
 export const MAX_CAMPAIGN_QUEUE_MS = 7 * 24 * HOUR
 
 /**
- * Guest coins earned between `from` and `to` (ms) at the current build:
- * split where a rush or campaign ends, each stretch at its own rate.
- * Uncapped; rounded down.
+ * The most extra guest coins a rush can bring: what a full floor spends over
+ * RUSH_MS at the richest mix any of the casino's unlocked rules lets in (a
+ * rush doubles what guests spend), as if every seat were taken (a campaign
+ * started after the rush can fill them). Priced from the occupancy at
+ * purchase instead, a rush bought before a campaign would come out cheaper
+ * than converting. Not capped by the cage: collecting during the rush takes
+ * more than one cage.
  */
-export function guestChipsBetween(state: VisitorView, from: number, to: number): number {
-    if (!(to > from)) return 0
-    const cuts = [from, to]
-    for (const at of [state.rushUntil, state.campaign?.until ?? null]) {
-        if (at !== null && at > from && at < to) cuts.push(at)
-    }
-    cuts.sort((a, b) => a - b)
-    let chips = 0
-    for (let i = 0; i + 1 < cuts.length; i++) {
-        const a = cuts[i]!
-        const b = cuts[i + 1]!
-        chips += guestsPerHour(state, a) * (b - a) / HOUR
-    }
-    return roundCoins(chips)
-}
-
-/**
- * The most extra guest coins a rush can bring: the floor's full income over
- * RUSH_MS, as if every seat were taken (a campaign started after the rush
- * can fill them). Priced from the occupancy at purchase instead, a rush
- * bought before a campaign would come out cheaper than converting. Not
- * capped by the cage: collecting during the rush takes more than one cage.
- */
-export function rushExtraCoins(state: Pick<TycoonState, 'games'>): number {
-    return roundCoins(fullIncomePerHour(state) * RUSH_MS / HOUR)
+export function rushExtraCoins(state: FullView): number {
+    return roundCoins(bestFullFloorPerHour({ zones: state.zones, games: state.games, upgrades: state.upgrades ?? {} }) * RUSH_MS / HOUR)
 }
 
 /**
@@ -668,14 +740,23 @@ export function rushExtraCoins(state: Pick<TycoonState, 'games'>): number {
  * a campaign it is never a cheaper way to coins than converting. RUSH_GEMS
  * at least, RUSH_MAX_GEMS at most.
  */
-export function rushGems(state: Pick<TycoonState, 'games'>): number {
+export function rushGems(state: FullView): number {
     const fair = Math.ceil((rushExtraCoins(state) / COINS_PER_GEM) * RUSH_PREMIUM)
     return Math.max(RUSH_GEMS, Math.min(RUSH_MAX_GEMS, fair))
 }
 
-/** Coins in the cage at `now`: stored plus guest income since `serverNow`, capped at capacity. */
+/**
+ * Coins in the cage at `now`, as the client shows it between reads: stored
+ * plus the current tick's rate until the tick ends, then the expected rate
+ * (the next read brings the real ticks), capped at capacity.
+ */
 export function cageAt(state: TycoonState, now: number): number {
-    const gained = guestChipsBetween(state, state.serverNow, now)
+    if (!(now > state.serverNow)) return state.cage.stored
+    const floor = state.floor as FloorNow | undefined
+    const tickEnds = floor?.tickEndsAt ?? now
+    const first = Math.min(now, tickEnds) - state.serverNow
+    const rest = Math.max(0, now - Math.max(tickEnds, state.serverNow))
+    const gained = (state.cage.perHour * Math.max(0, first) + (floor?.expectedPerHour ?? state.cage.perHour) * rest) / HOUR
     return Math.max(state.cage.stored, Math.min(state.cage.capacity, roundCoins(state.cage.stored + gained)))
 }
 

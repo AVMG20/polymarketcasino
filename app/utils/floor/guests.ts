@@ -1,11 +1,12 @@
-import type { Container, Text, Graphics } from 'pixi.js'
+import type { Container, Text, Graphics, Sprite } from 'pixi.js'
 import { Actor, figureFrames } from './actors'
 import type { TextureBank } from './art/bank'
-import { lookFromSeed, type Look } from './art/characters'
 import type { Emote, FxTextures } from './art/fx'
+import { LOOKS_PER_TIER, tierLooks } from './art/visitors'
 import { project } from './iso'
 import { SPAWN, type Tile } from '#shared/floor/layout'
 import type { NavGrid } from '#shared/floor/nav'
+import { VISITOR_TIER_IDS, type VisitorCounts, type VisitorTierId } from '#shared/visitors'
 
 type Pixi = typeof import('pixi.js')
 
@@ -21,6 +22,9 @@ type State = 'idle' | 'walk' | 'play' | 'leave' | 'cheer'
 
 interface Guest {
     actor: Actor
+    tier: VisitorTierId
+    /** A Whale's gold glow behind them (pulses), else null. */
+    glow: Sprite | null
     state: State
     timer: number
     spot: string | null
@@ -38,21 +42,16 @@ const LINES = ['Feeling lucky!', 'One more spin…', 'Jackpot?!', 'Nice place!',
 const RUSH_LINES = ['What a crowd!', 'Party time!', 'Love this place!']
 const PLAY_EMOTES: Emote[] = ['coin', 'heart', 'star', 'bang', 'smile', 'note']
 
-/**
- * Guests wear one of a fixed set of looks, so the baked figure textures (7
- * per look) stay bounded however many guests come and go.
- */
-const LOOK_POOL = 24
-let looks: Look[] | null = null
-function guestLooks(): Look[] {
-    looks ??= Array.from({ length: LOOK_POOL }, (_, i) => lookFromSeed(0x9e3779b1 ^ Math.imul(i + 1, 40503)))
-    return looks
-}
+const WHALE_LINES = ['Bring me the high limit!', 'Put it all on red.', 'Champagne for the table!']
+
+const ZERO: VisitorCounts = { tourist: 0, regular: 0, highroller: 0, whale: 0 }
 
 /**
  * The NPC guests: they come in at the entrance, wander, play machines, pop
  * the odd emote or line, cheer at big wins and leave when the floor gets
- * quieter. The count follows guest income.
+ * quieter. Each walks as a visitor tier (`setMix`): dressed for it
+ * (art/visitors.ts, a fixed set of looks so the baked figure textures stay
+ * bounded), on a small disc in the tier's colour; a Whale glows gold.
  */
 export class GuestCrowd {
     private guests: Guest[] = []
@@ -61,19 +60,23 @@ export class GuestCrowd {
     private spots: GuestSpot[] = []
     private spotByKey = new Map<string, GuestSpot>()
     private taken = new Set<string>()
-    private target = 0
+    private target: VisitorCounts = { ...ZERO }
+    private targetTotal = 0
+    private colors: Record<VisitorTierId, string> = { tourist: '#7dd3fc', regular: '#3fd25a', highroller: '#c084fc', whale: '#ffc93a' }
+    private time = 0
     private spawnT = 0
     private rush = false
     private lineT = 6
     private bubbles: { box: Container, text: Text, bg: Graphics, actor: Actor | null, t: number }[] = []
     /**
-     * What one playing guest brings in, coins a second. Every 8-16 s a coin
-     * pops off their machine, labelled with the whole coins they spent since
-     * the last label (0 = just the coin), so a busy floor visibly makes money.
+     * What one playing guest of each tier brings in, coins a second. Every
+     * 8-16 s a coin pops off their machine, labelled with the whole coins
+     * they spent since the last label (0 = just the coin), so a busy floor
+     * visibly makes money (and a Whale's pops are bigger).
      */
-    earnPerSec = 0
+    earnPerSec: VisitorCounts = { ...ZERO }
     onEarn: ((x: number, y: number, amount: number) => void) | null = null
-    private nextLook = Math.floor(Math.random() * LOOK_POOL)
+    private seq = Math.floor(Math.random() * LOOKS_PER_TIER)
     private initialised = false
 
     constructor(private readonly PIXI: Pixi, private readonly bank: TextureBank, private readonly fx: FxTextures, private readonly layer: Container, private readonly overlay: Container, private readonly reduced: boolean) {}
@@ -122,24 +125,68 @@ export class GuestCrowd {
         }
     }
 
-    setCount(n: number, rush: boolean) {
-        this.target = n
+    /** Guests to have on the floor per tier, and each tier's colour (for its disc and clothes). */
+    setMix(counts: VisitorCounts, colors: Record<VisitorTierId, string>, rush: boolean) {
+        this.target = { ...counts }
+        this.targetTotal = VISITOR_TIER_IDS.reduce((sum, id) => sum + Math.max(0, counts[id] ?? 0), 0)
+        this.colors = colors
         this.rush = rush
     }
 
-    private spawn(atEntrance: boolean) {
+    /** Active (not leaving) guests per tier. */
+    private activeCounts(): VisitorCounts {
+        const out = { ...ZERO }
+        for (const g of this.guests) if (g.state !== 'leave') out[g.tier]++
+        return out
+    }
+
+    private spawn(atEntrance: boolean, tier: VisitorTierId) {
         if (!this.nav || !this.walkable.length) return
-        // Step through the pool with a stride so neighbours rarely match.
-        this.nextLook = (this.nextLook + 7 + Math.floor(Math.random() * 3)) % LOOK_POOL
-        const look = guestLooks()[this.nextLook]!
+        // Each visitor gets the next look of their tier (a stride, so neighbours rarely match).
+        this.seq = (this.seq + 5) % (LOOKS_PER_TIER * 7)
+        const color = this.colors[tier]
+        const look = tierLooks(tier, color)[this.seq % LOOKS_PER_TIER]!
         const start = atEntrance ? SPAWN : this.walkable[Math.floor(Math.random() * this.walkable.length)]!
         const actor = new Actor(this.PIXI, figureFrames(this.bank, look), this.fx, start)
-        actor.speed = 1.9 + Math.random() * 0.8
+        actor.speed = (tier === 'whale' ? 1.5 : 1.9) + Math.random() * 0.8
+        // The tier's colour as a soft disc under the feet, over the shadow.
+        const disc = new this.PIXI.Sprite(this.fx.pool.texture)
+        disc.anchor.set(0.5)
+        disc.scale.set(tier === 'whale' ? 0.36 : 0.3)
+        disc.tint = color
+        disc.alpha = 0.6
+        actor.container.addChildAt(disc, 1)
+        let glow: Sprite | null = null
+        if (tier === 'whale') {
+            glow = new this.PIXI.Sprite(this.fx.glow.texture)
+            glow.anchor.set(0.5)
+            glow.position.set(0, -26)
+            glow.scale.set(1.15)
+            glow.blendMode = 'add'
+            glow.tint = color
+            glow.alpha = 0.4
+            actor.container.addChildAt(glow, 0)
+        }
         this.layer.addChild(actor.container)
-        const g: Guest = { actor, state: 'idle', timer: atEntrance ? 0 : Math.random() * 3, spot: null, resume: 'idle', emoteT: 3 + Math.random() * 6, fade: atEntrance ? 0 : 1, earned: Math.random(), popT: 4 + Math.random() * 8 }
+        const g: Guest = { actor, tier, glow, state: 'idle', timer: atEntrance ? 0 : Math.random() * 3, spot: null, resume: 'idle', emoteT: 3 + Math.random() * 6, fade: atEntrance ? 0 : 1, earned: Math.random(), popT: 4 + Math.random() * 8 }
         actor.container.alpha = g.fade
         this.guests.push(g)
         if (atEntrance) this.wander(g)
+    }
+
+    /** The tier furthest below its target (richest first on a tie), or null when every tier has its guests. */
+    private shortTier(active: VisitorCounts): VisitorTierId | null {
+        let best: VisitorTierId | null = null
+        let gap = 0
+        for (let i = VISITOR_TIER_IDS.length - 1; i >= 0; i--) {
+            const id = VISITOR_TIER_IDS[i]!
+            const d = (this.target[id] ?? 0) - active[id]
+            if (d > gap) {
+                gap = d
+                best = id
+            }
+        }
+        return best
     }
 
     private freeSpot(): GuestSpot | null {
@@ -230,26 +277,33 @@ export class GuestCrowd {
 
     update(dt: number, partyOn: boolean) {
         if (!this.nav) return
-        if (!this.initialised && this.target > 0) {
+        this.time += dt
+        if (!this.initialised && this.targetTotal > 0) {
             this.initialised = true
-            const n = Math.min(this.target, Math.max(0, this.walkable.length - 6))
-            for (let i = 0; i < n; i++) this.spawn(false)
+            let room = Math.max(0, this.walkable.length - 6)
+            for (const id of VISITOR_TIER_IDS) {
+                const n = Math.min(this.target[id] ?? 0, room)
+                for (let i = 0; i < n; i++) this.spawn(false, id)
+                room -= n
+            }
         }
-        // Arrivals and departures.
-        let active = 0
-        for (const g of this.guests) if (g.state !== 'leave') active++
+        // Arrivals and departures, per tier.
+        const active = this.activeCounts()
+        const short = this.shortTier(active)
+        const extra = VISITOR_TIER_IDS.find(id => active[id] > (this.target[id] ?? 0))
         this.spawnT -= dt
-        if (active < this.target && this.spawnT <= 0 && this.guests.length < this.target + 4) {
-            this.spawn(true)
+        if (short && this.spawnT <= 0 && this.guests.length < this.targetTotal + 4) {
+            this.spawn(true, short)
             this.spawnT = this.rush ? 0.35 : 0.9 + Math.random() * 1.2
-        } else if (active > this.target) {
-            const g = this.guests.find(x => x.state === 'idle' || x.state === 'walk') ?? this.guests.find(x => x.state === 'play')
+        } else if (extra) {
+            const g = this.guests.find(x => x.tier === extra && (x.state === 'idle' || x.state === 'walk')) ?? this.guests.find(x => x.tier === extra && x.state !== 'leave')
             if (g) this.leave(g)
         }
 
         for (let i = this.guests.length - 1; i >= 0; i--) {
             const g = this.guests[i]!
             const arrived = g.actor.update(dt)
+            if (g.glow) g.glow.alpha = this.reduced ? 0.4 : 0.34 + Math.sin(this.time * 2.2 + i) * 0.1
             if (g.fade < 1 && g.state !== 'leave') {
                 g.fade = Math.min(1, g.fade + dt * 2)
                 g.actor.container.alpha = g.fade
@@ -282,8 +336,9 @@ export class GuestCrowd {
                 }
                 case 'play': {
                     g.timer -= dt
-                    if (this.onEarn && this.earnPerSec > 0) {
-                        g.earned += this.earnPerSec * dt
+                    const rate = this.earnPerSec[g.tier] ?? 0
+                    if (this.onEarn && rate > 0) {
+                        g.earned += rate * dt
                         g.popT -= dt
                         if (g.popT <= 0) {
                             g.popT = 8 + Math.random() * 8
@@ -339,7 +394,7 @@ export class GuestCrowd {
             const players = this.guests.filter(g => g.state === 'play' || (g.state === 'idle' && this.rush))
             const who = players[Math.floor(Math.random() * players.length)]
             if (who) {
-                const pool = this.rush && Math.random() < 0.5 ? RUSH_LINES : LINES
+                const pool = who.tier === 'whale' && Math.random() < 0.6 ? WHALE_LINES : this.rush && Math.random() < 0.5 ? RUSH_LINES : LINES
                 this.say(who.actor, pool[Math.floor(Math.random() * pool.length)]!)
             }
         }

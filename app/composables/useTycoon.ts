@@ -3,11 +3,12 @@ import type { CosmeticBuyBody } from '#shared/cosmetics'
 import { normalizeCoins } from '#shared/money'
 import type { MissionKey, MissionView, WelcomeBack } from '#shared/missions'
 import {
-    activeCampaign, buildBlocker, cageAt, campaignBlocker, campaignBoost, campaignCost, CAMPAIGNS, findCampaign, findTycoonGame, findUpgrade, findZone,
-    floorSeats, guestsPerHour, levelOf, nextCost, occupancy, RUSH_GEMS, rushGems, skipGems, TYCOON_GAMES, UPGRADES, visitorCount, visitorDemand, visitorQueue, ZONES,
+    activeCampaigns, buildBlocker, campaignsOf, cageAt, campaignBlocker, campaignBoost, campaignCost, CAMPAIGNS, findCampaign, findTycoonGame, findUpgrade, findZone,
+    floorView, levelOf, nextCost, RUSH_GEMS, rushGems, skipGems, TYCOON_GAMES, UPGRADES, ZONES,
     type BuildBody, type BuildKind, type CampaignDef, type CampaignId, type Construction, type Cost, type GemBody, type GemItem,
     type TycoonActionResponse, type TycoonState, type ZoneId
 } from '#shared/tycoon'
+import { campaignGain, emptyCounts, type CampaignGain, type FloorNow, type HouseState, type RulesBody, type VisitorCounts } from '#shared/visitors'
 
 export interface QueuedConstruction extends Construction {
     leftMs: number
@@ -52,21 +53,18 @@ export interface CampaignView {
     def: CampaignDef
     /** Price now, chips. */
     cost: number
-    /** Demand multiplier at the current Marketing level. */
+    /** A guests campaign: the share of the empty seats it fills at the current Marketing level (0 for a wealth one). */
     boost: number
     /** Marketing level it needs, when it is still locked; else null. */
     lockedAt: number | null
-    /** This one is running (buying it again extends it). */
+    /** This one is running (buying it again extends it), and its queue's time left. */
     running: boolean
-    /** Why it can't start now (locked, another one running), or null. */
+    leftMs: number
+    /** Why it can't start now (locked, a week queued), or null. */
     blocker: string | null
     affordable: boolean
-    /** Visitors and guest coins an hour while it runs. */
-    visitors: number
-    perHour: number
-    /** What it adds over the floor without a campaign: visitors (0 when every seat is taken) and coins an hour. */
-    gainVisitors: number
-    gainPerHour: number
+    /** What a run adds on top of what runs now, over its whole run (luck averaged): guests, rich guests, coins, the tier counts. */
+    gain: CampaignGain
 }
 
 /** Every buildable item, in menu order. */
@@ -131,22 +129,46 @@ export function useTycoon() {
     /** Gems a guest rush costs now (priced from the casino, like the server does at purchase). */
     const rushPrice = computed(() => (state.value ? rushGems(state.value) : RUSH_GEMS))
 
-    // Visitors, live: a campaign or rush running out changes them without a new state.
-    const seats = computed(() => (state.value ? floorSeats(state.value) : 0))
-    const visitors = computed(() => (state.value ? visitorCount(state.value, serverTime.value) : 0))
-    /** Visitors waiting at the door (more want in than there are seats). */
-    const waiting = computed(() => (state.value ? visitorQueue(state.value, serverTime.value) : 0))
-    const demand = computed(() => (state.value ? visitorDemand(state.value, serverTime.value) : 0))
+    /** The floor this tick: seated guests per tier, seats, the tick's rate and the expected one. */
+    const floorNow = computed<FloorNow | null>(() => state.value?.floor ?? null)
+    /** House rules (owner reads only). */
+    const house = computed<HouseState | null>(() => state.value?.house ?? null)
+
+    // The floor changes every tick (TICK_MS): the ticker re-reads the state when one ends.
+    const seats = computed(() => floorNow.value?.seats ?? 0)
+    /** Seated guests per tier. */
+    const visitorTiers = computed<VisitorCounts>(() => floorNow.value?.visitors ?? emptyCounts())
+    const visitors = computed(() => countTotal(visitorTiers.value))
+    /** Guests turned away at the door this tick (no seat, or the door policy). */
+    const waiting = computed(() => floorNow.value?.turnedAway ?? 0)
     /** Share of the seats in use, 0..1. */
-    const occupied = computed(() => (state.value ? occupancy(state.value, serverTime.value) : 0))
-    /** Guest coins an hour right now (the state's own rate is only right at serverNow). */
-    const perHour = computed(() => (state.value ? guestsPerHour(state.value, serverTime.value) : 0))
-    const campaign = computed<RunningCampaign | null>(() => {
+    const occupied = computed(() => (seats.value > 0 ? Math.min(1, visitors.value / seats.value) : 0))
+    /** Coins an hour this tick (luck included, rule costs taken off; a rush doubles it). */
+    const perHour = computed(() => floorNow.value?.perHour ?? 0)
+    /** Coins an hour on average for this build and these rules (no luck). */
+    const expectedPerHour = computed(() => floorNow.value?.expectedPerHour ?? 0)
+    /** Every campaign running now, soonest to end first. */
+    const runningCampaigns = computed<RunningCampaign[]>(() => {
         const s = state.value
-        const def = s ? activeCampaign(s, serverTime.value) : null
-        if (!s?.campaign || !def) return null
-        const leftMs = Math.max(0, s.campaign.until - serverTime.value)
-        return { def, until: s.campaign.until, leftMs, fuel: Math.min(1, leftMs / def.ms) }
+        if (!s) return []
+        return activeCampaigns(s, serverTime.value).map((c) => {
+            const leftMs = Math.max(0, c.until - serverTime.value)
+            return { def: findCampaign(c.id)!, until: c.until, leftMs, fuel: Math.min(1, leftMs / c.ms) }
+        })
+    })
+    /** The running campaign that ends first (the HUD's ring), or null. */
+    const campaign = computed<RunningCampaign | null>(() => runningCampaigns.value[0] ?? null)
+
+    /**
+     * What each campaign would add over its run (good and quiet hours averaged),
+     * and what of it a player collecting every four hours keeps with this cage.
+     * Read at the state's clock: it only changes with a new state.
+     */
+    const campaignGains = computed(() => {
+        const s = state.value
+        if (!s) return null
+        const view = floorView(s)
+        return Object.fromEntries(CAMPAIGNS.map(def => [def.id, campaignGain(view, def.id, s.serverNow, { capacity: s.cage.capacity })])) as Record<CampaignId, CampaignGain>
     })
 
     function campaignView(def: CampaignDef): CampaignView {
@@ -154,24 +176,17 @@ export function useTycoon() {
         const now = serverTime.value
         const marketing = s?.upgrades.marketing ?? 0
         const cost = s ? campaignCost(s, def.id, serverTime.value) : 0
-        const running = campaign.value?.def.id === def.id
-        // While it runs: what the casino has from it; else what it would have with it.
-        const withIt = s ? { ...s, campaign: { id: def.id, until: Math.max(now + def.ms, s.campaign?.until ?? 0) } } : null
-        const without = s ? { ...s, campaign: null } : null
-        const visitors = withIt ? visitorCount(withIt, now) : 0
-        const perHour = withIt ? guestsPerHour(withIt, now) : 0
+        const run = runningCampaigns.value.find(c => c.def.id === def.id)
         return {
             def,
             cost,
             boost: campaignBoost(def.id, marketing),
             lockedAt: marketing < def.requiresMarketing ? def.requiresMarketing : null,
-            running,
+            running: !!run,
+            leftMs: run?.leftMs ?? 0,
             blocker: s ? campaignBlocker(s, def.id, now) : 'Loading',
             affordable: chips.value >= cost,
-            visitors,
-            perHour,
-            gainVisitors: without ? Math.max(0, visitors - visitorCount(without, now)) : 0,
-            gainPerHour: without ? Math.max(0, normalizeCoins(perHour - guestsPerHour(without, now))) : 0
+            gain: campaignGains.value?.[def.id] ?? { guests: 0, richGuests: 0, coins: 0, before: emptyCounts(), after: emptyCounts(), kept: 0, cageFullMs: null, from: now, until: now }
         }
     }
     const campaigns = computed(() => CAMPAIGNS.map(campaignView))
@@ -260,7 +275,7 @@ export function useTycoon() {
         return refreshing
     }
 
-    async function act(path: string, body?: BuildBody | GemBody | { id: CampaignId | MissionKey } | CosmeticBuyBody): Promise<TycoonActionResponse | null> {
+    async function act(path: string, body?: BuildBody | GemBody | { id: CampaignId | MissionKey } | CosmeticBuyBody | RulesBody): Promise<TycoonActionResponse | null> {
         if (busy.value) return null
         busy.value = true
         const run = (async () => {
@@ -312,6 +327,8 @@ export function useTycoon() {
         if (response) sound.play('campaign')
         return response
     }
+    /** Change house rules (only the given keys). Resolves with the response, or null when it failed (a toast says why). */
+    const setRules = (body: RulesBody) => act('/api/tycoon/rules', body)
     /** Claim a finished mission (or the bonus): coins. Resolves with the coins paid (0 when it failed). */
     async function claimMission(id: MissionKey): Promise<number> {
         if (busy.value && inflight) await inflight.catch(() => null)
@@ -412,6 +429,17 @@ export function useTycoon() {
         return best
     })
 
+    /**
+     * The floor's tick ended after the state was read: a second's grace for the
+     * server's clock, plus 0-30 s of jitter so every open casino doesn't read
+     * at the same moment each quarter hour.
+     */
+    const tickJitter = useState('tycoon:tick-jitter', () => Math.floor(Math.random() * 30_000))
+    function floorTickDue(s: TycoonState): boolean {
+        const end = s.floor?.tickEndsAt
+        return !!end && s.serverNow < end && end <= serverTime.value - 1000 - tickJitter.value
+    }
+
     function start() {
         if (!import.meta.client || ticker) return
         // Back from another tab or app: say what happened while the player was away.
@@ -429,7 +457,9 @@ export function useTycoon() {
             // The rush ran out: the server's rate (and cage) no longer include it.
             else if (s.rushUntil && s.rushUntil <= serverTime.value - 200 && s.serverNow < s.rushUntil) void refresh()
             // Same for a campaign: its visitors go home.
-            else if (s.campaign && s.campaign.until <= serverTime.value - 200 && s.serverNow < s.campaign.until) void refresh()
+            else if (campaignsOf(s).some(c => c.until <= serverTime.value - 200 && s.serverNow < c.until)) void refresh()
+            // A new tick: new guests came in (and the rate with them).
+            else if (document.visibilityState === 'visible' && floorTickDue(s)) void refresh()
         }, 250)
     }
 
@@ -438,8 +468,8 @@ export function useTycoon() {
     return {
         state, ready, loadFailed, chips, gems, busy, lastBuilt, serverTime, offset, welcome, missions, claimable, missionDone,
         cageStored, cageFill, rushActive, rushLeftMs, rushPrice, queue,
-        seats, visitors, waiting, demand, occupied, perHour, campaign, campaigns,
+        seats, visitors, visitorTiers, waiting, occupied, perHour, expectedPerHour, floorNow, house, campaign, runningCampaigns, campaigns,
         startable, suggestion, goal,
-        refresh, refreshSoon, collect, build, buyGem, buyCosmetic, equipCosmetic, startCampaign, claimMission, setChips, blocker, cost, skipPrice, view
+        refresh, refreshSoon, collect, build, buyGem, buyCosmetic, equipCosmetic, startCampaign, claimMission, setRules, setChips, blocker, cost, skipPrice, view
     }
 }

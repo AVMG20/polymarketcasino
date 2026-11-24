@@ -17,6 +17,19 @@ const sound = useTycoonSound()
 const away = computed(() => tycoon.welcome.value)
 const campaign = computed(() => (away.value?.campaignEnded ? findCampaign(away.value.campaignEnded) ?? null : null))
 const cageMaxed = computed(() => (tycoon.state.value?.upgrades.cage ?? 0) >= 5)
+/** Income per hour of the away stretch, and the Whales who came by. */
+const hours = computed(() => cageHours(away.value?.hours ?? []))
+const longAway = computed(() => (away.value?.awayMs ?? 0) > 20 * 3_600_000)
+/** The three biggest spenders, in the order they came; the rest as a count. */
+const notableMore = computed(() => Math.max(0, (away.value?.whales ?? away.value?.notable?.length ?? 0) - Math.min(3, away.value?.notable?.length ?? 0)))
+const notable = computed(() => [...(away.value?.notable ?? [])].sort((a, b) => b.spent - a.spent).slice(0, 3).sort((a, b) => a.at - b.at).map(g => ({
+    ...g,
+    color: tierDef(g.tier).color,
+    // Their whole stay: "A Whale played 22:00-00:30 and spent 2.250".
+    text: g.until
+        ? `A ${tierDef(g.tier).name} played ${longAway.value ? formatDayClock(g.at) : formatClock(g.at)}-${formatClock(g.until)} and spent ${formatCoins(g.spent)}`
+        : `A ${tierDef(g.tier).name} came in at ${longAway.value ? formatDayClock(g.at) : formatClock(g.at)} and spent ${formatCoins(g.spent)}`
+})))
 
 function close() {
     tycoon.welcome.value = null
@@ -49,14 +62,14 @@ const CONFETTI = Array.from({ length: 16 }, (_, i) => ({
 <template>
   <Transition name="welcome">
     <div v-if="away" class="g-ui absolute inset-0 z-[46] grid place-items-center bg-[#0b0712]/55 p-3" role="dialog" aria-label="While you were away" @click.self="close">
-      <div class="relative w-full max-w-[22rem]">
+      <div class="relative flex max-h-full w-full max-w-[22rem] flex-col">
         <span
           v-for="(c, i) in CONFETTI"
           :key="i"
           class="confetti pointer-events-none absolute top-16 left-1/2 h-3 w-1.5 rounded-sm"
           :style="{ background: c.c, '--x': `${c.x}px`, '--y': `${c.y}px`, '--r': `${c.r}deg`, animationDelay: `${c.d}ms` }"
         />
-        <div class="g-panel relative overflow-hidden rounded-[28px] px-4 pt-3 pb-4">
+        <div class="g-panel relative min-h-0 overflow-x-hidden overflow-y-auto rounded-[28px] px-4 pt-3 pb-4">
           <button type="button" class="g-btn g-dark absolute top-2 right-2 size-11 rounded-full" aria-label="Close" @click="close">
             <X class="size-5" :stroke-width="3" />
           </button>
@@ -78,6 +91,15 @@ const CONFETTI = Array.from({ length: 16 }, (_, i) => ({
               </span>
             </span>
           </div>
+          <!-- Hour by hour, and who came by -->
+          <TycoonHourStrip v-if="hours.length > 1" :hours="hours" :days="longAway" class="mt-2.5" />
+          <ul v-if="notable.length" class="mt-2 space-y-1">
+            <li v-for="g in notable" :key="g.id ?? `${g.at}:${g.tier}`" class="flex items-center gap-2 text-[13px] leading-4 font-semibold">
+              <span class="size-2.5 shrink-0 rounded-full border border-black/50" :style="{ background: g.color, boxShadow: g.tier === 'whale' ? `0 0 6px 1px ${g.color}` : undefined }" />
+              {{ g.text }}
+            </li>
+            <li v-if="notableMore" class="pl-[18px] text-[12px] leading-4 font-semibold text-[var(--g-muted)]">and {{ notableMore }} more {{ notableMore === 1 ? 'Whale' : 'Whales' }}</li>
+          </ul>
           <button
             v-if="away.lost > 0 && !cageMaxed"
             type="button"
@@ -99,13 +121,17 @@ const CONFETTI = Array.from({ length: 16 }, (_, i) => ({
             </li>
           </ul>
           <div class="mt-3 flex items-center gap-2">
-            <span class="g-well flex h-11 items-center gap-1.5 rounded-xl px-3" title="Visitors on your floor now / seats">
-              <Users class="size-5 text-[#7dd3fc]" :stroke-width="3" />
-              <span class="g-num text-lg leading-none">{{ away.visitors }}<span class="text-sm text-[var(--g-muted)]">/{{ away.seats }}</span></span>
+            <span class="g-well flex h-11 items-center gap-1.5 rounded-xl px-3" title="Guests on your floor now / seats">
+              <TycoonVisitorDots v-if="tycoon.floorNow.value" :counts="tycoon.visitorTiers.value" class="text-lg" />
+              <template v-else>
+                <Users class="size-5 text-[#7dd3fc]" :stroke-width="3" />
+                <span class="g-num text-lg leading-none">{{ away.visitors }}</span>
+              </template>
+              <span class="g-num text-sm leading-none text-[var(--g-muted)]">/{{ away.seats }}</span>
             </span>
             <button v-if="campaign" type="button" class="g-btn g-blue h-11 min-w-0 flex-1 rounded-xl px-2 text-[15px]" :title="`${campaign.name} ran out: run another for more visitors`" @click="campaigns">
               <span class="block size-6 shrink-0 overflow-hidden rounded-full"><TycoonCampaignArt :id="campaign.id" /></span>
-              <span class="truncate">{{ campaign.name }} ended</span>
+              <span class="line-clamp-2 text-left text-[13px] leading-[15px]">{{ campaign.name }} ended</span>
               <Megaphone class="size-4 shrink-0" :stroke-width="3" />
             </button>
           </div>

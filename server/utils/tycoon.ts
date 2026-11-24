@@ -1,14 +1,31 @@
-import { and, eq, lte } from 'drizzle-orm'
+import { and, eq, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import { db, type DbExecutor, type Tx, writeTx } from '../database'
-import { casinoConstructions, casinoProfiles, players } from '../database/schema'
+import { casinoConstructions, casinoHistory, casinoProfiles, players } from '../database/schema'
 import { findGame } from '../../shared/games/registry'
 import { roundCoins } from '../../shared/money'
+import {
+    DOOR_RULES,
+    floorNow,
+    houseState,
+    isRuleValue,
+    ruleZone,
+    RULES_COOLDOWN_MS,
+    runFloor,
+    seedOf,
+    unlockedRules,
+    VISITOR_TIER_IDS,
+    type FloorView,
+    type HistoryHour,
+    type HouseRuleId,
+    type HouseRules,
+    type HourPiece,
+    type HistoryResponse,
+    type RulesBody
+} from '../../shared/visitors'
 import {
     buildBlocker,
     builderCount,
     cageCapacity,
-    guestChipsBetween,
-    guestsPerHour,
     levelOf,
     nextCost,
     progressOf,
@@ -23,6 +40,7 @@ import {
     findZone,
     type BuildBody,
     type CampaignId,
+    type RunningCampaignRef,
     type BuildKind,
     type TycoonActionResponse,
     type TycoonStarChange,
@@ -31,6 +49,7 @@ import {
     type ZoneId
 } from '../../shared/tycoon'
 import { cosmeticsOf } from './cosmetics'
+import { casinoEnv } from './env'
 import { coinTransaction } from './ledger'
 import { missionsState, recordMissions } from './missions'
 import { noteVisit } from './welcome'
@@ -50,6 +69,11 @@ import type { StarChange } from './stars'
  *   synchronously. Anything that moves coins or chips (collect, build,
  *   campaign) runs in a `coinTransaction`, so the star level (which follows
  *   chips) is reported when it moves.
+ * - The cage accrues through the per-tick visitor model (shared/visitors.ts
+ *   `runFloor`, seeded by the player id), always up to a change first (a
+ *   build finishing, a rush, a campaign, a rule change), so every stretch
+ *   runs at one build and one set of rules. Persisted accruals also write
+ *   the hour-by-hour history (`casino_history`) when the casino is saved.
  */
 
 const KINDS: readonly BuildKind[] = ['zone', 'game', 'upgrade']
@@ -74,9 +98,22 @@ export interface Casino {
     /** ms */
     cageAt: number
     rushUntil: number | null
-    campaign: { id: CampaignId, until: number } | null
+    /** Ad campaigns, one per kind (some may have run out). */
+    campaigns: RunningCampaignRef[]
     constructions: ConstructionRow[]
+    /** House rules in force, and when they last changed (ms). */
+    rules: HouseRules
+    rulesAt: number | null
+    /** The luck seed (from the player id). */
+    seed: number
+    /** History pieces accrued but not written yet (null: a read-only casino, nothing is recorded). */
+    pending: HourPiece[] | null
+    /** A read-only casino that only needs the hours from here (ms): earlier stretches just fill the cage. */
+    recordFrom?: number
 }
+
+/** History rows older than this are pruned on write. */
+export const HISTORY_KEEP_MS = 4 * 24 * 60 * 60_000
 
 function starterGames(): Record<string, number> {
     return Object.fromEntries(TYCOON_GAMES.filter(game => game.starter).map(game => [game.slug, 1]))
@@ -100,7 +137,7 @@ function newProfile(playerId: string, now: number) {
     }
 }
 
-function fromRow(row: ProfileRow, constructions: ConstructionRow[]): Casino {
+function fromRow(row: ProfileRow, constructions: ConstructionRow[], record = true): Casino {
     const upgrades = upgradeLevels(row.upgrades)
     const gemBuilder = row.builders >= 2
     return {
@@ -115,11 +152,31 @@ function fromRow(row: ProfileRow, constructions: ConstructionRow[]): Casino {
         cageStored: row.cageStored,
         cageAt: row.cageAt.getTime(),
         rushUntil: row.rushUntil?.getTime() ?? null,
-        campaign: row.campaign && row.campaignUntil && findCampaign(row.campaign)
-            ? { id: row.campaign as CampaignId, until: row.campaignUntil.getTime() }
-            : null,
-        constructions: constructions.filter(known).sort((a, b) => a.readyAt.getTime() - b.readyAt.getTime())
+        campaigns: campaignsFromRow(row),
+        constructions: constructions.filter(known).sort((a, b) => a.readyAt.getTime() - b.readyAt.getTime()),
+        rules: { door: DOOR_RULES.includes(row.door) ? row.door : 'open', vip: !!row.vip },
+        rulesAt: row.rulesAt?.getTime() ?? null,
+        seed: luckSeed(row.playerId),
+        pending: record ? [] : null
     }
+}
+
+/** The stored campaigns (known kinds only); a row from before several could run has the single `campaign` column. */
+function campaignsFromRow(row: Pick<ProfileRow, 'campaign' | 'campaignUntil' | 'campaigns'>): RunningCampaignRef[] {
+    const list = Array.isArray(row.campaigns) ? row.campaigns : []
+    const known = list.filter(c => c && typeof c.until === 'number' && findCampaign(c.id)).map(c => ({ id: c.id as CampaignId, until: c.until }))
+    if (known.length || !row.campaign || !row.campaignUntil || !findCampaign(row.campaign)) return known
+    return [{ id: row.campaign as CampaignId, until: row.campaignUntil.getTime() }]
+}
+
+/** A player's luck seed: the id salted with the server's secret (`PNX_LUCK_SALT`). */
+export function luckSeed(playerId: string): number {
+    return seedOf(playerId, casinoEnv().luckSalt)
+}
+
+/** What the visitor model reads of a casino. */
+export function casinoView(casino: Pick<Casino, 'zones' | 'games' | 'upgrades' | 'rushUntil' | 'campaigns' | 'rules'>): FloorView {
+    return { zones: casino.zones, games: casino.games, upgrades: casino.upgrades, rushUntil: casino.rushUntil, campaign: null, campaigns: casino.campaigns, rules: casino.rules }
 }
 
 /** A construction of something still in the catalog (the House Cut upgrade left in economy v2). */
@@ -134,13 +191,84 @@ export function ensureCasino(tx: Tx, playerId: string, now = Date.now()) {
     tx.insert(casinoProfiles).values(newProfile(playerId, now)).onConflictDoNothing().run()
 }
 
-/** Bring the cage up to `to` at the casino's current build (rush included), capped at capacity. */
+/**
+ * Bring the cage up to `to` at the casino's current build and rules (rush and
+ * campaign included, tick by tick), capped at capacity. A casino that records
+ * (`pending`) keeps the hour pieces for the history; a read-only one stops
+ * counting once the cage is full.
+ */
 export function accrueCage(casino: Casino, to: number) {
     if (!(to > casino.cageAt)) return
-    const capacity = cageCapacity(casino.upgrades.cage)
-    const gained = guestChipsBetween(casino, casino.cageAt, to)
-    casino.cageStored = Math.max(casino.cageStored, Math.min(capacity, roundCoins(casino.cageStored + gained)))
+    if (casino.recordFrom !== undefined && casino.recordFrom > casino.cageAt) {
+        // Only the hours from `recordFrom` are wanted: before it, just the cage (fast once it is full).
+        const until = Math.min(to, casino.recordFrom)
+        const head = runFloor(casinoView(casino), casino.seed, casino.cageAt, until, {
+            cage: { stored: casino.cageStored, capacity: cageCapacity(casino.upgrades.cage) },
+            stopWhenFull: true
+        })
+        casino.cageStored = Math.max(casino.cageStored, head.stored)
+        casino.cageAt = until
+        if (!(to > until)) return
+    }
+    const run = runFloor(casinoView(casino), casino.seed, casino.cageAt, to, {
+        cage: { stored: casino.cageStored, capacity: cageCapacity(casino.upgrades.cage) },
+        hours: casino.pending !== null,
+        stopWhenFull: casino.pending === null
+    })
+    casino.cageStored = Math.max(casino.cageStored, run.stored)
     casino.cageAt = to
+    casino.pending?.push(...run.hours)
+}
+
+/** Hour pieces added up per hour. */
+function mergeHours(pieces: readonly HourPiece[]): HourPiece[] {
+    const byHour = new Map<number, HourPiece>()
+    for (const piece of pieces) {
+        const hour = byHour.get(piece.at)
+        if (!hour) {
+            byHour.set(piece.at, { ...piece, guestHours: { ...piece.guestHours } })
+            continue
+        }
+        for (const id of VISITOR_TIER_IDS) hour.guestHours[id] += piece.guestHours[id]
+        hour.ms += piece.ms
+        hour.income = roundCoins(hour.income + piece.income + 1e-9)
+        hour.lost = roundCoins(hour.lost + piece.lost + 1e-9)
+    }
+    return [...byHour.values()].sort((a, b) => a.at - b.at)
+}
+
+/** Write the pending history pieces (each hour adds up), and prune old rows. */
+export function flushHistory(tx: Tx, casino: Casino) {
+    if (!casino.pending?.length) return
+    const hours = mergeHours(casino.pending)
+    casino.pending = []
+    const keepFrom = hours.at(-1)!.at - HISTORY_KEEP_MS
+    for (const hour of hours) {
+        if (hour.at < keepFrom) continue
+        tx.insert(casinoHistory).values({
+            playerId: casino.playerId,
+            hour: new Date(hour.at),
+            touristHours: hour.guestHours.tourist,
+            regularHours: hour.guestHours.regular,
+            highrollerHours: hour.guestHours.highroller,
+            whaleHours: hour.guestHours.whale,
+            coveredMs: hour.ms,
+            income: hour.income,
+            lost: hour.lost
+        }).onConflictDoUpdate({
+            target: [casinoHistory.playerId, casinoHistory.hour],
+            set: {
+                touristHours: sql`${casinoHistory.touristHours} + excluded.tourist_hours`,
+                regularHours: sql`${casinoHistory.regularHours} + excluded.regular_hours`,
+                highrollerHours: sql`${casinoHistory.highrollerHours} + excluded.highroller_hours`,
+                whaleHours: sql`${casinoHistory.whaleHours} + excluded.whale_hours`,
+                coveredMs: sql`${casinoHistory.coveredMs} + excluded.covered_ms`,
+                income: sql`${casinoHistory.income} + excluded.income`,
+                lost: sql`${casinoHistory.lost} + excluded.lost`
+            }
+        }).run()
+    }
+    tx.delete(casinoHistory).where(and(eq(casinoHistory.playerId, casino.playerId), lt(casinoHistory.hour, new Date(keepFrom)))).run()
 }
 
 /** Put `kind:target` at `level` (a zone at 1 is owned). */
@@ -172,8 +300,17 @@ function loadRows(ex: DbExecutor, playerId: string) {
     return { row, constructions }
 }
 
-/** Persist the build and the cage (not chips: those move through chips.ts). */
+/** The campaign of the list that ends first. */
+function firstEnding(list: readonly RunningCampaignRef[]): RunningCampaignRef | null {
+    return [...list].sort((a, b) => a.until - b.until)[0] ?? null
+}
+
+/** Persist the build and the cage, and write the history it accrued (not chips: those move through chips.ts; not the rules: `setHouseRules`). */
 export function saveCasino(tx: Tx, casino: Casino) {
+    // Campaigns that ran out by the time they were accrued are dropped; the first one ending also goes to the old columns.
+    const live = casino.campaigns.filter(c => c.until > casino.cageAt)
+    casino.campaigns = live
+    const first = firstEnding(live)
     tx.update(casinoProfiles).set({
         zones: casino.zones,
         games: casino.games,
@@ -183,9 +320,11 @@ export function saveCasino(tx: Tx, casino: Casino) {
         cageStored: casino.cageStored,
         cageAt: new Date(casino.cageAt),
         rushUntil: casino.rushUntil === null ? null : new Date(casino.rushUntil),
-        campaign: casino.campaign?.id ?? null,
-        campaignUntil: casino.campaign ? new Date(casino.campaign.until) : null
+        campaign: first?.id ?? null,
+        campaignUntil: first ? new Date(first.until) : null,
+        campaigns: live
     }).where(eq(casinoProfiles.playerId, casino.playerId)).run()
+    flushHistory(tx, casino)
 }
 
 /**
@@ -210,12 +349,17 @@ export function advanceCasino(tx: Tx, playerId: string, now = Date.now()): Casin
     return casino
 }
 
-/** The casino as of `now` without writing anything (a missing one reads as new). */
-export function peekCasino(playerId: string, now = Date.now(), ex: DbExecutor = db): Casino {
+/**
+ * The casino as of `now` without writing anything (a missing one reads as
+ * new). With `record`, the history pieces of the finished constructions'
+ * accrual stay in `pending` (never written).
+ */
+export function peekCasino(playerId: string, now = Date.now(), ex: DbExecutor = db, record = false, recordFrom?: number): Casino {
     const { row, constructions } = loadRows(ex, playerId)
     const casino = row
-        ? fromRow(row, constructions)
-        : fromRow({ ...newProfile(playerId, now), rushUntil: null, campaign: null, campaignUntil: null, avatar: {}, skins: {}, lastSeenAt: null, lastSeen: null, createdAt: new Date(now) } as ProfileRow, [])
+        ? fromRow(row, constructions, record)
+        : fromRow({ ...newProfile(playerId, now), rushUntil: null, campaign: null, campaignUntil: null, campaigns: [], avatar: {}, skins: {}, lastSeenAt: null, lastSeen: null, door: 'open', vip: false, rulesAt: null, createdAt: new Date(now) } as ProfileRow, [], record)
+    if (recordFrom !== undefined) casino.recordFrom = recordFrom
     applyFinished(casino, casino.constructions.filter(c => c.readyAt.getTime() <= now))
     return casino
 }
@@ -230,12 +374,14 @@ export function notBuiltError(slug: string) {
     return createError({ statusCode: 403, statusMessage: `Build ${findGame(slug)?.name ?? slug} in your casino first` })
 }
 
-/** The API view of a casino at `now`. */
-export function toState(casino: Casino, now: number, gemsEnabled: boolean): TycoonState {
-    const view: Casino = { ...casino }
+/** The API view of a casino at `now` (`house`: the owner's own read). */
+export function toState(casino: Casino, now: number, gemsEnabled: boolean, house = false): TycoonState {
+    const view: Casino = { ...casino, pending: null }
     accrueCage(view, now)
     const rushUntil = view.rushUntil !== null && view.rushUntil > now ? view.rushUntil : null
-    const campaign = view.campaign !== null && view.campaign.until > now ? { ...view.campaign } : null
+    const campaigns = view.campaigns.filter(c => c.until > now).sort((a, b) => a.until - b.until)
+    const campaign = campaigns[0] ? { ...campaigns[0] } : null
+    const floor = floorNow(casinoView(view), view.seed, now)
     return {
         serverNow: now,
         chips: view.chips,
@@ -254,10 +400,13 @@ export function toState(casino: Casino, now: number, gemsEnabled: boolean): Tyco
         cage: {
             stored: view.cageStored,
             capacity: cageCapacity(view.upgrades.cage),
-            perHour: guestsPerHour({ ...view, rushUntil, campaign }, now)
+            perHour: floor.perHour
         },
+        floor,
+        ...(house ? { house: houseState(casinoView(view), now, view.rulesAt) } : {}),
         rushUntil,
         campaign,
+        campaigns,
         golden: [...view.golden],
         progress: progressOf(view),
         gemsEnabled
@@ -277,8 +426,8 @@ export function isHubPlayer(playerId: string, ex: DbExecutor = db): boolean {
 export function getTycoonState(playerId: string, now = Date.now(), options: { welcome?: boolean } = {}): TycoonState {
     return writeTx((tx) => {
         const casino = advanceCasino(tx, playerId, now)
-        const state = toState(casino, now, isHubPlayer(playerId, tx))
-        const welcome = noteVisit(tx, playerId, state, options.welcome === true)
+        const state = toState(casino, now, isHubPlayer(playerId, tx), true)
+        const welcome = noteVisit(tx, casino, state, options.welcome === true)
         return { ...state, cosmetics: cosmeticsOf(playerId, tx), missions: missionsState(tx, playerId, now), welcome }
     })
 }
@@ -306,6 +455,7 @@ export async function collectCage(playerId: string, now = Date.now()): Promise<T
             .returning({ playerId: casinoProfiles.playerId })
             .get()
         if (!emptied) return { collected: 0, balance: null }
+        flushHistory(coins.tx, casino)
         recordMissions(coins.tx, playerId, ['collects'], now)
         return { collected: amount, balance: coins.credit({ playerId, amount, category: 'cage' }).coins }
     })
@@ -392,14 +542,15 @@ export function chipBalance(playerId: string, ex: DbExecutor = db): number {
 export function parseCampaignBody(body: unknown): CampaignId {
     const input = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {}
     if (typeof input.id !== 'string' || !findCampaign(input.id)) {
-        throw createError({ statusCode: 400, statusMessage: 'id is flyers, billboard or tv' })
+        throw createError({ statusCode: 400, statusMessage: 'id names a campaign' })
     }
     return input.id as CampaignId
 }
 
 /**
- * Run an ad campaign: pay its chips, and visitors come in bigger numbers
- * until it ends. Running the same campaign again extends it. The cage is
+ * Run an ad campaign: pay its chips, and more (or richer) guests come until
+ * it ends. Campaigns of different kinds run at once; running the same one
+ * again extends it. The cage is
  * brought up to now at the old rate first; the chip debit is the guard.
  */
 export async function startCampaign(playerId: string, id: CampaignId, now = Date.now()): Promise<TycoonActionResponse> {
@@ -410,10 +561,118 @@ export async function startCampaign(playerId: string, id: CampaignId, now = Date
         const def = findCampaign(id)!
         coins.debitChips({ playerId, amount: campaignCost(casino, id, now), reason: `campaign:${id}` })
         accrueCage(casino, now)
-        const from = casino.campaign && casino.campaign.id === id && casino.campaign.until > now ? casino.campaign.until : now
-        casino.campaign = { id, until: from + def.ms }
+        // Campaigns of different kinds run side by side; the same kind again extends its queue.
+        const mine = casino.campaigns.find(c => c.id === id)
+        const from = mine && mine.until > now ? mine.until : now
+        casino.campaigns = [...casino.campaigns.filter(c => c.id !== id && c.until > now), { id, until: from + def.ms }]
         saveCasino(coins.tx, casino)
         recordMissions(coins.tx, playerId, ['campaign'], now)
     })
     return { state: getTycoonState(playerId, now), coins: null, gems: null, collected: 0, stars: starOf(stars, playerId) }
+}
+
+/** POST /api/tycoon/rules body: some of `door` (open, limit, closed) and `vip` (boolean). Anything else is a 400. */
+export function parseRulesBody(body: unknown): RulesBody {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw createError({ statusCode: 400, statusMessage: 'Send the rules to change' })
+    const input = body as Record<string, unknown>
+    const keys = Object.keys(input)
+    if (!keys.length) throw createError({ statusCode: 400, statusMessage: 'Send the rules to change' })
+    const rules: RulesBody = {}
+    for (const key of keys) {
+        if (key !== 'door' && key !== 'vip') throw createError({ statusCode: 400, statusMessage: `Unknown rule ${key.slice(0, 20)}` })
+        if (!isRuleValue(key, input[key])) {
+            throw createError({ statusCode: 400, statusMessage: key === 'door' ? 'door is open, limit or closed' : `${key} is true or false` })
+        }
+        (rules as Record<HouseRuleId, unknown>)[key] = input[key]
+    }
+    return rules
+}
+
+/**
+ * Change house rules: the casino is brought up to now (finished builds, the
+ * cage at the old rules), then one update sets the rules, the cage and
+ * `rules_at`, guarded on the cooldown (`rules_at` null or RULES_COOLDOWN_MS
+ * ago), so a burst of changes lands once. A rule the casino hasn't unlocked
+ * is a 403; the same rules again change nothing (no cooldown).
+ */
+export function setHouseRules(playerId: string, body: RulesBody, now = Date.now()): TycoonActionResponse {
+    writeTx((tx) => {
+        const casino = advanceCasino(tx, playerId, now)
+        const open = unlockedRules(casinoView(casino))
+        for (const rule of Object.keys(body) as HouseRuleId[]) {
+            if (!open.includes(rule)) throw createError({ statusCode: 403, statusMessage: `Open the ${findZone(ruleZone(rule))?.name ?? 'next zone'} first` })
+        }
+        const next: HouseRules = { ...casino.rules, ...body }
+        if (next.door === casino.rules.door && next.vip === casino.rules.vip) return
+        const ready = casino.rulesAt === null ? now : casino.rulesAt + RULES_COOLDOWN_MS
+        if (now < ready) throw createError({ statusCode: 429, statusMessage: `The rules can change again in ${Math.ceil((ready - now) / 60_000)} min` })
+        accrueCage(casino, now)
+        const changed = tx.update(casinoProfiles)
+            .set({ door: next.door, vip: next.vip, rulesAt: new Date(now), cageStored: casino.cageStored, cageAt: new Date(casino.cageAt) })
+            .where(and(
+                eq(casinoProfiles.playerId, playerId),
+                or(isNull(casinoProfiles.rulesAt), lte(casinoProfiles.rulesAt, new Date(now - RULES_COOLDOWN_MS)))
+            ))
+            .returning({ playerId: casinoProfiles.playerId })
+            .get()
+        if (!changed) throw createError({ statusCode: 429, statusMessage: 'The rules just changed' })
+        flushHistory(tx, casino)
+    })
+    return { state: getTycoonState(playerId, now), coins: null, gems: null, collected: 0, stars: null }
+}
+
+/** The `range` query of GET /api/tycoon/history: 24h (default) or 3d. */
+export function parseHistoryRange(value: unknown): '24h' | '3d' {
+    if (value === undefined) return '24h'
+    if (value === '24h' || value === '3d') return value
+    throw createError({ statusCode: 400, statusMessage: 'range is 24h or 3d' })
+}
+
+const HOUR_MS = 60 * 60_000
+
+/**
+ * The floor hour by hour from `from` to `now`, whole hours, oldest first:
+ * the stored history plus the stretch the cage hasn't accrued for good yet
+ * (worked out now). Hours with nothing are zeros.
+ */
+export function historyHours(ex: DbExecutor, playerId: string, from: number, now: number): HistoryHour[] {
+    const first = Math.floor(from / HOUR_MS) * HOUR_MS
+    const last = Math.floor(now / HOUR_MS) * HOUR_MS
+    const casino = peekCasino(playerId, now, ex, true, first)
+    accrueCage(casino, now)
+    const rows = ex.select().from(casinoHistory)
+        .where(and(eq(casinoHistory.playerId, playerId), sql`${casinoHistory.hour} >= ${first}`))
+        .all()
+    const pieces: HourPiece[] = rows.map(row => ({
+        at: row.hour.getTime(),
+        guestHours: { tourist: row.touristHours, regular: row.regularHours, highroller: row.highrollerHours, whale: row.whaleHours },
+        ms: row.coveredMs,
+        income: row.income,
+        lost: row.lost
+    }))
+    const byHour = new Map(mergeHours([...pieces, ...(casino.pending ?? [])]).map(hour => [hour.at, hour]))
+    const hours: HistoryHour[] = []
+    for (let at = first; at <= last; at += HOUR_MS) {
+        const hour = byHour.get(at)
+        const covered = hour && hour.ms > 0 ? hour.ms / HOUR_MS : 0
+        const average = (n: number) => (covered > 0 ? Math.round(n / covered * 100) / 100 : 0)
+        hours.push({
+            at,
+            visitors: {
+                tourist: average(hour?.guestHours.tourist ?? 0),
+                regular: average(hour?.guestHours.regular ?? 0),
+                highroller: average(hour?.guestHours.highroller ?? 0),
+                whale: average(hour?.guestHours.whale ?? 0)
+            },
+            income: Math.floor(hour?.income ?? 0),
+            lost: Math.floor(hour?.lost ?? 0)
+        })
+    }
+    return hours
+}
+
+/** GET /api/tycoon/history: the last 24 hours or 3 days of the player's own floor. */
+export function getHistory(playerId: string, range: '24h' | '3d', now = Date.now()): HistoryResponse {
+    const hours = range === '24h' ? 24 : 72
+    return { range, hours: historyHours(db, playerId, now - (hours - 1) * HOUR_MS, now) }
 }

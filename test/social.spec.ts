@@ -138,7 +138,7 @@ describe('visiting', () => {
             golden: ['roulette'],
             chips: 987_654.3210
         })
-        db.update(casinoProfiles).set({ campaign: 'flyers', campaignUntil: new Date(now + HOUR), cageStored: 4_321.5 }).where(eq(casinoProfiles.playerId, owner)).run()
+        db.update(casinoProfiles).set({ campaign: 'flyers', campaignUntil: new Date(now + HOUR), cageStored: 8_675.3 }).where(eq(casinoProfiles.playerId, owner)).run()
         db.insert(casinoConstructions).values({ playerId: owner, kind: 'game', target: 'wheel', level: 1, startedAt: new Date(now), readyAt: new Date(now + HOUR) }).run()
         const visitor = casino()
 
@@ -162,7 +162,7 @@ describe('visiting', () => {
             expect(json).not.toContain(`"${key}"`)
         }
         expect(json).not.toContain('987654')
-        expect(json).not.toContain('4321')
+        expect(json).not.toContain('8675.3')
         expect(json).not.toContain('wheel')
     })
 

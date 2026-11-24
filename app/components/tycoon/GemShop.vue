@@ -5,7 +5,7 @@ import { formatCoins } from '#shared/money'
 import type { IlloName } from '~/utils/tycoon-art'
 import { BUILDER_GEMS, GOLDEN_GEMS, RUSH_MS, type GemItem } from '#shared/tycoon'
 
-/** The Gems tab: High Rollers (the rush: guest income ×2), the gem builder and golden skins, as glowing tiles. */
+/** The Gems tab: Big Spenders (the rush: guest income ×2), the gem builder and golden skins, as glowing tiles. */
 const tycoon = useTycoon()
 const cosmetics = useCosmetics()
 const state = computed(() => tycoon.state.value)
@@ -30,7 +30,7 @@ interface Offer {
 const offers = computed<Offer[]>(() => {
     const rushOn = tycoon.rushActive.value
     return [
-        { item: 'rush', name: 'High Rollers', badge: rushOn ? formatCountdown(tycoon.rushLeftMs.value) : `×2 income · ${formatDuration(RUSH_MS)}`, title: `High rollers visit: every guest spends double, so guest income is ×2 for ${formatDuration(RUSH_MS)}`, illo: 'rush', color: '#ff9a2e', price: tycoon.rushPrice.value, owned: false },
+        { item: 'rush', name: 'Big Spenders', badge: rushOn ? formatCountdown(tycoon.rushLeftMs.value) : `×2 income · ${formatDuration(RUSH_MS)}`, title: `Big spenders night: every guest spends double, so guest income is ×2 for ${formatDuration(RUSH_MS)}`, illo: 'rush', color: '#ff9a2e', price: tycoon.rushPrice.value, owned: false },
         { item: 'builder', name: 'Builder', badge: '+1', title: 'One more builder for good: one more construction at once (on top of the Construction Crew)', illo: 'builder', color: '#ffc93a', price: BUILDER_GEMS, owned: !!state.value?.gemBuilder },
         { item: 'golden', name: 'Golden', badge: 'skin', title: 'A gold finish for one built game (cosmetic)', illo: 'golden', color: '#eab308', price: GOLDEN_GEMS, owned: builtGames.value.length === 0 }
     ]

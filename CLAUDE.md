@@ -33,19 +33,20 @@ the Bun and Nuxt versions; don't move the dev server to Node (bun:sqlite would n
   `stars.ts`, `games/` (registry, dice, limbo, roulette), `slots/` (one rules module per slot),
   `tables/` (cards and shoe, chips and limits, the socket protocol, one rules file per live table),
   `floor/` (the My Casino floor plan and walk grid: the client draws it, the floor socket checks moves on it),
-  `tycoon.ts` (My Casino: catalog, economy numbers, pure helpers and the API shapes).
+  `tycoon.ts` (My Casino: catalog, economy numbers, pure helpers and the API shapes), `visitors.ts` (guest tiers, the
+  per-tick visitor model, house rules, history shapes).
 - `server/utils/`: `ledger.ts` (the only way coins move), `stars.ts`, `wallet.ts` (convert, wallet state),
   `rounds.ts` (play and settle a round), `games.ts` (server half of every game), `steps.ts` (multi-step
   rounds: start, move, cash out, abandoned-round sweep), `hub.ts` (hub client),
   `launch.ts`, `session.ts`, `env.ts`, `tables/` (the live tables: `table.ts` base, `escrow.ts`,
   `socket.ts`, one file per game, `index.ts` registry), `chips.ts` (the only way chips move),
-  `tycoon.ts` (casino profile, constructions, cage, build, campaigns), `tycoon-gems.ts` (gem purchases),
+  `tycoon.ts` (casino profile, constructions, cage, build, campaigns, house rules, history), `tycoon-gems.ts` (gem purchases),
   `floor-presence.ts` (live floor rooms, pure) + `floor-socket.ts` (its upgrade auth, DB source and the
   process's rooms), `socket-auth.ts` (Origin + session checks every socket shares), `rate-limit.ts`.
 - `server/api/`: `auth/launch`, `auth/logout`, `dev/login`, `config`, `me`, `wallet/*`,
   `games/[slug]/play`, `games/[slug]/{start,act,cashout,round}` (multi-step games), `games`, `tables` (occupancy), `tables/[slug]/ws` (WebSocket), `floor/[casinoId]/ws` (who walks
   around a casino floor: positions and looks, no money, no writes), `tycoon`
-  (state), `tycoon/collect`, `tycoon/build`, `tycoon/campaign`, `tycoon/gems`. `server/routes/healthz`.
+  (state), `tycoon/collect`, `tycoon/build`, `tycoon/campaign`, `tycoon/gems`, `tycoon/rules`, `tycoon/history`. `server/routes/healthz`.
   `server/plugins/hub-sync.ts` (manifest, heartbeat, retry sweeps), `server/plugins/tables.ts` (escrow
   refunds at boot, shutdown and every five minutes), `server/plugins/step-rounds.ts` (settles multi-step
   rounds idle for a day). `server/middleware/`: `frame-ancestors` (CSP on pages), `same-origin`
@@ -128,18 +129,31 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
   `advanceCasino(tx, …)`: it deletes finished constructions (`… RETURNING` is the guard) and applies
   them, accruing the cage at the old rate up to each one. The cage is `cage_stored` coins at `cage_at`
   plus guest income since; collect is a compare-and-set on `cage_at` and credits coins (`'cage'`).
-- Guest income = full-floor income × occupancy (visitors ÷ seats; demand from games, decor, Marketing and
-  the running ad campaign). Anything that changes the rate (a build finishing, a rush, a campaign) must
-  `accrueCage` up to that moment first; `guestChipsBetween` (coins, despite the name) splits at rush and
-  campaign ends itself.
+- Guest income is the visitor model in `shared/visitors.ts`: every 15-minute tick guests arrive (crowd from
+  the seats, prestige, Marketing, Hospitality, the guests ads, a random hour/day mood), roll a tier (Tourist,
+  Regular, High Roller, Whale; richer with prestige: Decor, Hospitality, rooms, top machine levels, wealth ads;
+  Whales stay 1-3 hours) and take seats; the luck is a pure function of (state, player seed, tick), so
+  `runFloor` is reproducible and additive. The seed is the player id salted with a server-only secret
+  (`luckSeed`, `PNX_LUCK_SALT`): never send it to the client. Prices, rewards and previews (`campaignGain`) read
+  `expectedPerHour` / the full floor, never a lucky tick. Anything that changes the rate (a build finishing, a
+  rush, a campaign, a house rule) must `accrueCage` up to that moment first; `runFloor` splits at rush and
+  campaign ends itself. Persisted accruals write `casino_history` (hour by hour) when the casino is saved
+  (`flushHistory`).
+- An idle floor is never full; each guests ad adds its own share of the seats (several kinds run at once,
+  `casino_profiles.campaigns`, one per kind), so only all of them fill it; wealth ads raise prestige and Whales. House rules (door, VIP; `POST /api/tycoon/rules`) unlock with the Lounge and High Limit Room
+  (locked: 403), change once per ten minutes (guarded on `rules_at`: 429), and only the owner's reads carry
+  `house`. Every rule and ad must lose in some realistic situation, and no build step may lower expected
+  income under any rules and ads (tested).
 - Gem purchases (`server/utils/tycoon-gems.ts`: skip, rush, builder, golden) follow the convert flow:
   pending row (checked and priced in the same transaction; one pending per player, item and target) → hub
   spend → guarded settle that delivers. Retried by the hub-sync sweep.
-- A rush is priced from the full floor (`rushGems`: every seat taken for its four hours, × 1.25 at the
-  convert rate), never from the occupancy at purchase: a campaign started after it would fill the seats.
-- Tune numbers in `shared/tycoon.ts` (`CHIP_SCALE`, `GUEST_SCALE`, the catalog, campaign `costHours`)
-  and the star thresholds in `shared/stars.ts` with `bun scripts/tycoon-sim.ts [days] [seed] [days after
-  max]` (pace, stars, campaign net) and update the tables in the economy doc.
+- A rush is priced from the best full floor (`rushGems`: every seat taken under the richest rules and every
+  wealth ad the casino can run, for its four hours, × 1.25 at the convert rate), never from the occupancy,
+  rules or ads at purchase: a rush must never be a cheaper way to coins than converting (tested).
+- Tune numbers in `shared/tycoon.ts` (`CHIP_SCALE`, `GUEST_SCALE`, the catalog, campaign `costHours`),
+  `shared/visitors.ts` (tier spends, `VISITOR_MODEL`) and the star thresholds in `shared/stars.ts` with
+  `bun scripts/tycoon-sim.ts [days] [seed] [days after max]` (pace, stars, campaign net, rules by stage, luck)
+  and update the tables in the economy doc.
 
 ## Coins and the ledger
 

@@ -17,7 +17,10 @@ export function casinoEnv() {
         sameSite,
         production,
         publicUrl: (process.env.PUBLIC_URL || 'http://localhost:3200').replace(/\/+$/, ''),
-        devLoginFlag: !production && process.env.PNX_DEV_LOGIN === 'true'
+        devLoginFlag: !production && process.env.PNX_DEV_LOGIN === 'true',
+        // Salts the floor's luck (shared/visitors.ts seedOf): server only, so the good hours can't be
+        // worked out from a player id. Falls back to the session secret, then to a fixed dev value.
+        luckSalt: process.env.PNX_LUCK_SALT || process.env.NUXT_SESSION_PASSWORD || 'dev-luck'
     }
 }
 

@@ -13,7 +13,7 @@ const tycoon = useTycoon()
 const route = useRoute()
 // Every page but My Casino gets the way back to it.
 const away = computed(() => route.path !== '/')
-const onStats = computed(() => route.path === '/stats')
+const onStats = computed(() => route.path === '/stats' || route.path === '/casino-stats')
 // Visiting another casino: the bar blends into that floor too.
 const onFloor = computed(() => !away.value || route.path.startsWith('/visit/'))
 const leaderboard = useLeaderboard()
@@ -44,7 +44,7 @@ onMounted(() => {
           <Trophy class="size-4 text-[#ffc93a]" :stroke-width="2.5" />
         </Button>
         <Button v-if="!onStats" as-child size="icon" variant="ghost" class="max-sm:size-11" title="Stats">
-          <NuxtLink to="/stats" aria-label="Stats">
+          <NuxtLink to="/casino-stats" aria-label="Stats">
             <ChartNoAxesColumn class="size-4" />
           </NuxtLink>
         </Button>

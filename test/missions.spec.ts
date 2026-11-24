@@ -1,11 +1,11 @@
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { db } from '../server/database'
-import { coinTransactions, dailyMissions } from '../server/database/schema'
+import { casinoProfiles, coinTransactions, dailyMissions } from '../server/database/schema'
 import { claimMission, ensureMissions, parseMissionBody, recordMissions } from '../server/utils/missions'
 import { serverGame } from '../server/utils/games'
 import { playRound } from '../server/utils/rounds'
-import { collectCage, getTycoonState, startBuild, startCampaign } from '../server/utils/tycoon'
+import { collectCage, getTycoonState, luckSeed, startBuild, startCampaign } from '../server/utils/tycoon'
 import { writeTx } from '../server/database'
 import { amsterdamDay } from '../shared/economy'
 import {
@@ -13,11 +13,15 @@ import {
     type MissionId
 } from '../shared/missions'
 import { seededRng } from '../shared/rng'
-import { cageCapacity, guestChipsBetween, STARTER_CAGE } from '../shared/tycoon'
+import { cageCapacity, floorView, STARTER_CAGE, TYCOON_GAMES, type TycoonState } from '../shared/tycoon'
+import { runFloor } from '../shared/visitors'
 import { coinsOf, giveChips, ledgerSum, seedPlayer } from './setup/players'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
+
+/** Guest income of the player's casino (as `state` is built) from `from` to `to`, no cage cap: the seeded ticks the cage runs on. */
+const incomeBetween = (id: string, state: TycoonState, from: number, to: number) => runFloor(floorView(state), luckSeed(id), from, to).income
 
 /** A dev-login player (no hub calls) with a brand-new casino on first use. */
 const newPlayer = (coins = 0) => seedPlayer(coins, coins, { casino: 'none', origin: 'dev' })
@@ -90,7 +94,7 @@ describe('mission rules', () => {
     it('sizes rewards from the full guest income, with a floor for young casinos', () => {
         const young = { games: { plinko: 1, spinata: 1 } }
         expect(missionReward(young, 0.5)).toBe(MISSION_FLOOR_PER_HOUR * 0.5)
-        const big = { games: { plinko: 5, spinata: 5, roulette: 5, blackjack: 5, baccarat: 5, aethergates: 5 } }
+        const big = { games: Object.fromEntries(TYCOON_GAMES.map(game => [game.slug, 5])), upgrades: { decor: 12 } }
         expect(missionReward(big, 1)).toBeGreaterThan(MISSION_FLOOR_PER_HOUR)
         expect(missionReward(big, 1) % 10).toBe(0)
     })
@@ -232,6 +236,12 @@ describe('while you were away', () => {
         expect(away.lost).toBe(0)
         expect(away.full).toBe(false)
         expect(away.seats).toBeGreaterThan(0)
+        // The hours while away, whole hours up to now, and no whales in a backroom.
+        expect(away.hours.length).toBeGreaterThanOrEqual(3)
+        expect(away.hours.length).toBeLessThanOrEqual(5)
+        expect(away.hours.at(-1)!.at).toBe(Math.floor((t0 + 3 * HOUR) / HOUR) * HOUR)
+        expect(away.hours.reduce((sum, hour) => sum + hour.income, 0)).toBeGreaterThan(0)
+        expect(away.notable).toEqual([])
         // Shown once: the next read is a fresh visit.
         expect(getTycoonState(id, t0 + 3 * HOUR + 1_000, { welcome: true }).welcome).toBeNull()
     })
@@ -244,32 +254,64 @@ describe('while you were away', () => {
         expect((await collectCage(id, t0 + 30_000)).collected).toBe(STARTER_CAGE)
         const t1 = t0 + 30_000 + 3 * HOUR
         const away = getTycoonState(id, t1, { welcome: true }).welcome!
-        const income = guestChipsBetween(getTycoonState(id, t1), t0 + 30_000, t1)
+        const income = incomeBetween(id, getTycoonState(id, t1), t0 + 30_000, t1)
         expect(income).toBeLessThan(cageCapacity(0))
         expect(away.full).toBe(false)
         expect(away.lost).toBe(0)
         expect(away.earned).toBe(Math.floor(income))
     })
 
+    it('lists the whales that came by while away', () => {
+        // A casino with every zone (seedPlayer builds them all), every game maxed and full Decor: whales come.
+        const id = seedPlayer(0, 0, { origin: 'dev' })
+        db.update(casinoProfiles).set({
+            games: Object.fromEntries(TYCOON_GAMES.map(game => [game.slug, 5])),
+            upgrades: { cage: 5, marketing: 5, decor: 12, hospitality: 5, crew: 1 }
+        }).where(eq(casinoProfiles.playerId, id)).run()
+        const t0 = Date.now()
+        getTycoonState(id, t0)
+        const t1 = t0 + 3 * 24 * HOUR
+        const away = getTycoonState(id, t1, { welcome: true }).welcome!
+        const state = getTycoonState(id, t1)
+        const run = runFloor(floorView(state), luckSeed(id), t0, t1, { notable: true })
+        expect(run.notable.length).toBeGreaterThan(0)
+        expect(away.notable.length).toBe(Math.min(8, run.notable.length))
+        // Every visit counted once (a stay that spans a stretch's end merges on its id), the full count apart.
+        expect(away.whales).toBe(run.notable.length)
+        expect(new Set(away.notable.map(g => g.id)).size).toBe(away.notable.length)
+        for (const guest of away.notable) {
+            expect(guest.tier).toBe('whale')
+            // A Whale already in at t0 counts too (its stay started before).
+            expect(guest.until!).toBeGreaterThan(t0)
+            expect(guest.at).toBeGreaterThanOrEqual(t0 - 3 * HOUR)
+            expect(guest.spent).toBeGreaterThan(0)
+        }
+        expect(away.notable.map(g => g.at)).toEqual([...away.notable.map(g => g.at)].sort((a, b) => a - b))
+        // At most three days of hours.
+        expect(away.hours).toHaveLength(72)
+    })
+
     it('says how much a full cage turned away', async () => {
         const id = newPlayer()
         const t0 = Date.now()
-        // A new casino's cage starts full: it has been losing income from the first second.
+        // A new casino's cage starts with the starter coins and a little room: a day away fills it.
         const stored = getTycoonState(id, t0).cage.stored
         expect(stored).toBe(STARTER_CAGE)
+        expect(cageCapacity(0)).toBeGreaterThan(STARTER_CAGE)
         const t1 = t0 + 24 * HOUR
         const away = getTycoonState(id, t1, { welcome: true }).welcome!
         expect(away.full).toBe(true)
-        expect(away.earned).toBe(0)
+        expect(away.earned).toBe(cageCapacity(0) - STARTER_CAGE)
         const state = getTycoonState(id, t1)
-        expect(away.lost).toBe(Math.round(guestChipsBetween(state, t0, t1)))
+        expect(Math.abs(away.lost - (incomeBetween(id, state, t0, t1) - away.earned))).toBeLessThanOrEqual(1)
+        expect(away.hours.at(-1)!.lost).toBeGreaterThan(0)
         expect(away.capacity).toBe(cageCapacity(0))
 
         // Half empty, then a day away: earned what fit, lost the rest.
         await collectCage(id, t1)
-        const t2 = t1 + 30 * HOUR
+        const t2 = t1 + 150 * HOUR
         const back = getTycoonState(id, t2, { welcome: true }).welcome!
-        const income = guestChipsBetween(getTycoonState(id, t2), t1, t2)
+        const income = incomeBetween(id, getTycoonState(id, t2), t1, t2)
         expect(back.full).toBe(true)
         expect(back.earned + back.lost).toBeGreaterThanOrEqual(Math.floor(income) - 1)
         expect(back.earned + back.lost).toBeLessThanOrEqual(Math.ceil(income) + 1)

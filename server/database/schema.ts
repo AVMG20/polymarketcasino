@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { customType, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { customType, index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 import { fromUnits, toUnits } from '../../shared/money'
 
 /**
@@ -16,6 +16,24 @@ const coins = customType<{ data: number, driverData: number }>({
     dataType: () => 'integer',
     toDriver: value => toUnits(value),
     fromDriver: value => fromUnits(Number(value))
+})
+
+/**
+ * A JSON list of running campaigns ([{ id, until }]). A malformed value reads
+ * as [] instead of throwing, so one bad row can't lock a player out of their
+ * casino (the code drops unknown kinds itself).
+ */
+const campaignList = customType<{ data: { id: string, until: number }[], driverData: string }>({
+    dataType: () => 'text',
+    toDriver: value => JSON.stringify(value),
+    fromDriver: (value) => {
+        try {
+            const parsed: unknown = JSON.parse(String(value))
+            return Array.isArray(parsed) ? parsed.filter((c): c is { id: string, until: number } => !!c && typeof c === 'object' && typeof c.id === 'string' && typeof c.until === 'number') : []
+        } catch {
+            return []
+        }
+    }
 })
 
 const createdAt = () => integer('created_at', { mode: 'timestamp_ms' }).notNull().default(sql`(unixepoch('subsec') * 1000)`)
@@ -188,9 +206,11 @@ export const casinoProfiles = sqliteTable('casino_profiles', {
     cageStored: coins('cage_stored').notNull().default(0),
     cageAt: integer('cage_at', { mode: 'timestamp_ms' }).notNull(),
     rushUntil: integer('rush_until', { mode: 'timestamp_ms' }),
-    /** The running ad campaign (flyers, billboard, tv) and when it ends. */
+    /** The running ad campaign that ends first and when (kept for old readers; `campaigns` has them all). */
     campaign: text('campaign'),
     campaignUntil: integer('campaign_until', { mode: 'timestamp_ms' }),
+    /** Every ad campaign running, one per kind: [{ id, until (ms) }]. */
+    campaigns: campaignList('campaigns').notNull().default([]),
     /** What the avatar wears, { hat, outfit, accessory } item ids (shared/cosmetics.ts); {} = the defaults. */
     avatar: text('avatar', { mode: 'json' }).$type<Record<string, string>>().notNull().default({}),
     /** The skin on each zone, { zone: skin }; missing = classic. */
@@ -202,8 +222,42 @@ export const casinoProfiles = sqliteTable('casino_profiles', {
      */
     lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }),
     lastSeen: text('last_seen', { mode: 'json' }).$type<Record<string, unknown>>(),
+    /**
+     * House rules (shared/visitors.ts): the door (open, limit, closed) and the
+     * VIP room. `rules_at` is the last change: the next is allowed
+     * RULES_COOLDOWN_MS later (the update is guarded on it).
+     */
+    door: text('door', { enum: ['open', 'limit', 'closed'] }).notNull().default('open'),
+    vip: integer('vip', { mode: 'boolean' }).notNull().default(false),
+    rulesAt: integer('rules_at', { mode: 'timestamp_ms' }),
     createdAt: createdAt()
 })
+
+/**
+ * The floor hour by hour (GET /api/tycoon/history, the welcome-back card),
+ * written while the cage accrues: accrual covers stretches of one build and
+ * one set of rules, so each piece is exact, and the pieces of an hour add up
+ * (insert … on conflict add). `*_hours` are guest-hours per tier (seated
+ * guests × hours), `covered_ms` the part of the hour they cover, so the
+ * average is guest-hours ÷ covered hours. Income is before the cage cap,
+ * `lost` what a full cage had no room for. Rows older than HISTORY_KEEP_MS
+ * are pruned on write.
+ */
+export const casinoHistory = sqliteTable(
+    'casino_history',
+    {
+        playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+        hour: integer('hour', { mode: 'timestamp_ms' }).notNull(),
+        touristHours: real('tourist_hours').notNull().default(0),
+        regularHours: real('regular_hours').notNull().default(0),
+        highrollerHours: real('highroller_hours').notNull().default(0),
+        whaleHours: real('whale_hours').notNull().default(0),
+        coveredMs: integer('covered_ms').notNull().default(0),
+        income: coins('income').notNull().default(0),
+        lost: coins('lost').notNull().default(0)
+    },
+    table => [primaryKey({ columns: [table.playerId, table.hour] })]
+)
 
 /**
  * Running constructions. One per player and thing being built (the unique

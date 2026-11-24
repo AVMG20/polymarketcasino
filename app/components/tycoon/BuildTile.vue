@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowBigUp, Crown, HardHat, Lock, Clock } from 'lucide-vue-next'
+import { ArrowBigUp, Crown, Gem, HardHat, Lock, Clock } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import type { BuildKind } from '#shared/tycoon'
 
@@ -9,20 +9,32 @@ const emit = defineEmits<{ open: [] }>()
 
 const tycoon = useTycoon()
 const v = computed(() => tycoon.view(props.kind, props.id))
-const effect = computed(() => buildEffects(props.kind, props.id, v.value.level, tycoon.state.value, tycoon.serverTime.value)[0] ?? null)
+// The expected model only changes with a new state (a campaign or rush ending re-reads it): read it at the state's clock, not every tick.
+const at = computed(() => tycoon.state.value?.serverNow ?? 0)
+const level = computed(() => v.value.level)
+/** The badge: a game shows what it earns (the number its card shows); the gem on the button marks a richer-guests level. */
+const effect = computed(() => {
+    const effects = buildEffects(props.kind, props.id, level.value, tycoon.state.value, at.value)
+    return (props.kind === 'game' ? effects.at(-1) : effects[0]) ?? null
+})
+/** The next level is a top machine level: it draws richer guests (a gem on the button). */
+const richer = computed(() => richerStep(props.kind, v.value.level))
+/** An upgrade's one purpose, under its name. */
+const PURPOSE: Record<string, string> = { cage: 'Holds more coins', marketing: 'More guests', decor: 'Richer guests', hospitality: 'More + richer', crew: '+1 builder' }
+const purpose = computed(() => (props.kind === 'upgrade' ? PURPOSE[props.id] ?? null : null))
 /** A new build shows the hard hat, a level-up the up arrow. */
 const actionIcon = computed(() => (isNewBuild(props.kind, props.id, v.value.level) ? HardHat : ArrowBigUp))
 const costTitle = computed(() => {
     if (!v.value.affordable) return `Need ${formatCoins(v.value.missingChips)} more chips`
     if (v.value.buildersFull) return 'Every builder is busy'
     const time = v.value.cost ? ` (${formatDuration(v.value.cost.buildMs)})` : ''
-    return `${isNewBuild(props.kind, props.id, v.value.level) ? 'Build' : 'Upgrade'} ${v.value.name}${time}`
+    return `${isNewBuild(props.kind, props.id, v.value.level) ? 'Build' : 'Upgrade'} ${v.value.name}${time}${richer.value ? ': this level draws richer guests' : ''}`
 })
 
 /** Hovering the build/upgrade button flips the art to the numbers that step changes (desktop). */
 const hovered = ref(false)
 const stats = computed(() => (hovered.value && !v.value.lockZone && !v.value.running && !v.value.maxed
-    ? buildStats(props.kind, props.id, v.value.level, tycoon.state.value, tycoon.serverTime.value).slice(0, 3)
+    ? buildStats(props.kind, props.id, v.value.level, tycoon.state.value, at.value).slice(0, 3)
     : []))
 
 async function tap() {
@@ -41,12 +53,12 @@ async function tap() {
     >
       <TycoonItemArt :kind="kind" :id="id" :dim="!!v.lockZone" />
       <!-- Effect badge and coin fee -->
-      <span v-if="effect && !v.lockZone && !v.maxed" class="badge absolute top-1 right-1" :title="effect.title">
+      <span v-if="effect && !v.lockZone && (!v.maxed || kind === 'game')" class="badge absolute top-1 right-1" :title="effect.title">
         <component :is="effect.icon" class="size-3" :style="{ color: effect.color }" :stroke-width="3" />{{ effect.text }}
       </span>
       <!-- Pips -->
       <span v-if="v.maxLevel > 1 && v.level > 0" class="absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-black/75 to-transparent pt-3 pb-1">
-        <TycoonPips :level="v.level" :max="v.maxLevel" />
+        <TycoonPips :level="v.level" :max="v.maxLevel" :marks="kind === 'game' ? RICHER_LEVELS : undefined" />
       </span>
       <!-- Locked -->
       <span v-if="v.lockZone" class="absolute inset-0 grid place-items-center">
@@ -56,7 +68,7 @@ async function tap() {
       <span v-else-if="v.running" class="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/70 via-black/25 to-black/10 p-1.5">
         <TycoonBuildBar :progress="1 - v.running.leftMs / v.running.total" :left-ms="v.running.leftMs" size="sm" />
       </span>
-      <span v-else-if="v.maxed" class="absolute top-1 right-1 grid size-7 place-items-center rounded-full border-2 border-black/50 bg-[#ffc93a]"><Crown class="size-4 text-[#7a4a00]" :stroke-width="3" /></span>
+      <span v-else-if="v.maxed" class="absolute top-1 left-1 grid size-7 place-items-center rounded-full border-2 border-black/50 bg-[#ffc93a]"><Crown class="size-4 text-[#7a4a00]" :stroke-width="3" /></span>
       <!-- Hover: the numbers this step changes -->
       <Transition name="stats-flip">
         <span v-if="hovered && v.cost && !v.lockZone && !v.running" class="absolute inset-0 flex flex-col justify-center gap-2 bg-[#140d20]/97 px-2.5 py-2 text-left">
@@ -79,7 +91,11 @@ async function tap() {
       </Transition>
     </button>
 
-    <p class="mt-1 flex h-[30px] items-center justify-center px-0.5 text-center text-[12.5px] leading-[15px] font-semibold sm:text-[13px]" :title="v.name"><span class="line-clamp-2">{{ v.name }}</span></p>
+    <p v-if="purpose" class="mt-1 flex h-[30px] min-w-0 flex-col items-center justify-center px-0.5 text-center leading-[14px]" :title="`${v.name}: ${purpose}`">
+      <span class="block w-full truncate font-semibold" :class="v.name.length > 14 ? 'text-[11.5px] tracking-tight sm:text-[13px] sm:tracking-normal' : 'text-[12.5px] sm:text-[13px]'">{{ v.name }}</span>
+      <span class="block w-full truncate text-[11px] font-semibold text-[var(--g-muted)]">{{ purpose }}</span>
+    </p>
+    <p v-else class="mt-1 flex h-[30px] items-center justify-center px-0.5 text-center text-[12.5px] leading-[15px] font-semibold sm:text-[13px]" :title="v.name"><span class="line-clamp-2">{{ v.name }}</span></p>
 
     <span v-if="v.lockZone" class="state-pill mt-1 text-[#ffc93a]" :title="`Open the ${v.lockZone} first`">
       <Lock class="size-3.5 shrink-0" :stroke-width="3" /><span class="line-clamp-2 text-[11px] leading-[13px] sm:text-xs">Needs {{ v.lockZone }}</span>
@@ -102,6 +118,7 @@ async function tap() {
     >
       <component :is="actionIcon" class="size-4 shrink-0" :class="v.affordable ? 'opacity-90' : 'opacity-70'" :stroke-width="2.75" />
       <TycoonCost :amount="v.cost.chips" compact />
+      <Gem v-if="richer" class="size-3.5 shrink-0 text-[#c084fc] drop-shadow-[0_1px_0_rgb(0_0_0/0.5)]" :stroke-width="3" aria-label="Richer guests" />
     </button>
   </div>
 </template>

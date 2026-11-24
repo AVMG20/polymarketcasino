@@ -1,19 +1,23 @@
 <script setup lang="ts">
-import { Armchair, Clock, Lock, Megaphone, Plus, Timer, Users } from 'lucide-vue-next'
+import { Armchair, Clock, Gem, Lock, Megaphone, Plus, Timer, Users } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import { CAMPAIGN_STACK_FACTOR, MAX_CAMPAIGN_QUEUE_MS } from '#shared/tycoon'
+import { VISITOR_TIER_IDS, VISITOR_TIERS } from '#shared/visitors'
 import type { CampaignView } from '~/composables/useTycoon'
 
 /**
- * The ad campaign picker: how full the floor is, then one big tile per
- * campaign (art, the visitors and coins an hour it adds, how long it runs,
- * the chip price on the button, and why it can't start when it can't). The running one extends; locked ones show the Marketing level
- * they need. Every run already queued makes the next extension dearer
- * (×1,5 each), and the queue stops at a week.
+ * The ad campaign picker: how full the floor is, then one tile per campaign
+ * (art, what a run adds over its whole run, how long it runs, the chip price
+ * on the button, and why it can't start when it can't). Campaigns of
+ * different kinds run side by side, each with its own timer; buying a
+ * running one extends it. Guests ads fill empty seats, wealth ads bring
+ * richer guests. Tap a picture for the preview below: who comes, before and
+ * with it. Every run already queued makes the next extension dearer (×1,5
+ * each), and a queue stops at a week.
  */
 const stackHint = `×${formatFixed(CAMPAIGN_STACK_FACTOR, 1)}`
 /** The week cap is what blocks it (not a lock or another campaign). */
-const weekFull = (c: CampaignView) => c.running && !!c.blocker && (tycoon.campaign.value?.leftMs ?? 0) + c.def.ms > MAX_CAMPAIGN_QUEUE_MS
+const weekFull = (c: CampaignView) => c.running && !!c.blocker && c.leftMs + c.def.ms > MAX_CAMPAIGN_QUEUE_MS
 const tycoon = useTycoon()
 
 const seats = computed(() => tycoon.seats.value)
@@ -23,6 +27,28 @@ const shake = ref<string | null>(null)
 // The visitor count pops when it changes (a campaign just started).
 const visitorPop = ref(0)
 watch(() => tycoon.visitors.value, (to, from) => to > from && visitorPop.value++)
+
+/** The campaign the preview shows (tap a picture): the first open one by default. */
+const picked = ref<string | null>(null)
+const preview = computed(() => {
+    const list = tycoon.campaigns.value
+    return list.find(c => c.def.id === picked.value) ?? list.find(c => c.lockedAt === null && !c.blocker) ?? list[0] ?? null
+})
+/** Who is on the floor on average without and with the previewed run, per tier (open tiers only). */
+const previewRows = computed(() => {
+    const c = preview.value
+    if (!c) return []
+    const fmt = (n: number) => (n < 1 ? formatFixed(n, 1) : String(Math.round(n)))
+    // A tier that rounds to 0,0 both ways (a Whale on a small floor) is noise: leave it out.
+    return VISITOR_TIER_IDS.filter(id => fmt(c.gain.before[id]) !== fmt(0) || fmt(c.gain.after[id]) !== fmt(0)).map((id) => {
+        const def = VISITOR_TIERS.find(t => t.id === id)!
+        const a = c.gain.before[id]
+        const b = c.gain.after[id]
+        return { id, name: `${def.name}s`, color: def.color, now: fmt(a), next: fmt(b), trend: fmt(a) === fmt(b) ? 0 : Math.sign(b - a) }
+    })
+})
+/** What a run brings back against its price (coins over the run won back at RTP vs chips). */
+const payback = (c: CampaignView) => (c.cost > 0 ? (c.gain.coins * 0.97) / c.cost : 0)
 
 async function run(c: CampaignView) {
     if (tycoon.busy.value) return
@@ -43,10 +69,18 @@ async function run(c: CampaignView) {
 const roughHours = (hours: number) => (hours >= 2 ? `~${Math.round(hours)}h` : formatDuration(hours * 3_600_000))
 const outlasts = computed(() => {
     const capacity = tycoon.state.value?.cage.capacity ?? 0
+    const perHour = (c: CampaignView) => (tycoon.expectedPerHour.value ?? tycoon.perHour.value) + c.gain.coins / Math.max(1, (c.gain.until - c.gain.from) / 3_600_000)
     const long = tycoon.campaigns.value
-        .filter(c => c.lockedAt === null && c.perHour > 0 && c.def.ms > (capacity / c.perHour) * 3_600_000)
+        .filter(c => c.lockedAt === null && perHour(c) > 0 && c.def.ms > (capacity / perHour(c)) * 3_600_000)
         .sort((a, b) => b.def.ms - a.def.ms)[0]
-    return long ? { name: long.def.name, runs: formatDuration(long.def.ms), fills: roughHours(capacity / long.perHour) } : null
+    return long ? { name: long.def.name, runs: formatDuration(long.def.ms), fills: roughHours(capacity / perHour(long)) } : null
+})
+/** Floor full and guests turned away: more guests can't sit, richer ones can. Empty seats: an ad fills them. */
+const hint = computed(() => {
+    if (!seats.value) return null
+    if (fill.value >= 0.97 && tycoon.waiting.value > 0) return 'Floor full: build seats, or go for richer guests'
+    if (fill.value < 0.8) return 'Empty seats: a guests ad fills them'
+    return null
 })
 
 /** About what the extension after this one costs: every queued run adds ×CAMPAIGN_STACK_FACTOR (the server rounds its own price). */
@@ -67,7 +101,7 @@ function buttonTitle(c: CampaignView): string {
         <Users class="size-5 shrink-0 text-[#7dd3fc]" :stroke-width="2.75" />
         <span class="text-[11px] font-semibold tracking-wide text-[var(--g-muted)] uppercase">Visitors / seats</span>
         <span :key="visitorPop" class="g-num text-xl leading-none" :class="visitorPop ? 'g-pop' : ''" title="Visitors on your floor / seats">{{ tycoon.visitors.value }}<span class="text-base text-[var(--g-muted)]"> / {{ seats }}</span></span>
-        <span v-if="tycoon.waiting.value" class="g-num flex items-center gap-1 rounded-full bg-[#ff9a2e]/20 px-2 text-sm leading-6 text-[#ffb35c]" title="Waiting at the door: build games or level them up for more seats">
+        <span v-if="tycoon.waiting.value" class="g-num flex items-center gap-1 rounded-full bg-[#ff9a2e]/20 px-2 text-sm leading-6 text-[#ffb35c]" title="Turned away just now: no free seat (or your door policy). Build games or level them up for more seats">
           +{{ tycoon.waiting.value }} <Armchair class="size-3.5" :stroke-width="3" />
         </span>
         <span class="g-num ml-auto flex items-center gap-1 text-base text-[#7ee08f]" title="Guest coins an hour (into the cage)"><CasinoCoinIcon class="size-4" />+{{ formatCoins(tycoon.perHour.value) }}/h</span>
@@ -75,6 +109,7 @@ function buttonTitle(c: CampaignView): string {
       <span class="block h-2.5 overflow-hidden rounded-full bg-black/50" :title="`${Math.round(fill * 100)}% of the seats taken`">
         <span class="block h-full rounded-full bg-gradient-to-r from-[#4aa6ff] to-[#7dd3fc] transition-[width] duration-500" :style="{ width: `${fill * 100}%` }" />
       </span>
+      <p v-if="hint" class="text-[12px] leading-4 font-semibold text-[#ffb35c]">{{ hint }}</p>
     </div>
 
     <div class="grid grid-cols-3 gap-2">
@@ -85,28 +120,29 @@ function buttonTitle(c: CampaignView): string {
         :class="[c.running ? 'tile-running' : '', shake === c.def.id ? 'shake' : '']"
         :title="c.def.description"
       >
-        <button type="button" class="relative aspect-square w-full overflow-hidden rounded-[14px] border-2 border-black/50" :aria-label="buttonTitle(c)" @click="run(c)">
+        <button type="button" class="relative aspect-square w-full overflow-hidden rounded-[14px] border-2" :class="preview?.def.id === c.def.id ? 'border-[#ffc93a]' : 'border-black/50'" :aria-label="`${c.def.name}: preview`" @click="picked = c.def.id">
           <span class="block size-full" :class="c.lockedAt !== null ? 'grayscale brightness-[0.55]' : ''"><TycoonCampaignArt :id="c.def.id" /></span>
           <span class="badge absolute top-1 left-1" title="How long it runs"><Clock class="size-3" :stroke-width="3" />{{ formatDuration(c.def.ms) }}</span>
           <span v-if="c.lockedAt !== null" class="absolute inset-0 grid place-items-center">
             <span class="grid size-10 place-items-center rounded-full border-2 border-black/50 bg-[#1b1329]/90 shadow-[0_3px_0_rgb(0_0_0/0.4)]"><Lock class="size-5 text-[#ffc93a]" :stroke-width="3" /></span>
           </span>
-          <span v-else-if="c.running && tycoon.campaign.value" class="badge absolute inset-x-1 bottom-1 justify-center bg-[#3fd25a]/90! text-[#0b3a17]" title="Queued: time left on every run bought">
-            <Timer class="size-3" :stroke-width="3" />{{ formatCountdown(tycoon.campaign.value.leftMs) }}
+          <span v-else-if="c.running" class="badge absolute inset-x-1 bottom-1 justify-center bg-[#3fd25a]/90! text-[#0b3a17]" title="Running: time left on every run bought">
+            <Timer class="size-3" :stroke-width="3" />{{ formatCountdown(c.leftMs) }}
           </span>
+          <span v-if="c.def.goal === 'wealth'" class="badge absolute top-1 right-1" title="Wealth ad: richer guests in the same seats"><Gem class="size-3 text-[#c084fc]" :stroke-width="3" /></span>
         </button>
 
-        <p class="g-title mt-1 truncate text-center text-[15px] leading-5">{{ c.def.name }}</p>
+        <p class="g-title mt-1 truncate text-center leading-5" :class="c.def.name.length > 12 ? 'text-[12.5px] tracking-tight' : 'text-[15px]'" :title="c.def.name">{{ c.def.name }}</p>
         <p
-          v-if="c.gainVisitors > 0"
-          class="g-num flex items-center justify-center gap-1 text-sm leading-5 whitespace-nowrap"
-          :title="`+${c.gainVisitors} visitors and +${formatCoins(c.gainPerHour)} coins an hour while it runs (visitors ${formatBoost(c.boost)})`"
+          v-if="c.gain.coins >= 1"
+          class="g-num flex min-w-0 items-center justify-center gap-0.5 text-[13px] leading-5 whitespace-nowrap sm:gap-1"
+          :title="`On average over its ${formatDuration(c.def.ms)}: ${c.def.goal === 'wealth' ? `+${formatFixed(c.gain.richGuests, 1)} High Rollers and Whales` : `+${Math.round(c.gain.guests)} guests`} and +${formatCoins(c.gain.coins)} coins (it costs ${formatCoins(c.cost)} chips)`"
         >
-          <Users class="size-3.5 shrink-0 text-[#7dd3fc]" :stroke-width="3" /><span class="text-[#7dd3fc]">+{{ c.gainVisitors }}</span>
-          <span class="text-white/40">·</span>
-          <CasinoCoinIcon class="size-3.5" /><span class="text-[#7ee08f]">+{{ formatCoins(c.gainPerHour) }}/h</span>
+          <template v-if="c.def.goal === 'wealth'"><Gem class="size-3.5 shrink-0 text-[#c084fc]" :stroke-width="3" /><span class="text-[#c084fc]">+{{ formatFixed(c.gain.richGuests, 1) }}</span></template>
+          <template v-else><Users class="size-3.5 shrink-0 text-[#7dd3fc]" :stroke-width="3" /><span class="text-[#7dd3fc]">+{{ Math.round(c.gain.guests) }}</span></template>
+          <CasinoCoinIcon class="ml-1 size-3.5 shrink-0" /><span :class="payback(c) >= 1 ? 'text-[#7ee08f]' : 'text-[#ffb35c]'">+{{ formatCoins(c.gain.coins, true) }}</span>
         </p>
-        <p v-else class="text-center text-[11px] leading-[14px] font-semibold text-[#ffb35c]" title="Every seat is taken: more visitors would have nowhere to sit. Build games or level them up first.">Floor full: build seats first</p>
+        <p v-else-if="c.lockedAt === null" class="text-center text-[11px] leading-[14px] font-semibold text-[#ffb35c]" :title="c.def.goal === 'wealth' ? 'No richer guests to bring yet: open their room first' : 'Every seat is taken: more guests would have nowhere to sit. Build seats, or go for richer guests.'">{{ c.def.goal === 'wealth' ? 'Nothing to gain yet' : 'Floor full' }}</p>
 
         <span v-if="c.lockedAt !== null" class="state-pill mt-1 text-[#ffc93a]" :title="`Needs Marketing level ${c.lockedAt}`">
           <Megaphone class="size-3.5 shrink-0" :stroke-width="3" /><span class="truncate text-[11px] leading-[13px] sm:text-xs">Marketing {{ c.lockedAt }}</span>
@@ -136,6 +172,41 @@ function buttonTitle(c: CampaignView): string {
         </p>
         <p v-else-if="c.blocker && c.lockedAt === null && !weekFull(c)" class="mt-0.5 text-center text-[11px] leading-[14px] font-semibold text-[var(--g-muted)]">{{ c.blocker }}</p>
       </div>
+    </div>
+
+    <!-- The preview: who is on the floor without and with a run, and what it brings back against its price. -->
+    <div v-if="preview" class="g-well space-y-1.5 rounded-2xl px-3 py-2">
+      <p class="flex items-baseline gap-2"><span class="g-title text-[15px]">{{ preview.def.name }}</span><span class="text-[12px] text-[var(--g-muted)]">{{ preview.def.description }}</span></p>
+      <ul class="space-y-0.5">
+        <li v-for="row in previewRows" :key="row.id" class="flex items-center gap-2 text-[13px] leading-5 font-semibold">
+          <span class="size-2.5 shrink-0 rounded-full border border-black/50" :style="{ background: row.color }" />
+          <span class="min-w-0 flex-1 truncate">{{ row.name }}</span>
+          <span class="g-num text-[var(--g-muted)]">{{ row.now }}</span><span class="text-[var(--g-muted)]">→</span>
+          <span class="g-num" :class="row.trend > 0 ? 'text-[#7ee08f]' : row.trend < 0 ? 'text-[#ff8a8a]' : 'text-white'">{{ row.next }}</span>
+          <span class="w-3 text-xs" :class="row.trend > 0 ? 'text-[#7ee08f]' : 'text-[#ff8a8a]'">{{ row.trend > 0 ? '▲' : row.trend < 0 ? '▼' : '' }}</span>
+        </li>
+      </ul>
+      <p class="flex items-center gap-1.5 border-t border-white/10 pt-1.5 text-[12.5px] leading-4 font-semibold" :title="`${preview.def.goal === 'wealth' ? 'High Rollers and Whales' : 'Guests'} on the floor on average, without and with it, and the coins it adds over its ${formatDuration(preview.def.ms)} (good and quiet hours averaged, before the cage cap)`">
+        <template v-if="preview.def.goal === 'wealth'">
+          <Gem class="size-3.5 shrink-0 text-[#c084fc]" :stroke-width="3" />
+          <span class="g-num">+{{ formatFixed(preview.gain.richGuests, 1) }} rich guests</span>
+        </template>
+        <template v-else>
+          <Users class="size-3.5 shrink-0 text-[#7dd3fc]" :stroke-width="3" />
+          <span class="g-num">+{{ Math.round(preview.gain.guests) }} guests</span>
+        </template>
+        <span class="text-white/40">·</span>
+        <CasinoCoinIcon class="size-3.5" /><span class="g-num">+{{ formatCoins(preview.gain.coins) }} over the run</span>
+        <span class="ml-auto g-num" :class="payback(preview) >= 1 ? 'text-[#7ee08f]' : 'text-[#ffb35c]'">{{ payback(preview) >= 1 ? `pays ${formatFixed(payback(preview), 1)}×` : 'won\'t pay back' }}</span>
+      </p>
+      <!-- The cage caps what a run can bring: what collecting every four hours keeps, and how soon it fills. -->
+      <p
+        v-if="preview.gain.coins >= 1 && preview.gain.kept < preview.gain.coins * 0.95"
+        class="text-[12px] leading-4 font-semibold text-[#ffb35c]"
+        title="The cage stops filling when it is full: collect more often, or upgrade the Cashier Cage"
+      >
+        Collecting every 4h you keep ~{{ formatCoins(preview.gain.kept) }}{{ preview.gain.cageFullMs ? `: your cage fills in ${formatDuration(preview.gain.cageFullMs)}` : '' }}
+      </p>
     </div>
 
     <!-- A long run outlasts the cage: say so before the player goes to bed. -->

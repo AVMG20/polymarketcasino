@@ -78,6 +78,13 @@
       "when": 1795457196118,
       "tag": "0010_missions",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1795525486642,
+      "tag": "0011_visitor_tiers",
+      "breakpoints": true
     }
   ]
 }

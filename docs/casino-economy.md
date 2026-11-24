@@ -118,13 +118,15 @@ Thresholds live in `shared/stars.ts`; balance scripts in `scripts/` import them.
 ## My Casino
 
 Every player owns a casino floor (`/`, "My Casino"). It starts with the backroom holding Pegfall and
-Spiñata, and the rest is built with **chips**: zones, games (levels 1-5) and four casino upgrades (Cashier
-Cage, Marketing, Decor at levels 1-5, and the one-level Construction Crew; the House Cut upgrade left with v2
-and its levels are ignored). Rules and numbers
-live in `shared/tycoon.ts` (chip prices and guest income are written small and scaled by `CHIP_SCALE` 6
+Spiñata, and the rest is built with **chips**: zones, games (levels 1-5) and five casino upgrades, each with
+one purpose: Cashier Cage (storage, 5 levels), Marketing (more guests, 5), Decor (richer guests, 12 levels gated
+by the rooms), Hospitality (more and richer guests, 5 dear levels from the Table Pit) and the one-level
+Construction Crew (builders); the House Cut upgrade left with v2 and its levels are ignored. Rules and numbers
+live in `shared/tycoon.ts` (chip prices and cage sizes are written small and scaled by `CHIP_SCALE` 5
 and `GUEST_SCALE` 30, which size the economy against the fixed convert rate and star
-thresholds); `bun scripts/tycoon-sim.ts [days] [seed] [days after max]` plays it day by day for three
-kinds of player (pace, stars, what each campaign netted) and is how the numbers were tuned.
+thresholds) and the guests in `shared/visitors.ts`; `bun scripts/tycoon-sim.ts [days] [seed] [days after max]`
+plays it day by day for three kinds of player (pace, stars, what each campaign netted, the house rules by stage,
+the floor's luck) and is how the numbers were tuned.
 
 - **Chips** are stored like coins (units of 1/10,000) in `casino_profiles.chips`; every change writes a
   `chip_transactions` row (reason `bet:<slug>`, `win:<slug>`, `refund:<slug>`, `build:<kind>:<id>`,
@@ -133,41 +135,138 @@ kinds of player (pace, stars, what each campaign netted) and is how the numbers 
 - **A game must be built to play it.** A round of an unbuilt game is a 403 (`Build <name> in your casino
   first`). Live tables stay shared: anyone can watch, sitting down needs the game built.
 
-### Coins in: the cashier cage
+### Coins in: the cashier cage (visitor tiers)
 
-Every built game has seats (2-5 by kind, +1 per level). Visitors come for the games (each game draws by its
-seats, so a five-seat card table pulls more than a two-seat slot and a new game never empties the floor;
-higher levels draw more), the decor (+6% per level) and the casino's name (Marketing, +5% per level); an **ad campaign**
-multiplies that for a while. Visitors on the floor = the smaller of demand and seats, the rest queue at the
-door. The cage fills with **coins**: the floor's full income (every game's guest income by level, ×1.8)
-times the share of seats in use, ×2 during a gem rush, up to the cage's capacity (7,500 coins at Cashier
-Cage 0, 36,000 at 5, about six to eight hours of income at each stage, so collecting more often pays). The
-player walks to the cage and collects (`POST /api/tycoon/collect`, whole coins, a `'cage'` coin ledger row;
-parallel collects pay once). Income is split exactly where a rush or campaign ends. A new casino starts
-with a full cage (7,500 coins). A fresh casino earns about 400 coins an hour; a maxed one about 128,000 a
-day without a campaign and at most about 179,000 with every seat full (the cap; the cage's capacity caps
-what one collect can hold).
+The cage fills with **coins** from the guests on the floor. The model is `shared/visitors.ts` (the same code on
+the server, the client and in the simulation); `server/utils/tycoon.ts` runs it.
 
-**Ad campaigns** (`POST /api/tycoon/campaign`, paid in chips, one at a time, the same one again extends
-it): Flyers 2 h ×1.5 visitors, Billboard 8 h ×1.8 (Marketing 2), TV Ad 24 h ×2.4 (Marketing 4); every
-Marketing level makes the boost 15% stronger. A campaign costs 0.45 / 1.8 / 4 hours of the floor's full
-income (at least 120 chips), about 0.23 of an hour per hour it runs (the TV Ad 0.17). Without one a floor
-runs 46-71% full (a maxed one 71%), and a campaign that fills it pays back while under ~78% of the seats are
-taken, as far as the cage has room between collects. Collected every two hours, its coins won back at RTP
-0.97 return +10-30% of the price early, +50-115% mid-game (the emptiest floors) and +20-25% at max (the TV
-Ad +65-170%); on a casual three-sessions-a-day schedule the 8 and 24 hour ones lose more and more to a full
-cage, so the Flyers are the casual pick (TV -40 to -60% there once the floor fills up). The TV Ad cost 5
-hours until the polish pass and no simulated player ever ran one; at 4 it is the whale's campaign (seven
-sessions a day) and still a poor pick for anyone who sleeps through a full cage. The simulation nets (seed
-7, build and three weeks after max): casual +47,000 chips on 57 Flyers, regular +183,000 (Flyers and
-Billboards, a few TV Ads), whale +700,000 (mostly TV Ads). Extending one that
-still runs costs 1.5× more for every run already queued (1×, 1.5×, 2.25×, …), and at most a week can be
-queued: idling long on campaigns costs real chips.
+**Seats.** Every built game has seats (2-5 by kind, +1 per level). Guests spread over the seats; a guest at a
+game spends ×1 / 1.02 / 1.04 / 1.06 / 1.08 by its level. A game earns by its seats: Pegfall (3 seats) brings
+half again what Spiñata (2 seats) does at the same level.
+
+**Tiers.**
+
+| tier | spends an hour | comes from | colour |
+|---|---|---|---|
+| Tourist | 38 | the start | `#38bdf8` |
+| Regular | 50 | the Main Floor | `#34d399` |
+| High Roller | 66 | the Table Pit | `#c084fc` |
+| Whale | 500 | the High Limit Room | `#fbbf24` |
+
+The odds of tier k are weight_k × P^k over the unlocked tiers, normalised (weights 1, 0.2, 0.006, 0.00001).
+The casino's **prestige** P multiplies up: × 1.09 per Decor level, × 1.045 per Hospitality level, × 1.05 per
+zone past the Backroom, × (1 + 0.002 / 0.004 / 0.008 / 0.02) per game at level 2 / 3 / 4 / 5 (the top machine
+levels draw richer guests; `richerLevel` marks 4 and 5), × 1.15 with Tourists limited at the door and × 1.35
+with them kept out, and × the wealth ads. P reaches 6.8 at max: 38% Tourists, 51% Regulars, 10% High Rollers,
+0.12% Whales. **Whales stay** one to three hours (4-12 ticks, rolled from their arrival tick): the floor at a
+tick holds the Whales who arrived in the last three hours and haven't left, worked out from (state, seed,
+arrival tick) only, so a tick stays a pure function of (state, seed, tick); after a change the stayers are those
+the new casino would have drawn, and a Whale already in keeps its seat first. About 0.1 visits a day when the
+High Limit Room opens, 1.4 a day at max, ~2 hours and ~1,000 coins each; with both wealth ads at max Whales are
+2.9% of arrivals.
+
+**The crowd** follows prestige: seats × 0.41 × P^0.08 × a small-floor bonus (× 1 + 0.3 × 20 ÷ (20 + seats)) ×
+(1 + 0.045 × Marketing) × (1 + 0.04 × Hospitality), plus each guests ad's share of the seats, times a mood (a
+random good or quiet hour ±30%, day ±10%, tick ±15%; no time-of-day curve). Idle, a floor runs 47-54% full
+early and 65-73% late: never full. Each guests ad adds its own share (Flyers 12% of the seats, Billboard 18%,
+TV Ad 25%), so only all of them together fill a late floor (98-99%). Each guest rolls a tier, the door filters
+them, High Rollers and Whales take a VIP seat when the VIP room runs, everyone else a free seat; no seat,
+turned away. The tick's rate = Σ seated spend × level factor (× 1.6 in the VIP room), doubled in a gem rush,
+minus the VIP staff, never below 0. The luck is a pure function of (casino state, seed, tick); the seed is
+FNV-1a of the player id salted with a server-only secret (`PNX_LUCK_SALT`, else the session secret), so the good
+hours can't be worked out from a player id. Income between two moments is reproducible and **additive** (a tick
+earns whole 1/10,000 coins, part of a tick floor(units × elapsed / tick); tested). Accrual splits where a rush
+or any campaign ends; builds finishing and rule changes accrue up to that moment first. `TycoonState.floor`
+carries the tick's seated guests, its rate, what each tier brings (`income`, bonuses and a rush in) and the
+rule costs (`costs`): Σ income − costs = perHour, to the cent. Visitors of a casino get only who is on the floor
+(visitors, seats, turned away), never the owner's income.
+
+**Expected income** (`expectedPerHour`, `floor.expectedPerHour`) is the same model with fractional tier counts
+and the moods averaged out: campaign previews (`campaignGain`), the rush price, mission rewards and the rules
+panel read it (or the full floor), never a lucky tick. `cage.perHour` = `floor.perHour`, the current tick's
+rate. Building or levelling anything never lowers expected income, under any rules and any mix of ads (a test
+walks every build step of 54 stages × the rules × 7 ad mixes).
+
+| stage (every game at the level) | expected/h | seated T/R/H/W |
+|---|---|---|
+| new casino (Backroom L1) | 187 | 100/0/0/0% |
+| Main Floor L1 / L5 | 462 / 1,236 | 80/20/0/0% |
+| Table Pit L1 / L5 | 774 / 1,959 | 75/24/1/0% |
+| Slot Lounge L1 / L5 | 1,056 / 2,859 | 69/29/2/0% |
+| High Limit L1 / L5 | 1,591 / 4,227 | 59/37/4/0.1% |
+| Penthouse L1 / max | 2,008 / 5,422 | 38/51/10/0.1% at max |
+
+A maxed casino earns about 130,000 coins a day idle (134,000 under the best idle rules) and 179,000 with every
+seat full at the default rules; with every ad running 240,000 (default rules) to 320,000 (no Tourists and the
+VIP room). A day stays within 0.89-1.15 of the mean (±6-7% sd); an hour's 10th and 90th percentile are about
+±25% from the median. The cage holds 9,000 coins at Cashier Cage 0 (a new casino's 7,500 starter coins leave
+room, so it never reads "full" in the first minute), then 12,000 / 18,000 / 25,500 / 33,000 / 42,000; income
+over the capacity is lost (and recorded as lost). Collect: `POST /api/tycoon/collect` (whole coins, a `'cage'`
+row; parallel collects pay once).
+
+**Upgrades for guests.** Marketing: +4.5% guests a level, stronger wealth ads (+10% a level). Decor: 12 levels
+(1-2 at the Main Floor, 3-4 Table Pit, 5-6 Slot Lounge, 7-9 High Limit, 10-12 Penthouse; 750 to 18,500 chips, 3
+minutes to 9 hours): richer guests. Casinos from before the 12 levels moved with migration 0011: old Decor 1 / 2
+/ 3 / 4 / 5 → 2 / 4 / 6 / 9 / 12 (the most each old level's room allows, the same floor look through
+`decorLook`, no more chips than were spent; a running Decor construction moves the same way). Hospitality
+(free drinks, snacks, a buffet, fine dining, a champagne bar; Table Pit, Lounge, High Limit ×2, Penthouse;
+4,500 to 37,500 chips): +4% guests and prestige × 1.045 a level. The build cards list every open tier's share
+now → next (▲ green, ▼ red) and the next tier still to open with the share it will have.
+
+**House rules** (`POST /api/tycoon/rules`, `RulesBody`: some of `door`, `vip`; typed strictly, anything else a
+400). They unlock one at a time; a new casino sees none (`house.unlocked` empty), and only the owner's reads
+carry `house`.
+
+| rule | unlocks with | what it does | costs |
+|---|---|---|---|
+| `door: 'limit'` | Slot Lounge | Tourists take at most a third of the seats; prestige × 1.15 | Tourists turned away on a quiet floor |
+| `door: 'closed'` | Slot Lounge | no Tourists; prestige × 1.35 | a floor that is far from full |
+| `vip` | High Limit Room | the High Limit Room seats only High Rollers and Whales (×1.6 there); its seats stop drawing the everyday crowd | 10 coins an hour per VIP guest |
+
+Expected change against the default rules (idle / with the Flyers / with every ad): the limit -2% to -22% at the
+Lounge, about even idle and +6-7% with every ad from High Limit up; no Tourists -17% to -52% idle, +4% to +24%
+with every ad from High Limit up; the VIP room -10% to -19% idle, +10-14% with every ad from High Limit L5 up.
+So the Lounge runs the open door, High Limit the limit, and a casino running every ad at the top closes the
+door and opens the VIP room. A locked rule is a 403; a change is allowed ten minutes after the last
+(`RULES_COOLDOWN_MS`, a 429 before; guarded on `rules_at`); the same rules again change nothing.
+
+**History** (`GET /api/tycoon/history?range=24h|3d`, `HistoryResponse`). Every persisted accrual adds its hour
+pieces to `casino_history` (player, hour: guest-hours per tier, ms covered, income before the cage cap, lost;
+insert … on conflict add); a read adds the stretch since (replayed from the later of the last accrual and the
+range's start, the cage before it filled in one quick pass); empty hours are zeros. Rows older than four days
+are pruned on write.
+
+**Ad campaigns** (`POST /api/tycoon/campaign`, chips). Different kinds run side by side
+(`casino_profiles.campaigns`, one entry per kind, a JSON list read leniently; the old `campaign` columns keep
+the first one ending), the same kind again extends its queue (×1.5 per run still queued, a week at most). Price:
+hours of the floor's full income at the default rules (at least 100 chips).
+
+| campaign | goal | runs | needs | effect | price (h) | at max |
+|---|---|---|---|---|---|---|
+| Flyers | guests | 2 h | – | +12% of the seats in guests | 0.17 | 1,300 |
+| Billboard | guests | 8 h | Marketing 2 | +18% | 0.75 | 5,600 |
+| TV Ad | guests | 24 h | Marketing 4 | +25% | 2.8 | 20,900 |
+| VIP Invitations | wealth | 8 h | High Limit, Marketing 1 | prestige × 1.45 (+10% a Marketing level): High Rollers, and with Marketing Whales | 0.5 | 3,700 |
+| Private Jet | wealth | 12 h | High Limit, Marketing 3 | Whale odds × 4, prestige × 1.15 (+10% a Marketing level) | 1.0 | 7,500 |
+
+Coins back × RTP 0.97 ÷ chips, run on its own, collected every two hours at the rules that suit it (sim "Ad
+return"): Flyers ×1.3-1.4 (×0.9 on a brand-new five-seat floor), Billboard ×1.4-1.9, TV Ad ×1.5-1.8, VIP
+Invitations ×1.2-1.4 at High Limit and ×1.6 at the Penthouse, Private Jet ×0.4-0.8 at High Limit and ×0.9-1.3
+at the Penthouse. Guests ads are the pick until the Penthouse, wealth ads at the top; on a floor the guests ads
+keep full a wealth ad beats one more guests ad, and one more guests ad on a floor the others fill doesn't pay
+(tested). On a casual three-sessions-a-day schedule the long ones lose to a full cage. The previews
+(`campaignGain`) show each run's extra guests (or High Rollers and Whales), the tier counts without → with it,
+the coins over the run and what collecting every four hours keeps with the player's cage (with how soon the
+cage fills). A rush is priced from the full floor under every rule and wealth ad the casino can run, so a rush
+with every ad and rule pays at most 0.67× converting at max (tested over every stage, ad mix and rule).
+Campaigns stay chips: paid in coins they would be a coin-in, coin-out loop with no RTP in between at
+×1.2-1.9, and the campaign sink (the regular spends ~730,000 chips on ads in the sim, the whale ~1.3 million,
+against a 1.46 million catalog) would leave the chip economy.
 
 ### Chips in and out
 
 - In: round payouts only (solo and live, every win, stake included).
-- Out: building (about 1,647,000 chips for everything; 357 build hours), ad campaigns, and losing bets.
+- Out: building (about 1,459,000 chips for everything; 410 build hours), ad campaigns, and losing bets.
   Builds cost chips only (`Cost.coins` is always 0) and take time: seconds for the first ones (Limbo 10 s,
   Wheel 45 s, the starters' level 2 two minutes), 25 minutes for the Main Floor, level-ups from minutes early
   to hours late (level 4 at least an hour, level 5 at least three; at most 9 hours per construction). A
@@ -178,8 +277,8 @@ queued: idling long on campaigns costs real chips.
 One construction runs per builder. A casino starts with one and can add two more, each bought once and in
 any order, so at most three (`MAX_BUILDERS`, `builderCount`):
 
-- **Construction Crew** (an upgrade, chips): one level, 48,000 chips and 4 hours, opens with the Slot
-  Lounge. It is the mid-game goal: more than the Lounge (42,000), less than the High Limit Room (84,000). It
+- **Construction Crew** (an upgrade, chips): one level, 40,000 chips and 4 hours, opens with the Slot
+  Lounge. It is the mid-game goal: more than the Lounge (35,000), less than the High Limit Room (70,000). It
   takes a builder while it is built, and adds one the moment it is done (`upgrades.crew = 1`).
 - **Gem builder** (`builder`, 60 gems): bought any time, also before the Crew.
 
@@ -197,9 +296,10 @@ the casino can't do isn't drawn (no live table built, nothing left to build, a w
 casino). A 5× win is one bet paying 5× (or more) itself: one Pegfall ball, one Magic Hands hand, one roulette
 spot, one blackjack hand or side bet, a baccarat spot, the pair plus or AA bonus; a single-bet game, the round. Rewards are
 **coins**, fixed when the day's missions are drawn: 0.5-1 hour of the casino's full guest income each
-(`missionReward`, at least 1,500 coins an hour, about a casino with the Main Floor open, so a new casino gets
-750-1,500 a mission and about 3,750 for the first day: half again the starter cage, earned in the first
-session), plus 0.75 hours for clearing all three (the bonus). Coins, so they are bet before they become chips.
+(`missionReward`: hours of `fullIncomePerHour`, every seat taken at the default rules, at least 3,500 coins an
+hour, so a new casino gets 1,750-3,500 a mission and about 9,000 for the first day), plus 0.75 hours for
+clearing all three (the bonus). The floor was 1,500 before the visitor tiers: a young floor is half empty now,
+so the missions carry the first days. Coins, so they are bet before they become chips.
 
 - Progress counts the real events, in the same transaction as the event: a settled round (solo, step and
   live table rounds, each counted once when it settles; a visit counts when a solo round settles or a step
@@ -217,15 +317,17 @@ session), plus 0.75 hours for clearing all three (the bonus). Coins, so they are
 
 ### While you were away
 
-Every read of the owner's casino stores when it happened and a snapshot (build, running constructions,
-campaign, rush, coins in the cage) in `casino_profiles.last_seen_at` / `last_seen`. The first read after the
-app opens or the tab comes back (`GET /api/tycoon?welcome=1`) that is ten minutes or more after the last one
-replays the guest income from the snapshot (split where each construction finished) and returns
-`welcome`: coins the cage gained, guest income a full cage turned away, constructions that finished, the
-campaign that ended and the visitors now. The page reads every four minutes while visible, so a player
+Every read of the owner's casino stores when it happened and a snapshot (zones, build, running constructions,
+campaign, rush, house rules, coins in the cage) in `casino_profiles.last_seen_at` / `last_seen`. The first read
+after the app opens or the tab comes back (`GET /api/tycoon?welcome=1`) that is ten minutes or more after the
+last one replays the floor from the snapshot tick by tick (the same seeded luck the cage ran on, split where each
+construction finished) and returns `welcome`: coins the cage gained, guest income a full cage turned away,
+constructions that finished, the campaign that ended, the visitors now, the hours while away (`hours`, the
+history's whole hours, at most the last three days) and the whales that came by (`notable`: the eight biggest
+spenders, oldest first). The page reads every four minutes while visible, so a player
 watching the floor is never "away". A plain read under a minute after the stored one skips the write only
-while the snapshot still replays to now: same build, constructions, campaign and rush, and no fewer coins
-in the cage. A collect, a rush or a campaign always stores a fresh one, so collected coins never show up
+while the snapshot still replays to now: same zones, build, constructions, campaign, rush and rules, and no
+fewer coins in the cage. A collect, a rush or a campaign always stores a fresh one, so collected coins never show up
 as "turned away".
 
 ### Gem items (`POST /api/tycoon/gems`)
@@ -237,7 +339,7 @@ gems (the old chip pack is gone; a pack still pending from before v2 is refunded
 | item | gems | what |
 |---|---|---|
 | `skip` | 1-200, `ceil(0.71 × minutes^0.69)` (10 min: 4, 1 h: 12, 4 h: 32, 8 h: 51) | finish one construction now |
-| `rush` | 5-100, `ceil(full-floor income × 4 h / 1,000 × 1.25)` (a new casino: 5; maxed: 38) | high rollers: every visitor spends double for 4 hours; priced from the floor with every seat taken (not from the occupancy at purchase, which a campaign started next would raise), so a rush with or without a campaign is never a cheaper way to coins than converting (at most 800 coins a gem) |
+| `rush` | 5-100, `ceil(best full-floor income × 4 h / 1,000 × 1.25)` (every rule and wealth ad the casino can run) (a new casino: 5; maxed: 81) | high rollers: every guest spends double for 4 hours; priced from the floor with every seat taken at the richest mix any rules the casino has unlocked let in (not from the occupancy at purchase, which a campaign started next would raise, nor from the rules now, which can change after), so a rush with or without a campaign, under any rules, is never a cheaper way to coins than converting (at most 800 coins a gem) |
 | `builder` | 60 | a permanent extra builder (one more construction at once; once, next to the Crew) |
 | `golden` | 30 | a golden skin for one built game (cosmetic) |
 | `cosmetic` | 5-200 (target: the item key, `hat:crown`) | an avatar item or a premium zone skin (`shared/cosmetics.ts`; cosmetic only) |
@@ -276,54 +378,57 @@ gem buys use the gem flow
 ### Pace (simulation, seed 7)
 
 Casual: the cage only, no gems, three short sessions a day. Regular: converts its 50 starting gems at once,
-saves its daily 10 for the gem builder (day 6), then converts them; four sessions. Whale: buys ~100 gems a
-day on top of the daily 10, buys the gem builder, skips anything with more than 30 minutes left, rushes,
-converts the rest; seven sessions. All save for the Construction Crew once the Lounge is open (like a
-zone), bet their coins at RTP 0.97 with dice-like variance, re-bet a share of spare chips and run the ad
-campaign that pays best against their own collect times (when it returns a fifth over its price). Daily
-missions: the casual player clears two a day, the regular and the whale all three and the bonus (about 9%,
-13% and 8% of the coins they claim), claimed in the day's last session (the first day's in the first
-session: 20 rounds, two collects and a build fit in it). Day each milestone was reached
+saves its daily 10 for the gem builder, then converts them; four sessions. Whale: buys ~100 gems a day on top
+of the daily 10, buys the gem builder, skips anything with more than 30 minutes left, rushes, converts the
+rest; seven sessions. All save for the Construction Crew once the Lounge is open, bet their coins at RTP 0.97
+with dice-like variance, re-bet a share of spare chips and, at each session start, buy every campaign not yet
+running that returns a fifth over its price on top of the others (against their own collect times, each side
+at the rules that suit it), then run the rules that earn the most until their next session (the casual player
+once a day). The sim credits each ad with what the cage would have lacked without that one ad. Daily
+missions: casual two a day, regular and whale all three and the bonus. Day each milestone was reached
 (`bun scripts/tycoon-sim.ts 60 7 21`):
 
 | profile | 8 builds | main | pit | lounge | crew | high limit | penthouse | 50% | 90% | max |
 |---|---|---|---|---|---|---|---|---|---|---|
-| casual | 0 | 0.5 | 2.9 | 5.5 | 8.5 | 15.9 | 21.3 | 11.3 | 21.9 | 25.3 |
-| regular | 0 | 0.5 | 0.8 | 2.3 | 6.3 | 11.3 | 15.3 | 6.8 | 15.8 | 18.3 |
-| whale | 0 | 0.4 | 1.3 | 3.3 | 4.4 | 6.4 | 9.4 | 3.4 | 9.9 | 12.4 |
+| casual | 0 | 0.5 | 2.9 | 6.3 | 8.9 | 15.9 | 22.3 | 11.9 | 23.3 | 26.3 |
+| regular | 0 | 0.5 | 0.8 | 0.9 | 6.5 | 11.8 | 15.9 | 7.8 | 16.8 | 18.9 |
+| whale | 0 | 0.4 | 1.3 | 3.3 | 3.5 | 6.6 | 10.3 | 3.5 | 10.8 | 12.6 |
 
-Day each star was first held (same run; 10 comes 4-10 days after max):
+Over seeds 1, 2, 3, 7 and 11: casual maxes on day 26.3 on every seed (the Table Pit 2.6, the Lounge 5.1, the
+Crew 9.0 on average), regular 18.3-18.9, whale 12.3-12.6. Before the visitor tiers: 25.3-27.3, 18.3-19.3 and
+12.3-12.4.
+
+Day each star was first held (same run; 10 comes 4-9 days after max; star 8 stays at 120,000: the casual
+player holds it on day ~22):
 
 | profile | 1-3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---|---|---|---|---|---|---|---|
-| casual | 0.3 | 1.9 | 2.3 | 4.9 | 14.9 | 20.3 | 27.9 | 34.9 |
-| regular | 0.3 | 0.3 | 0.3 | 0.3 | 10.5 | 14.5 | 19.8 | 24.9 |
-| whale | 0.3 | 1.3 | 1.3 | 1.3 | 6.3 | 9.3 | 13.6 | 16.9 |
+| casual | 0.3 | 1.9 | 3.9 | 5.9 | 15.3 | 21.9 | 28.3 | 34.9 |
+| regular | 0.3 | 0.3 | 0.3 | 0.3 | 11.3 | 15.3 | 20.3 | 24.3 |
+| whale | 0.3 | 1.3 | 1.3 | 1.3 | 6.6 | 9.9 | 13.4 | 16.3 |
 
-The first session lands 7-11 builds over seeds 1, 2, 3, 7 and 11 (a casual player's 15 minutes: 7-9, the
-Main Floor among them; regular 10, whale 10-11), all under half an hour: the starter cage is full (7,500
-coins), the first day's missions add about 3,750 and the first steps are cheap and quick (Pegfall and Spiñata
-level 2 at 380 chips and two minutes, Marketing 1 at 900). Then it slows: the median build takes 25-65
-minutes in week one, two to eight hours in week two, three to nine hours in week three and eight to nine at
-the end. Over seeds 1, 2, 3, 7 and 11 casual maxes on day 25.3-27.3, regular 18.3-19.3, whale 12.3-12.4
-(Pegfall took Dice's place as a starter, with Dice's three seats, and Dice moved to the Main Floor: the
-same pace within the seeds' noise; eight more seeds put casual at 26.3-27.3).
-The late game was made about 10% dearer and slower earlier (the Lounge, High Limit and Penthouse zones and
-games, upgrade levels 4-5, game levels 4-5 at ×3.8 and ×5.5 the build, builds up to 9 hours); before it,
-with the cheaper campaigns already in, casual maxed on day 23.9-25.3.
+Payback of single steps (chips ÷ expected coins an hour gained, at the stage they are bought; sim "Payback"):
+Limbo 11 h, Roulette 17 h; Decor 110-234 h; Hospitality 110-173 h; Marketing 181-338 h; game levels 3→4 and
+4→5 337-672 h (before the rework a level 4→5 took ~1,000 h and Decor 4 ~1,020 h); zones are gateways (the
+Lounge and the Penthouse ~2,300-2,700 h on their own).
+
+The first session lands 7-12 builds (a casual player's 15 minutes: 7-9, the Main Floor among them), all under
+half an hour: the starter coins (7,500), the first day's missions (~9,000) and cheap first steps. Then it slows:
+the median build takes 20-70 minutes in week one, two to seven hours in week two, four to eight in week three.
 
 **The first hour and day.** A new player who plays the first hour through (Main Floor first, then the
 quickest step it can pay) has 10 builds by minute 36: the Main Floor (25 minutes, 3,600 chips), Limbo,
-Wheel, both starters to level 2-3, Cage and Marketing 1. After that the cage brings 400-600 coins an hour
+Wheel, both starters to level 2-3, Cage and Marketing 1. After that the cage brings 500-800 coins an hour
 and the next steps cost 580-2,400 chips, so the rest of that hour is play and saving (the next goal, Decor 1
 or a Main Floor game, is an evening's cage). From the second session on every session pays for 1-4 builds
 (Main Floor games at 1,500-2,000 chips, 5-14 minutes). The polish pass made three changes for that: the
 missions' floor went from 800 to 1,500 coins an hour (the first day's three missions and bonus pay ~3,750
 instead of ~2,000, so a casual player opens the Main Floor on day 0 instead of day 1); visitors now come
 by a game's seats (0.32 per level-1 seat instead of 0.9 per game) and Limbo and the Wheel earn a third more
-(the Penthouse's two games a sixth less, so a full floor stays at ~179,000 a day), because before it a new
+(the Penthouse's two games a sixth less, so a full floor stayed at ~179,000 a day), because before it a new
 Wheel, Roulette or card table drew too few visitors for its seats and *lowered* the cage's income (Wheel
--15 an hour, Roulette -5, Blackjack -1); now every new game adds 13-125 an hour.
+-15 an hour, Roulette -5, Blackjack -1). With the visitor tiers the crowd comes for the seats themselves, so
+every seat a build adds draws its share, and no build step lowers expected income (tested).
 
 A casual player is held back by build steps late and by chips in the middle: with three short sessions a
 day every long step costs them about half a day whatever its timer (anything from 5 to 10 hours finishes

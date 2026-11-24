@@ -51,7 +51,7 @@ const { HubError } = await import('../server/utils/hub')
 const { eq } = await import('drizzle-orm')
 const { db } = await import('../server/database')
 const { casinoConstructions, casinoProfiles, chipTransactions, gameRounds, gemPurchases, players } = await import('../server/database/schema')
-const { collectCage, getTycoonState, parseBuildBody, parseCampaignBody, startBuild, startCampaign } = await import('../server/utils/tycoon')
+const { collectCage, getTycoonState, luckSeed, parseBuildBody, parseCampaignBody, startBuild, startCampaign } = await import('../server/utils/tycoon')
 const { buyWithGems, parseGemBody, retryStalePurchases } = await import('../server/utils/tycoon-gems')
 const { playRound } = await import('../server/utils/rounds')
 const { playerStats } = await import('../server/utils/stats')
@@ -60,6 +60,7 @@ const { TableError } = await import('../server/utils/tables/table')
 const { GAMES } = await import('../shared/games/registry')
 const { normalizeCoins, sumCoins } = await import('../shared/money')
 const T = await import('../shared/tycoon')
+const V = await import('../shared/visitors')
 const { CASINO_STARS } = await import('../shared/stars')
 const { chipLedgerSum, chipsOf, coinsOf, giveChips, ledgerSum, seedPlayer } = await import('./setup/players')
 const { coinTransactions } = await import('../server/database/schema')
@@ -89,10 +90,11 @@ function blankState(over: Partial<import('../shared/tycoon').TycoonState> = {}):
         chips: 0,
         zones: ['backroom'],
         games: { plinko: 1, spinata: 1 },
-        upgrades: { cage: 0, marketing: 0, decor: 0, crew: 0 },
+        upgrades: { cage: 0, marketing: 0, decor: 0, hospitality: 0, crew: 0 },
         constructions: [],
         builders: 1,
         cage: { stored: 0, capacity: T.cageCapacity(0), perHour: 0 },
+        floor: { visitors: { tourist: 0, regular: 0, highroller: 0, whale: 0 }, seats: 0, turnedAway: 0, perHour: 0, income: { tourist: 0, regular: 0, highroller: 0, whale: 0 }, costs: 0, expectedPerHour: 0, odds: { tourist: 1, regular: 0, highroller: 0, whale: 0 }, tickEndsAt: 0 },
         rushUntil: null,
         campaign: null,
         golden: [],
@@ -103,11 +105,11 @@ function blankState(over: Partial<import('../shared/tycoon').TycoonState> = {}):
 }
 
 describe('catalog and rules', () => {
-    it('lists every game of the registry once, with five levels and guest income per level', () => {
+    it('lists every game of the registry once, with five levels and seats at each', () => {
         expect(T.TYCOON_GAMES.map(game => game.slug).sort()).toEqual(GAMES.map(game => game.slug).sort())
         for (const game of T.TYCOON_GAMES) {
             expect(game.levels).toHaveLength(T.MAX_LEVEL)
-            expect(game.guestsPerHour).toHaveLength(T.MAX_LEVEL)
+            expect(T.seatsOf(game.slug, T.MAX_LEVEL)).toBe(T.seatsOf(game.slug, 1) + T.MAX_LEVEL - 1)
             expect(T.findZone(game.zone)).toBeDefined()
             if (game.starter) expect(game.levels[0]).toEqual({ chips: 0, coins: 0, buildMs: 0 })
             else expect(game.levels[0]!.buildMs).toBeGreaterThan(0)
@@ -115,7 +117,7 @@ describe('catalog and rules', () => {
             for (const level of game.levels) expect(level.coins).toBe(0)
         }
         for (const zone of T.ZONES) expect(zone.cost.coins).toBe(0)
-        expect(T.UPGRADE_IDS).toEqual(['cage', 'marketing', 'decor', 'crew'])
+        expect(T.UPGRADE_IDS).toEqual(['cage', 'marketing', 'decor', 'hospitality', 'crew'])
         for (const zone of T.ZONES) if (zone.requires) expect(T.findZone(zone.requires)).toBeDefined()
         for (const upgrade of T.UPGRADES) expect(upgrade.requiresZone).toHaveLength(upgrade.levels.length)
     })
@@ -138,14 +140,23 @@ describe('catalog and rules', () => {
         const maxed = blankState({
             zones: T.ZONES.map(zone => zone.id),
             games: Object.fromEntries(T.TYCOON_GAMES.map(game => [game.slug, T.MAX_LEVEL])),
-            upgrades: { cage: 5, marketing: 5, decor: 5, crew: 1 }
+            upgrades: { cage: 5, marketing: 5, decor: 12, hospitality: 5, crew: 1 }
         })
-        // Every seat full, with the strongest campaign: still capped.
-        expect(T.fullIncomePerHour(maxed) * 24).toBeLessThanOrEqual(180_000)
-        expect(T.guestsPerHour({ ...maxed, campaign: { id: 'tv', until: 1 } }, 0)).toBeLessThanOrEqual(T.fullIncomePerHour(maxed))
+        // Every seat full, with every guests ad: still capped (default rules; the richer rules and the wealth ads more).
+        expect(T.fullIncomePerHour(maxed) * 24).toBeLessThanOrEqual(195_000)
+        expect(T.baseGuestsPerHour(maxed) * 24).toBeGreaterThan(125_000)
+        expect(T.baseGuestsPerHour(maxed) * 24).toBeLessThan(142_000)
+        const guestsAds = T.CAMPAIGNS.filter(c => c.goal === 'guests').map(c => ({ id: c.id, until: 1 }))
+        expect(T.guestsPerHour({ ...maxed, campaigns: guestsAds }, 0)).toBeLessThanOrEqual(T.fullIncomePerHour(maxed))
+        for (const rules of V.ruleCombos(maxed)) {
+            expect(T.guestsPerHour({ ...maxed, rules, campaign: { id: 'tv', until: 1 } }, 0)).toBeLessThanOrEqual(V.bestFullFloorPerHour(maxed))
+        }
+        // The richest a full floor gets: every rule and wealth ad (what a rush is priced from).
+        expect(V.bestFullFloorPerHour(maxed) * 24).toBeLessThanOrEqual(420_000)
         expect(T.cageCapacity(99)).toBe(T.cageCapacity(T.MAX_LEVEL))
         expect(T.cageCapacity(T.MAX_LEVEL)).toBeGreaterThan(T.cageCapacity(0))
-        expect(T.guestsPerHour({ ...maxed, rushUntil: 10 }, 0)).toBe(T.guestsPerHour(maxed, 0) * 2)
+        // A rush doubles what guests spend (the default rules have no costs).
+        expect(T.guestsPerHour({ ...maxed, rushUntil: 10 }, 0)).toBeCloseTo(T.guestsPerHour(maxed, 0) * 2, 1)
         expect(T.progressOf(maxed)).toBe(1)
         expect(T.progressOf(blankState())).toBeGreaterThan(0)
     })
@@ -205,14 +216,15 @@ describe('catalog and rules', () => {
         expect(T.skipGems(1_000 * HOUR)).toBe(200)
     })
 
-    it('extrapolates the cage at the client, rush and cap included', () => {
-        const state = blankState({ serverNow: 0, cage: { stored: 100, capacity: 10_000, perHour: 0 } })
-        const perHour = T.guestsPerHour(state, 0)
-        expect(T.cageAt(state, HOUR)).toBe(normalizeCoins(100 + perHour))
+    it('extrapolates the cage at the client: the tick rate, then the expected rate, capped', () => {
+        const base = blankState()
+        const state = blankState({ serverNow: 0, cage: { stored: 100, capacity: 10_000, perHour: 120 }, floor: { ...base.floor, perHour: 120, expectedPerHour: 200, tickEndsAt: 15 * MIN } })
+        expect(T.cageAt(state, 0)).toBe(100)
+        expect(T.cageAt(state, 15 * MIN)).toBe(normalizeCoins(100 + 30))
+        expect(T.cageAt(state, 75 * MIN)).toBe(normalizeCoins(100 + 30 + 200))
         expect(T.cageAt(state, 1_000 * HOUR)).toBe(10_000)
-        const rushed = { ...state, rushUntil: HOUR }
-        expect(T.guestsPerHour(rushed, 0)).toBeCloseTo(2 * perHour, 1)
-        expect(T.cageAt(rushed, 2 * HOUR)).toBe(normalizeCoins(100 + T.guestsPerHour(rushed, 0) + perHour))
+        // Over capacity (the starter cage) it never goes down.
+        expect(T.cageAt({ ...state, cage: { ...state.cage, stored: 12_000 } }, HOUR)).toBe(12_000)
     })
 })
 
@@ -251,9 +263,9 @@ describe('casino profile', () => {
         expect(coinsOf(id).coins).toBe(T.STARTER_CAGE)
         expect(chipsOf(id)).toBe(0)
 
-        const perHour = getTycoonState(id, t0).cage.perHour
+        const income = V.runFloor(T.floorView(getTycoonState(id, t0)), luckSeed(id), t0, t0 + 2 * HOUR).income
         const later = await collectCage(id, t0 + 2 * HOUR)
-        expect(later.collected).toBe(Math.floor(2 * perHour))
+        expect(later.collected).toBe(Math.floor(income))
         const full = await collectCage(id, t0 + 1_000 * HOUR)
         expect(full.collected).toBe(T.cageCapacity(0))
         expect(ledgerSum(id)).toBe(coinsOf(id).coins)
@@ -282,7 +294,7 @@ describe('casino profile', () => {
         expect(done.constructions).toEqual([])
         expect(db.select().from(casinoConstructions).where(eq(casinoConstructions.playerId, id)).all()).toEqual([])
         // More guests now that limbo runs.
-        expect(done.cage.perHour).toBeGreaterThan(started.state.cage.perHour)
+        expect(done.floor.expectedPerHour).toBeGreaterThan(started.state.floor.expectedPerHour)
         expect(chipRows(id).find(row => row.type === 'debit')).toMatchObject({ amount: limbo.chips, reason: 'build:game:limbo' })
     })
 
@@ -363,47 +375,62 @@ describe('casino profile', () => {
 })
 
 describe('visitors and ad campaigns', () => {
-    it('seats come from built games, demand from games, decor, marketing and campaigns', () => {
-        const start = blankState()
-        expect(T.floorSeats(start)).toBe(T.seatsOf('plinko', 1) + T.seatsOf('spinata', 1))
+    it('seats come from built games, the crowd from the seats, marketing and campaigns', () => {
+        expect(T.floorSeats(blankState())).toBe(T.seatsOf('plinko', 1) + T.seatsOf('spinata', 1))
         expect(T.seatsOf('plinko', 3)).toBe(T.seatsOf('plinko', 1) + 2)
         expect(T.seatsOf('nope', 1)).toBe(0)
-        // A new casino is not full: a campaign has something to fill.
+        // A new casino is busy, not full: Flyers have seats to fill.
+        expect(T.visitorCount(blankState(), 0)).toBeGreaterThan(0)
+        expect(T.visitorCount(blankState(), 0)).toBeLessThan(T.floorSeats(blankState()))
+        // A casino with the Main Floor built is not full: a campaign has something to fill.
+        const start = blankState({ zones: ['backroom', 'main'], games: Object.fromEntries(T.TYCOON_GAMES.filter(g => g.zone === 'backroom' || g.zone === 'main').map(g => [g.slug, 1])) })
         expect(T.visitorDemand(start, 0)).toBeLessThan(T.floorSeats(start))
+        expect(T.visitorDemand({ ...start, upgrades: { ...start.upgrades, marketing: 3 } }, 0)).toBeGreaterThan(T.visitorDemand(start, 0))
         const flyers = { ...start, campaign: { id: 'flyers' as const, until: HOUR } }
         expect(T.visitorDemand(flyers, 0)).toBeGreaterThan(T.visitorDemand(start, 0))
         expect(T.visitorDemand(flyers, HOUR)).toBe(T.visitorDemand(start, HOUR))
         expect(T.visitorCount(flyers, 0)).toBeLessThanOrEqual(T.floorSeats(start))
         expect(T.guestsPerHour(flyers, 0)).toBeGreaterThan(T.guestsPerHour(start, 0))
         expect(T.guestsPerHour(start, 0)).toBeLessThanOrEqual(T.fullIncomePerHour(start))
-        // Marketing makes campaigns stronger.
-        expect(T.campaignBoost('flyers', 5)).toBeGreaterThan(T.campaignBoost('flyers', 0))
+        // Marketing makes the wealth campaigns stronger (it brings the crowd itself).
+        expect(T.campaignEffect('invites', 5).prestige).toBeGreaterThan(T.campaignEffect('invites', 0).prestige)
+        expect(T.campaignBoost('flyers', 5)).toBe(T.campaignBoost('flyers', 0))
     })
 
     it('splits guest income where a campaign ends', () => {
-        const state = blankState({ campaign: { id: 'flyers', until: HOUR } })
-        const both = T.guestChipsBetween(state, 0, 2 * HOUR)
-        const expected = T.guestsPerHour(state, 0) + T.guestsPerHour(state, HOUR)
-        expect(Math.abs(both - expected)).toBeLessThan(0.001)
+        const games = Object.fromEntries(T.TYCOON_GAMES.filter(g => g.zone === 'backroom' || g.zone === 'main').map(g => [g.slug, 2]))
+        const state = blankState({ zones: ['backroom', 'main'], games, campaign: { id: 'flyers', until: 1_000 * HOUR } })
+        const view = T.floorView(state)
+        const t0 = 1_000 * HOUR - 20 * MIN
+        const both = V.runFloor(view, 7, t0, t0 + 2 * HOUR).income
+        const during = V.runFloor(view, 7, t0, 1_000 * HOUR).income
+        const after = V.runFloor({ ...view, campaign: null }, 7, 1_000 * HOUR, t0 + 2 * HOUR).income
+        expect(both).toBe(normalizeCoins(during + after))
+        expect(during / (20 / 60)).toBeGreaterThan(after / (100 / 60))
     })
 
-    it('gates campaigns on Marketing and one at a time', () => {
+    it('gates campaigns on Marketing and rooms, and runs different kinds side by side', () => {
         const state = blankState()
         expect(T.campaignBlocker(state, 'flyers', 0)).toBeNull()
         expect(T.campaignBlocker(state, 'tv', 0)).toMatch(/Marketing/)
-        const running = blankState({ campaign: { id: 'flyers', until: HOUR }, upgrades: { cage: 0, marketing: 2, decor: 0, crew: 0 } })
-        expect(T.campaignBlocker(running, 'billboard', 0)).toMatch(/running/)
+        expect(T.campaignBlocker({ ...state, upgrades: { ...state.upgrades, marketing: 5 } }, 'invites', 0)).toMatch(/High Limit/)
+        expect(T.campaignBlocker({ ...state, zones: ['backroom', 'main', 'pit', 'lounge', 'highlimit'], upgrades: { ...state.upgrades, marketing: 5 } }, 'invites', 0)).toBeNull()
+        const running = blankState({ campaigns: [{ id: 'flyers', until: HOUR }], upgrades: { cage: 0, marketing: 2, decor: 0, hospitality: 0, crew: 0 } })
+        expect(T.campaignBlocker(running, 'billboard', 0)).toBeNull()
         expect(T.campaignBlocker(running, 'flyers', 0)).toBeNull()
-        expect(T.campaignBlocker(running, 'billboard', HOUR)).toBeNull()
+        expect(T.activeCampaigns({ campaigns: [{ id: 'flyers', until: HOUR }, { id: 'billboard', until: 2 * HOUR }] }, 0).map(c => c.id)).toEqual(['flyers', 'billboard'])
+        expect(T.activeCampaign({ campaigns: [{ id: 'billboard', until: 2 * HOUR }, { id: 'flyers', until: HOUR }] }, HOUR)!.id).toBe('billboard')
+        // An older payload with a single campaign reads the same.
+        expect(T.campaignsOf({ campaign: { id: 'tv', until: 5 } })).toEqual([{ id: 'tv', until: 5 }])
         expect(T.campaignCost(state, 'flyers')).toBeGreaterThanOrEqual(T.MIN_CAMPAIGN_CHIPS)
         // At most a week queued: a TV ad six days out can't take another day.
-        const tv = blankState({ campaign: { id: 'tv', until: 6.5 * 24 * HOUR }, upgrades: { cage: 0, marketing: 4, decor: 0, crew: 0 } })
+        const tv = blankState({ campaign: { id: 'tv', until: 6.5 * 24 * HOUR }, upgrades: { cage: 0, marketing: 4, decor: 0, hospitality: 0, crew: 0 } })
         expect(T.campaignBlocker(tv, 'tv', 0)).toMatch(/week/)
         expect(T.campaignBlocker(tv, 'tv', 24 * HOUR)).toBeNull()
     })
 
     it('prices a stacked campaign 1.5× per run still queued, and back to 1× once it runs out', () => {
-        const state = blankState({ games: { plinko: 3, spinata: 3, limbo: 2 }, upgrades: { cage: 0, marketing: 4, decor: 0, crew: 0 } })
+        const state = blankState({ games: { plinko: 3, spinata: 3, limbo: 2 }, upgrades: { cage: 0, marketing: 4, decor: 0, hospitality: 0, crew: 0 } })
         const ms = T.findCampaign('billboard')!.ms
         const base = T.campaignCost(state, 'billboard', 0)
         expect(Math.abs(base - T.fullIncomePerHour(state) * T.findCampaign('billboard')!.costHours)).toBeLessThanOrEqual(50)
@@ -420,35 +447,42 @@ describe('visitors and ad campaigns', () => {
         }
     })
 
-    it('pays a campaign back while seats are empty and not once the floor is nearly full', () => {
+    it('pays a guests ad back on empty seats and a wealth ad on a full top floor, and none on a floor that is nearly full', () => {
         const maxed = blankState({
             zones: T.ZONES.map(zone => zone.id),
             games: Object.fromEntries(T.TYCOON_GAMES.map(game => [game.slug, T.MAX_LEVEL])),
-            upgrades: { cage: 5, marketing: 5, decor: 5, crew: 1 }
+            upgrades: { cage: 5, marketing: 5, decor: 12, hospitality: 5, crew: 1 }
         })
         // Even a maxed casino leaves seats empty without a campaign.
-        expect(T.occupancy(maxed, 0)).toBeLessThan(0.75)
-        for (const def of T.CAMPAIGNS) {
-            const price = T.campaignCost(maxed, def.id, 0)
-            const gain = T.guestChipsBetween({ ...maxed, campaign: { id: def.id, until: def.ms } }, 0, def.ms) - T.guestChipsBetween(maxed, 0, def.ms)
-            // Collected as it comes, the coins won back at RTP 0.97 beat the price by a clear margin…
-            expect(gain * 0.97, def.id).toBeGreaterThan(price * 1.15)
-            // …but filling a floor that is 85% full already doesn't pay.
-            expect(0.15 * T.fullIncomePerHour(maxed) * def.ms / HOUR * 0.97, def.id).toBeLessThan(price)
-        }
+        expect(T.occupancy(maxed, 0)).toBeLessThan(0.8)
+        const back = (state: ReturnType<typeof blankState>, id: import('../shared/tycoon').CampaignId) => V.campaignGain(T.floorView(state), id, 0).coins * 0.97 / T.campaignCost(state, id, 0)
+        // Every ad pays somewhere: the guests ads on a half-empty Main Floor or Pit, the wealth ads at the top.
+        const pit = blankState({
+            zones: ['backroom', 'main', 'pit'],
+            games: Object.fromEntries(T.TYCOON_GAMES.filter(g => ['backroom', 'main', 'pit'].includes(g.zone)).map(g => [g.slug, 3])),
+            upgrades: { cage: 2, marketing: 2, decor: 4, hospitality: 1, crew: 0 }
+        })
+        for (const id of ['flyers', 'billboard'] as const) expect(back(pit, id), id).toBeGreaterThan(1.15)
+        for (const id of ['invites', 'jet'] as const) expect(back(maxed, id), id).toBeGreaterThan(1)
+        expect(back(pit, 'invites')).toBeLessThan(1)
+        // On a floor the other guests ads already fill, one more doesn't pay.
+        const busy = { ...maxed, campaigns: [{ id: 'billboard' as const, until: 1e15 }, { id: 'tv' as const, until: 1e15 }] }
+        expect(V.campaignGain(T.floorView(busy), 'flyers', 0).coins * 0.97 / T.campaignCost(busy, 'flyers', 0)).toBeLessThan(1)
     })
 
     it('runs a campaign for chips, extends the same one and refuses another', async () => {
         const id = newPlayer()
         const t0 = Date.now()
         getTycoonState(id, t0)
+        // A Main Floor with empty seats, so the flyers bring guests.
+        db.update(casinoProfiles).set({ zones: ['backroom', 'main'], games: Object.fromEntries(T.TYCOON_GAMES.filter(g => g.zone === 'backroom' || g.zone === 'main').map(g => [g.slug, 1])) }).where(eq(casinoProfiles.playerId, id)).run()
         giveChips(id, 100_000)
         const before = getTycoonState(id, t0)
         const price = T.campaignCost(before, 'flyers')
         const ran = await startCampaign(id, 'flyers', t0)
         expect(ran.state.chips).toBe(100_000 - price)
         expect(ran.state.campaign).toEqual({ id: 'flyers', until: t0 + T.findCampaign('flyers')!.ms })
-        expect(ran.state.cage.perHour).toBeGreaterThan(before.cage.perHour)
+        expect(ran.state.floor.expectedPerHour).toBeGreaterThan(before.floor.expectedPerHour)
         expect(chipRows(id).at(-1)).toMatchObject({ reason: 'campaign:flyers', type: 'debit', amount: price })
 
         // Each run already queued makes the next one dearer: 1×, 1,5×, 2,25×…
@@ -474,9 +508,10 @@ describe('visitors and ad campaigns', () => {
         const fresh = getTycoonState(id, t0)
         giveChips(id, 1_000)
         const later = t0 + 3 * HOUR
-        const expected = T.cageAt(fresh, later)
+        // The ticks before the start, at the casino without the campaign.
+        const run = V.runFloor(T.floorView(fresh), luckSeed(id), t0, later, { cage: { stored: fresh.cage.stored, capacity: fresh.cage.capacity } })
         const after = await startCampaign(id, 'flyers', later)
-        expect(after.state.cage.stored).toBe(expected)
+        expect(after.state.cage.stored).toBe(run.stored)
     })
 })
 
@@ -714,7 +749,7 @@ describe('gem purchases', () => {
         const after = newPlayer()
         hubGems.set(after, 500)
         getTycoonState(after)
-        db.update(casinoProfiles).set({ zones: ['backroom', 'main', 'pit', 'lounge'], upgrades: { cage: 0, marketing: 0, decor: 0, crew: 1 } }).where(eq(casinoProfiles.playerId, after)).run()
+        db.update(casinoProfiles).set({ zones: ['backroom', 'main', 'pit', 'lounge'], upgrades: { cage: 0, marketing: 0, decor: 0, hospitality: 0, crew: 1 } }).where(eq(casinoProfiles.playerId, after)).run()
         expect(getTycoonState(after).builders).toBe(2)
         const hired = await buyWithGems(after, { item: 'builder' })
         expect(hired.state).toMatchObject({ builders: 3, gemBuilder: true })
@@ -846,7 +881,7 @@ describe('gem purchases', () => {
         hubGems.set(id, 500)
         getTycoonState(id)
         const maxed = Object.fromEntries(T.TYCOON_GAMES.map(game => [game.slug, game.levels.length]))
-        db.update(casinoProfiles).set({ zones: T.ZONES.map(zone => zone.id), games: maxed, upgrades: { cage: 5, marketing: 5, decor: 5, crew: 1 } }).where(eq(casinoProfiles.playerId, id)).run()
+        db.update(casinoProfiles).set({ zones: T.ZONES.map(zone => zone.id), games: maxed, upgrades: { cage: 5, marketing: 5, decor: 12, hospitality: 5, crew: 1 } }).where(eq(casinoProfiles.playerId, id)).run()
         const now = Date.now()
         const state = getTycoonState(id, now)
         const price = T.rushGems(state)
@@ -864,7 +899,7 @@ describe('gem purchases', () => {
         expect(T.rushGems(bought.state)).toBe(price)
     })
 
-    it('never makes a rush then the best campaign a cheaper way to coins than converting', () => {
+    it('never makes a rush a cheaper way to coins than converting, under any ads and rules', () => {
         // Every stage of a casino: each zone open, its games at each level, upgrades from none to the top.
         for (const [zi] of T.ZONES.entries()) {
             const open = T.ZONES.slice(0, zi + 1).map(zone => zone.id)
@@ -873,16 +908,20 @@ describe('gem purchases', () => {
                     const state = blankState({
                         zones: open,
                         games: Object.fromEntries(T.TYCOON_GAMES.filter(game => open.includes(game.zone)).map(game => [game.slug, level])),
-                        upgrades: { cage: upgrade, marketing: upgrade, decor: upgrade, crew: 0 }
+                        upgrades: { cage: upgrade, marketing: upgrade, decor: upgrade, hospitality: 0, crew: 0 }
                     })
                     const price = T.rushGems(state)
-                    for (const campaign of [null, ...T.CAMPAIGNS.map(c => c.id)]) {
-                        if (campaign && T.campaignBlocker(state, campaign, 0)) continue
-                        // Rush now, then the campaign: every coin the rush adds over its four hours,
-                        // collected as often as you like (no cage cap).
-                        const base = { ...state, campaign: campaign ? { id: campaign, until: T.RUSH_MS } : null }
-                        const extra = T.guestChipsBetween({ ...base, rushUntil: T.RUSH_MS }, 0, T.RUSH_MS) - T.guestChipsBetween(base, 0, T.RUSH_MS)
-                        expect(extra / price, `${open.at(-1)} L${level} upgrades ${upgrade} ${campaign}`).toBeLessThan(1_000)
+                    const open_ = T.CAMPAIGNS.filter(c => !T.campaignBlocker(state, c.id, 0)).map(c => c.id)
+                    // Every mix of the ads the casino can run (none, each, all) under every rule.
+                    const mixes = [[], ...open_.map(id => [id]), open_, open_.filter(id => T.findCampaign(id)!.goal === 'wealth')]
+                    for (const mix of mixes) {
+                        for (const rules of V.ruleCombos(state)) {
+                            // Rush now with the ads running, under any rules: every coin the rush adds over its
+                            // four hours, collected as often as you like (no cage cap).
+                            const base = { ...state, rules, campaigns: mix.map(id => ({ id, until: T.RUSH_MS })) }
+                            const extra = (T.guestsPerHour({ ...base, rushUntil: T.RUSH_MS }, 0) - T.guestsPerHour(base, 0)) * T.RUSH_MS / HOUR
+                            expect(extra / price, `${open.at(-1)} L${level} upgrades ${upgrade} ${mix.join('+')} ${JSON.stringify(rules)}`).toBeLessThan(1_000)
+                        }
                     }
                 }
             }

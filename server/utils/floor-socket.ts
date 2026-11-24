@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import type { ZoneId } from '#shared/tycoon'
+import { decorLook, type ZoneId } from '#shared/tycoon'
 // The floor plan lives with the client's floor renderer; the server reads the same walkable grid.
 import { NavGrid } from '../../shared/floor/nav'
 import { db } from '../database'
@@ -36,7 +36,8 @@ export const dbPresenceSource: PresenceSource = {
     walkable(casinoId) {
         const casino = peekCasino(casinoId)
         const zones = new Set<ZoneId>(casino.zones.length ? casino.zones : ['backroom'])
-        const decor = Math.max(0, Math.min(5, Math.round(casino.upgrades.decor ?? 0)))
+        // The floor's look from the 0-12 Decor level, the same mapping the client draws with.
+        const decor = decorLook(casino.upgrades.decor ?? 0)
         const nav = new NavGrid(zones, decor)
         return (x, y) => nav.isWalkable(x, y)
     },

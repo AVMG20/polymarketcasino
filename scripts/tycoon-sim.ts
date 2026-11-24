@@ -18,6 +18,13 @@
 // that never sees a campaign runs next to the real one: the difference at
 // each collect is what the campaigns brought.
 //
+// The cage accrues through the visitor model (shared/visitors.ts `runFloor`):
+// tiers, seats, house rules and the per-tick luck, seeded per profile, exactly
+// as the server does. Players judge campaigns and house rules on the expected
+// numbers (no luck): at each session start they run the rules that earn the
+// most until the next session (the casual player only at the day's first
+// session), within the ten-minute cooldown.
+//
 // Daily missions (shared/missions.ts) pay coins: three a day, drawn at the
 // day's first session with rewards from the casino's full guest income, plus
 // the bonus for all three. The casual player clears two a day, the regular
@@ -38,7 +45,7 @@ import { COINS_PER_GEM } from '../shared/economy'
 import { CASINO_STARS, starLevel } from '../shared/stars'
 import { BONUS_HOURS, findMission, MISSIONS, missionReward, pickMissions } from '../shared/missions'
 import {
-    activeCampaign,
+    activeCampaigns,
     BUILDER_GEMS,
     builderCount,
     campaignBlocker,
@@ -47,8 +54,6 @@ import {
     type CampaignId,
     buildBlocker,
     cageCapacity,
-    guestChipsBetween,
-    guestsPerHour,
     fullIncomePerHour,
     nextCost,
     occupancy,
@@ -65,8 +70,25 @@ import {
     type BuildKind,
     type Construction,
     type TycoonState,
+    type RunningCampaignRef,
     type UpgradeId
 } from '../shared/tycoon'
+import {
+    DEFAULT_RULES,
+    expectedBetween,
+    expectedFloor,
+    expectedPerHour,
+    floorNow,
+    ruleCombos,
+    RULES_COOLDOWN_MS,
+    runFloor,
+    seatedTotal,
+    seedOf,
+    unlockedRules,
+    VISITOR_TIERS,
+    type FloorView,
+    type HouseRules
+} from '../shared/visitors'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -135,32 +157,41 @@ const STEP_MS = 5_000
 
 type SimState = TycoonState & {
     cageAt: number
-    /** The same cage without any campaign: what the campaigns brought shows at each collect. */
-    shadow: number
-    /** The campaign whose coins sit in the cage since the last collect. */
-    campaignTag: CampaignId | null
+    /** Per campaign that ran since the last collect: the same cage without that one (the others ran as they did). */
+    shadows: Partial<Record<CampaignId, number>>
+    rules: HouseRules
+    rulesAt: number | null
+    seed: number
 }
 
-function newState(now: number): SimState {
-    return {
+const view = (state: SimState): FloorView => ({ zones: state.zones, games: state.games, upgrades: state.upgrades, rushUntil: state.rushUntil, campaign: null, campaigns: state.campaigns ?? [], rules: state.rules })
+
+function newState(now: number, seed = 0): SimState {
+    const state: SimState = {
         serverNow: now,
         chips: 0,
         zones: ['backroom'],
         games: Object.fromEntries(TYCOON_GAMES.filter(g => g.starter).map(g => [g.slug, 1])),
-        upgrades: { cage: 0, marketing: 0, decor: 0, crew: 0 },
+        upgrades: { cage: 0, marketing: 0, decor: 0, hospitality: 0, crew: 0 },
         constructions: [],
         builders: 1,
         gemBuilder: false,
         cage: { stored: STARTER_CAGE, capacity: cageCapacity(0), perHour: 0 },
         rushUntil: null,
         campaign: null,
+        campaigns: [],
         golden: [],
         progress: 0,
         gemsEnabled: true,
         cageAt: now,
-        shadow: STARTER_CAGE,
-        campaignTag: null
+        shadows: {},
+        rules: { ...DEFAULT_RULES },
+        rulesAt: null,
+        seed,
+        floor: undefined as unknown as TycoonState['floor']
     }
+    state.floor = floorNow(view(state), seed, now)
+    return state
 }
 
 interface Tally {
@@ -186,18 +217,38 @@ interface Tally {
     starDays: (number | null)[]
     /** Chip balance at the end of each day. */
     chipsEndOfDay: number[]
+    /** Guest income (before the cage cap) by hour start and by day. */
+    incomeByHour: Map<number, number>
+    incomeByDay: number[]
+    /** Coins collected from the cage by day (the starter cage included). */
+    cageByDay: number[]
+    /** Hours run under each rule set (by stage zone). */
+    ruleHours: Map<string, number>
 }
 
+/** The cage up to `to` through the tick model (lazily: before anything changes the floor or reads the cage). */
 function accrue(state: SimState, to: number, tally: Tally) {
     if (to <= state.cageAt) return
     const capacity = cageCapacity(state.upgrades.cage)
-    const gained = guestChipsBetween(state, state.cageAt, to)
-    const before = state.cage.stored
-    state.cage.stored = Math.max(before, Math.min(capacity, before + gained))
-    tally.cageLost += gained - (state.cage.stored - before)
-    const plain = guestChipsBetween({ ...state, campaign: null }, state.cageAt, to)
-    state.shadow = Math.max(state.shadow, Math.min(capacity, state.shadow + plain))
-    if (activeCampaign(state, state.cageAt)) state.campaignTag = state.campaign!.id
+    const startOf = state.cage.stored
+    const run = runFloor(view(state), state.seed, state.cageAt, to, { cage: { stored: state.cage.stored, capacity }, hours: true })
+    state.cage.stored = run.stored
+    tally.cageLost += run.lost
+    for (const hour of run.hours) {
+        const day = Math.floor(hour.at / DAY)
+        tally.incomeByHour.set(hour.at, (tally.incomeByHour.get(hour.at) ?? 0) + hour.income)
+        tally.incomeByDay[day] = (tally.incomeByDay[day] ?? 0) + hour.income
+    }
+    // Each campaign that runs in the stretch: the cage without it, the others as they ran. One that
+    // ran out earlier since the last collect follows the real cage's gain.
+    const running = (state.campaigns ?? []).filter(c => c.until > state.cageAt)
+    for (const id of Object.keys(state.shadows) as CampaignId[]) {
+        if (!running.some(c => c.id === id)) state.shadows[id] = Math.max(state.shadows[id]!, Math.min(capacity, state.shadows[id]! + run.income))
+    }
+    for (const c of running) {
+        const without = runFloor({ ...view(state), campaigns: running.filter(o => o.id !== c.id) }, state.seed, state.cageAt, to, { cage: { stored: state.shadows[c.id] ?? startOf, capacity } })
+        state.shadows[c.id] = without.stored
+    }
     state.cageAt = to
 }
 
@@ -221,7 +272,6 @@ function advance(state: SimState, to: number, tally: Tally) {
         state.constructions = state.constructions.filter(c => c !== next)
         apply(state, next)
     }
-    accrue(state, to, tally)
     state.serverNow = to
 }
 
@@ -275,18 +325,36 @@ function campaignGain(state: SimState, id: CampaignId, now: number, profile: Pro
     const def = CAMPAIGNS.find(c => c.id === id)!
     const until = now + def.ms
     const room = cageCapacity(state.upgrades.cage)
-    const withIt = { ...state, campaign: { id, until } }
-    const without = { ...state, campaign: null }
+    // On top of what runs already, judged with the rules the player would run with it.
+    const others = (state.campaigns ?? []).filter(c => c.id !== id)
+    const withList = [...others, { id, until }]
+    const withIt = { ...view(state), campaigns: withList, rules: bestRules(state, now, until, withList) }
+    // Against the rules the player would run without it (each side at its own best).
+    const without = { ...view(state), rules: bestRules(state, now, until, others) }
     // The cage holds what it gains until the first collect after the campaign ends.
     const stops = collectTimes(profile, now, until + DAY)
     const last = stops.find(at => at >= until) ?? until
     let gain = 0
     let from = now
     for (const at of [...stops.filter(t => t < last), last]) {
-        gain += Math.min(room, guestChipsBetween(withIt, from, at)) - Math.min(room, guestChipsBetween(without, from, at))
+        gain += Math.min(room, expectedBetween(withIt, from, at)) - Math.min(room, expectedBetween(without, from, at))
         from = at
     }
     return gain
+}
+
+/** The rules that earn the most (expected) from `now` to `until`, with `campaigns` running. */
+function bestRules(state: SimState, now: number, until: number, campaigns: readonly RunningCampaignRef[] = state.campaigns ?? []): HouseRules {
+    let best = state.rules
+    let most = -Infinity
+    for (const rules of ruleCombos(state)) {
+        const coins = expectedBetween({ ...view(state), campaigns, rules }, now, until)
+        if (coins > most + 1e-6) {
+            most = coins
+            best = rules
+        }
+    }
+    return best
 }
 
 interface Result {
@@ -301,7 +369,7 @@ function simulate(profile: Profile): Result {
     const rng = seededRng(seed)
     // Missions draw from their own stream, so the bets replay as before.
     const missionRng = seededRng(seed + 1_000)
-    const state = newState(0)
+    const state = newState(0, seedOf(`${profile.name}-${seed}`))
     let coins = 0
     let gems = profile.startGems
     const tally: Tally = {
@@ -312,7 +380,11 @@ function simulate(profile: Profile): Result {
         chipsByDay: [],
         campaignRuns: Object.fromEntries(CAMPAIGNS.map(c => [c.id, { runs: 0, chips: 0, coins: 0 }])) as Tally['campaignRuns'],
         starDays: CASINO_STARS.map(() => null),
-        chipsEndOfDay: []
+        chipsEndOfDay: [],
+        incomeByHour: new Map(),
+        incomeByDay: [],
+        cageByDay: [],
+        ruleHours: new Map()
     }
     const milestones: Record<string, number | null> = Object.fromEntries(MILESTONES.map(m => [m, null]))
     let firstSession = true
@@ -339,13 +411,16 @@ function simulate(profile: Profile): Result {
         for (let i = 0; i < level; i++) tally.starDays[i] ??= Math.round(clock / DAY * 10) / 10
     }
     const collect = (day: number) => {
+        accrue(state, clock, tally)
         const amount = Math.floor(state.cage.stored)
-        if (state.campaignTag) tally.campaignRuns[state.campaignTag].coins += state.cage.stored - state.shadow
-        state.campaignTag = null
+        // What the campaigns brought since the last collect, shared among those that ran.
+        // What each campaign brought since the last collect: the cage less the same cage without it.
+        for (const [id, shadow] of Object.entries(state.shadows) as [CampaignId, number][]) tally.campaignRuns[id].coins += state.cage.stored - shadow
+        state.shadows = {}
         state.cage.stored -= amount
-        state.shadow = state.cage.stored
         coins += amount
         tally.cage += amount
+        tally.cageByDay[day] = (tally.cageByDay[day] ?? 0) + amount
         betCoins(day)
     }
     const betCoins = (day: number) => {
@@ -427,29 +502,44 @@ function simulate(profile: Profile): Result {
                     advance(state, now, tally)
                     const rushPrice = rushGems(state)
                     if (now === t0 && (state.rushUntil ?? 0) < now && gems >= rushPrice + 10 && state.zones.includes('pit')) {
+                        clock = now
                         spendGems(rushPrice)
                         accrue(state, now, tally)
                         state.rushUntil = now + RUSH_MS
                     }
                 }
 
-                // An ad campaign at the start of a session when none runs: the one
-                // that pays best against the cage and the player's collect times,
-                // when it pays a fifth over its price and leaves chips to build.
-                if (now === t0 && activeCampaign(state, now) === null) {
+                // Ad campaigns at the start of a session, several kinds at once: each one
+                // not running yet that pays a fifth over its price (on top of what runs,
+                // against the cage and the player's collect times) and leaves chips to
+                // build, the best first.
+                for (; now === t0;) {
                     const best = CAMPAIGNS
-                        .filter(c => campaignBlocker(state, c.id, now) === null)
+                        .filter(c => !activeCampaigns(state, now).some(r => r.id === c.id) && campaignBlocker(state, c.id, now) === null)
                         .map(c => ({ id: c.id, price: campaignCost(state, c.id, now), gain: campaignGain(state, c.id, now, profile) * RTP }))
                         .filter(c => c.gain > c.price * 1.2 && state.chips >= c.price * 2)
                         .sort((a, b) => (b.gain - b.price) - (a.gain - a.price))[0]
-                    if (best) {
+                    if (!best) break
+                    accrue(state, now, tally)
+                    state.chips -= best.price
+                    tally.campaigns += best.price
+                    tally.campaignRuns[best.id].runs++
+                    tally.campaignRuns[best.id].chips += best.price
+                    state.campaigns = [...(state.campaigns ?? []).filter(c => c.id !== best.id && c.until > now), { id: best.id, until: now + CAMPAIGNS.find(c => c.id === best.id)!.ms }]
+                }
+
+                // House rules: the set that earns the most until the next session
+                // (the casual player looks once a day), within the cooldown.
+                if (now === t0 && (index === 0 || profile.name !== 'casual') && unlockedRules(state).length) {
+                    const pick = bestRules(state, now, nextSessionAt)
+                    const ready = state.rulesAt === null || now >= state.rulesAt + RULES_COOLDOWN_MS
+                    if (ready && JSON.stringify(pick) !== JSON.stringify(state.rules)) {
                         accrue(state, now, tally)
-                        state.chips -= best.price
-                        tally.campaigns += best.price
-                        tally.campaignRuns[best.id].runs++
-                        tally.campaignRuns[best.id].chips += best.price
-                        state.campaign = { id: best.id, until: now + CAMPAIGNS.find(c => c.id === best.id)!.ms }
+                        state.rules = pick
+                        state.rulesAt = now
                     }
+                    const key = `${state.zones.at(-1)} ${ruleKey(state.rules)}`
+                    tally.ruleHours.set(key, (tally.ruleHours.get(key) ?? 0) + (nextSessionAt - now) / HOUR)
                 }
 
                 // Build: quick steps (done before the session ends) first, then the
@@ -478,7 +568,10 @@ function simulate(profile: Profile): Result {
                         tally.firstSession.longestMs = Math.max(tally.firstSession.longestMs, option.cost.buildMs)
                     }
                     const c: Construction = { kind: option.kind, id: option.id, level: levelOf(state, option.kind, option.id) + 1, startedAt: now, readyAt: now + option.cost.buildMs }
-                    if (option.cost.buildMs <= 0) apply(state, c)
+                    if (option.cost.buildMs <= 0) {
+                        accrue(state, now, tally)
+                        apply(state, c)
+                    }
                     else state.constructions.push(c)
                 }
 
@@ -510,7 +603,12 @@ function simulate(profile: Profile): Result {
         }
         tally.chipsEndOfDay[day] = state.chips
     }
+    accrue(state, clock, tally)
     return { profile: profile.name, milestones, tally }
+}
+
+function ruleKey(rules: HouseRules): string {
+    return [rules.door !== 'open' ? `door:${rules.door}` : '', rules.vip ? 'vip' : ''].filter(Boolean).join('+') || 'none'
 }
 
 const results = PROFILES.map(simulate)
@@ -551,29 +649,103 @@ for (const r of results) {
     console.log(`${r.profile.padEnd(9)}${parts.join(' | ')}`)
 }
 
-// What one campaign nets at each stage, run with an empty cage at 8:00 by a
-// player who collects every 2 hours (no cage loss) or on the casual's schedule.
-console.log('\nCampaign net by stage (% of its price; collect every 2 h / casual schedule; at the Marketing level of the stage):')
+// The stages the tables below read: every zone open up to one, its games at
+// level 1, 3 or 5, the upgrades as far as that zone allows.
 const often: Profile = { ...PROFILES[0]!, sessions: Array.from({ length: 12 }, (_, i) => ({ at: i * 2, minutes: 0 })) }
-for (const [zi, zone] of ZONES.entries()) {
-    for (const level of [1, 3, 5]) {
-        const open = ZONES.slice(0, zi + 1).map(z => z.id)
-        const upgrade = Math.min(5, zi)
-        const stage: SimState = {
-            ...newState(0),
-            zones: open,
-            games: Object.fromEntries(TYCOON_GAMES.filter(g => open.includes(g.zone)).map(g => [g.slug, level])),
-            upgrades: { cage: upgrade, marketing: upgrade, decor: upgrade, crew: 0 }
-        }
-        const at = 8 * HOUR
-        const cells = CAMPAIGNS.map((c) => {
-            if (campaignBlocker(stage, c.id, at)) return pad('-', 17)
-            const price = campaignCost(stage, c.id, at)
-            const net = (p: Profile) => `${Math.round((campaignGain(stage, c.id, at, p) * RTP / price - 1) * 100)}%`
-            return pad(`${net(often)} / ${net(PROFILES[0]!)}`, 17)
-        })
-        console.log(`${`${zone.id} L${level}`.padEnd(13)} occupancy ${pad(Math.round(occupancy(stage, at) * 100), 3)}%  ${CAMPAIGNS.map((c, i) => `${c.id} ${cells[i]}`).join('  ')}`)
+/** Levels of an upgrade the open zones allow. */
+function upgradeCap(id: UpgradeId, open: readonly string[]): number {
+    const def = UPGRADES.find(u => u.id === id)!
+    let level = 0
+    while (level < def.levels.length && (def.requiresZone[level] === null || open.includes(def.requiresZone[level]!))) level++
+    return level
+}
+/** A casino with the zones up to `zi` open, every game there at `level`, Decor and Hospitality as far as the zones allow, Cage and Marketing at the zone's index. */
+function stageState(zi: number, level: number): SimState {
+    const open = ZONES.slice(0, zi + 1).map(z => z.id)
+    const upgrade = Math.min(5, zi)
+    return {
+        ...newState(0, seedOf(`stage-${seed}`)),
+        zones: open,
+        games: Object.fromEntries(TYCOON_GAMES.filter(g => open.includes(g.zone)).map(g => [g.slug, level])),
+        upgrades: { cage: upgrade, marketing: upgrade, decor: upgradeCap('decor', open), hospitality: upgradeCap('hospitality', open), crew: 0 }
     }
+}
+const STAGES = ZONES.flatMap((zone, zi) => [1, 3, 5].map(level => ({ name: `${zone.id} L${level}`, state: stageState(zi, level) })))
+const withAds = (stage: SimState, ids: CampaignId[]) => ({ ...view(stage), campaigns: ids.filter(id => !campaignBlocker(stage, id, 0)).map(id => ({ id, until: 1e15 })) })
+const seated = (v: FloorView, at?: number) => {
+    const f = expectedFloor(v, at)
+    return seatedTotal(f.visitors) / Math.max(1, f.seats)
+}
+
+// How full the floor is: idle, with each ad on its own, with every ad it can run, and under each house rule.
+console.log('\nFloor fill by stage (expected share of seats taken; ads at the stage\'s Marketing level):')
+console.log(`${'stage'.padEnd(13)}${['idle', ...CAMPAIGNS.map(c => c.id), 'all ads', 'limit T', 'no T', 'VIP'].map(h => pad(h, 9)).join('')}`)
+for (const { name, state: stage } of STAGES) {
+    const open = unlockedRules(stage)
+    const cells = [
+        seated(view(stage)),
+        ...CAMPAIGNS.map(c => (campaignBlocker(stage, c.id, 0) ? NaN : seated(withAds(stage, [c.id]), 0))),
+        seated(withAds(stage, CAMPAIGNS.map(c => c.id)), 0),
+        open.includes('door') ? seated({ ...view(stage), rules: { ...DEFAULT_RULES, door: 'limit' } }) : NaN,
+        open.includes('door') ? seated({ ...view(stage), rules: { ...DEFAULT_RULES, door: 'closed' } }) : NaN,
+        open.includes('vip') ? seated({ ...view(stage), rules: { ...DEFAULT_RULES, vip: true } }) : NaN
+    ]
+    console.log(`${name.padEnd(13)}${cells.map(c => pad(Number.isNaN(c) ? '-' : `${Math.round(c * 100)}%`, 9)).join('')}`)
+}
+
+// What one campaign nets at each stage, run on its own with an empty cage at 8:00 by a
+// player who collects every 2 hours (no cage loss) or on the casual's schedule.
+console.log('\nAd return by stage (coins back × RTP ÷ chips paid; collect every 2 h / casual schedule) and the better kind of ad:')
+for (const { name, state: stage } of STAGES) {
+    const at = 8 * HOUR
+    const ret: Record<string, number> = {}
+    const cells = CAMPAIGNS.map((c) => {
+        if (campaignBlocker(stage, c.id, at)) return pad('-', 16)
+        const price = campaignCost(stage, c.id, at)
+        const back = (p: Profile) => campaignGain(stage, c.id, at, p) * RTP / price
+        ret[c.id] = back(often)
+        return pad(`${back(often).toFixed(2)} / ${back(PROFILES[0]!).toFixed(2)}`, 16)
+    })
+    const best = (goal: string) => Math.max(0, ...CAMPAIGNS.filter(c => c.goal === goal && ret[c.id] !== undefined).map(c => ret[c.id]!))
+    const verdict = best('wealth') > best('guests') ? 'wealth' : best('guests') >= 1 ? 'guests' : 'none pays'
+    console.log(`${name.padEnd(13)}${CAMPAIGNS.map((c, i) => `${c.id} ${cells[i]}`).join(' ')}  → ${verdict}`)
+}
+
+// Payback of single steps: chips ÷ the expected coins an hour they add (at the stage they are bought in).
+console.log('\nPayback (chips ÷ expected coins an hour gained), hours:')
+const payback = (label: string, stage: SimState, kind: BuildKind, id: string) => {
+    const level = levelOf(stage, kind, id)
+    const cost = nextCost(stage, kind, id)
+    if (!cost) return
+    const after: SimState = kind === 'zone'
+        ? { ...stage, zones: [...stage.zones, id as never] }
+        : kind === 'game' ? { ...stage, games: { ...stage.games, [id]: level + 1 } } : { ...stage, upgrades: { ...stage.upgrades, [id]: level + 1 } }
+    const gain = expectedPerHour(view(after)) - expectedPerHour(view(stage))
+    console.log(`  ${label.padEnd(34)} ${pad(fmt(cost.chips), 8)} chips  +${pad(fmt(gain), 5)}/h  ${gain > 0 ? pad(fmt(cost.chips / gain), 6) : '     -'} h`)
+}
+{
+    const at = (zi: number, level: number, tweak: (s: SimState) => void = () => {}) => {
+        const s = stageState(zi, level)
+        tweak(s)
+        return s
+    }
+    payback('early: Limbo (backroom)', at(0, 1, s => delete s.games.limbo), 'game', 'limbo')
+    payback('early: Roulette (main)', at(1, 1, s => delete s.games.roulette), 'game', 'roulette')
+    payback('early: Decor 1 (main)', at(1, 2, s => (s.upgrades.decor = 0)), 'upgrade', 'decor')
+    payback('early: Marketing 1→2 (main)', at(1, 2, s => (s.upgrades.marketing = 1)), 'upgrade', 'marketing')
+    payback('mid: Blackjack 3→4 (pit)', at(2, 3), 'game', 'blackjack')
+    payback('mid: Decor 4→5 (lounge)', at(3, 3, s => (s.upgrades.decor = 4)), 'upgrade', 'decor')
+    payback('mid: Hospitality 1→2 (lounge)', at(3, 3, s => (s.upgrades.hospitality = 1)), 'upgrade', 'hospitality')
+    payback('mid: Xenoslot 3→4 (lounge)', at(3, 3), 'game', 'xenoslot')
+    payback('late: Decor 8→9 (high limit)', at(4, 4, s => (s.upgrades.decor = 8)), 'upgrade', 'decor')
+    payback('late: Hospitality 3→4 (high limit)', at(4, 4, s => (s.upgrades.hospitality = 3)), 'upgrade', 'hospitality')
+    payback('late: Marketing 4→5 (high limit)', at(4, 4), 'upgrade', 'marketing')
+    payback('late: Baccarat 4→5 (high limit)', at(4, 4), 'game', 'baccarat')
+    payback('max: Decor 11→12 (penthouse)', at(5, 5, s => (s.upgrades.decor = 11)), 'upgrade', 'decor')
+    payback('max: Hospitality 4→5 (penthouse)', at(5, 5, s => (s.upgrades.hospitality = 4)), 'upgrade', 'hospitality')
+    payback('max: Mines 4→5 (penthouse)', at(5, 4), 'game', 'mines')
+    payback('zone: Slot Lounge', at(2, 5), 'zone', 'lounge')
+    payback('zone: Penthouse', at(4, 5), 'zone', 'penthouse')
 }
 
 console.log('\nFirst session and build times:')
@@ -610,10 +782,65 @@ const maxed = {
     ...newState(0),
     zones: ZONES.map(z => z.id),
     games: Object.fromEntries(TYCOON_GAMES.map(g => [g.slug, 5])),
-    upgrades: { cage: 5, marketing: 5, decor: 5, crew: 1 }
+    upgrades: { cage: 5, marketing: 5, decor: 12, hospitality: 5, crew: 1 }
 }
 console.log(`\nCatalog: ${fmt(catalog)} chips, ${(catalogMs / HOUR).toFixed(0)} build hours.`)
-console.log(`Guest income at max: ${fmt(guestsPerHour(maxed, 0) * 24)} coins/day without a campaign, ${fmt(fullIncomePerHour(maxed) * 24)} with every seat full (cage holds ${fmt(cageCapacity(5))}).`)
+console.log(`Guest income at max: ${fmt(expectedPerHour(view(maxed)) * 24)} coins/day expected without a campaign (default rules; best rules ${fmt(Math.max(...ruleCombos(maxed).map(rules => expectedPerHour({ ...view(maxed), rules }))) * 24)}), ${fmt(fullIncomePerHour(maxed) * 24)} with every seat full (cage holds ${fmt(cageCapacity(5))}).`)
+
+// The floor's luck at each stage: 30 days at a fixed build, default rules, no campaign.
+console.log(`\nLuck by stage (30 days, default rules, no campaign): expected/h, daily ±sd and min..max of the mean, hourly p10/p50/p90, Whale visits a day (average stay, coins each); seated ${VISITOR_TIERS.map(t => t.name).join('/')}:`)
+const pct = (values: number[], q: number) => [...values].sort((a, b) => a - b)[Math.floor(q * (values.length - 1))]!
+for (const { name, state: stage } of STAGES.filter((_, i) => i % 3 !== 1)) {
+    const daily: number[] = []
+    const hourly: number[] = []
+    const visits: { ms: number, spent: number }[] = []
+    const t0 = 1_000 * DAY
+    for (let d = 0; d < 30; d++) {
+        let total = 0
+        for (let h = 0; h < 24; h++) {
+            const at = t0 + d * DAY + h * HOUR
+            const run = runFloor(view(stage), stage.seed, at, at + HOUR)
+            hourly.push(run.income)
+            total += run.income
+        }
+        daily.push(total)
+    }
+    for (const guest of runFloor(view(stage), stage.seed, t0, t0 + 30 * DAY, { notable: true }).notable) visits.push({ ms: (guest.until ?? guest.at) - guest.at, spent: guest.spent })
+    const whales = visits.length
+    const stay = visits.length ? visits.reduce((a, v) => a + v.ms, 0) / visits.length / HOUR : 0
+    const each = visits.length ? visits.reduce((a, v) => a + v.spent, 0) / visits.length : 0
+    const mean = daily.reduce((a, b) => a + b, 0) / daily.length
+    const sd = Math.sqrt(daily.reduce((a, b) => a + (b - mean) ** 2, 0) / daily.length)
+    const floor = expectedFloor(view(stage))
+    const odds = Object.values(floor.visitors).map(v => v / Math.max(1e-9, Object.values(floor.visitors).reduce((a, b) => a + b, 0)))
+    console.log(`${name.padEnd(13)} ${pad(fmt(expectedPerHour(view(stage))), 6)}/h  ±${(sd / mean * 100).toFixed(1)}% ${(Math.min(...daily) / mean).toFixed(2)}..${(Math.max(...daily) / mean).toFixed(2)}  hour ${fmt(pct(hourly, 0.1))}/${fmt(pct(hourly, 0.5))}/${fmt(pct(hourly, 0.9))}  whales ${(whales / 30).toFixed(1)}/day (${stay.toFixed(1)} h, ${fmt(each)})  seated ${odds.map(o => `${Math.round(o * 100)}`).join('/')}%`)
+}
+
+// Each house rule against the default rules, by stage: idle / Flyers / every ad the stage
+// can run. Every option should lose somewhere.
+console.log('\nHouse rules by stage (expected change vs the default rules, %: idle / Flyers / all ads):')
+console.log(`${'stage'.padEnd(13)}${['limit Tourists', 'no Tourists', 'VIP room'].map(h => h.padEnd(20)).join('')}best idle / best with all ads`)
+for (const { name, state: stage } of STAGES) {
+    const open = unlockedRules(stage)
+    const views = [view(stage), withAds(stage, ['flyers']), withAds(stage, CAMPAIGNS.map(c => c.id))]
+    const cell = (rules: Partial<HouseRules>, rule: keyof HouseRules) => !open.includes(rule)
+        ? '-'
+        : views.map(v => `${Math.round((expectedPerHour({ ...v, rules: { ...DEFAULT_RULES, ...rules } }, 0) / expectedPerHour({ ...v, rules: DEFAULT_RULES }, 0) - 1) * 100)}`).join(' / ')
+    const best = (v: FloorView) => ruleKey(ruleCombos(stage).map(rules => ({ rules, coins: expectedPerHour({ ...v, rules }, 0) })).sort((a, b) => b.coins - a.coins)[0]!.rules)
+    console.log(`${name.padEnd(13)}${[cell({ door: 'limit' }, 'door'), cell({ door: 'closed' }, 'door'), cell({ vip: true }, 'vip')].map(c => c.padEnd(20)).join('')}${best(views[0]!)} / ${best(views[2]!)}`)
+}
+
+console.log('\nRules the players ran (hours, by the newest zone open):')
+for (const r of results) {
+    const rows = [...r.tally.ruleHours.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
+    console.log(`${r.profile.padEnd(9)}${rows.map(([key, hours]) => `${key} ${fmt(hours)}h`).join(' | ')}`)
+}
+
+console.log('\nGuest income (before the cage cap) / coins collected, by day (first 14 days):')
+for (const r of results) {
+    console.log(`${r.profile.padEnd(9)}${r.tally.incomeByDay.slice(0, 14).map(v => pad(fmtShort(v), 7)).join('')}`)
+    console.log(`${''.padEnd(9)}${r.tally.cageByDay.slice(0, 14).map(v => pad(fmtShort(v ?? 0), 7)).join('')}`)
+}
 
 // Gems against progress.
 const regular = results.find(r => r.profile === 'regular')!

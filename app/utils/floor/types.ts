@@ -1,5 +1,6 @@
 import type { AvatarLook, SkinId } from '#shared/cosmetics'
 import type { Archetype, ZoneId } from '#shared/tycoon'
+import type { VisitorCounts } from '#shared/visitors'
 
 /**
  * What the casino floor draws. The page builds a FloorScene from the tycoon
@@ -50,11 +51,15 @@ export interface FloorScene {
     }
     /** Decor upgrade level 0..5: carpet, walls, lights, chandeliers. */
     decor: number
-    /** Drives how many NPC guests walk around (more income = busier floor). */
+    /** Guest coins an hour: what the playing guests' coin pops add up to (and how busy the floor is without `visitors`). */
     guestsPerHour: number
-    /** Visitors to draw (visitorCount from #shared/tycoon). When set, it wins over the guestsPerHour estimate. */
-    visitors?: number
-    /** Visitors waiting at the door because every seat is taken (visitorQueue): the floor may draw a queue at the entrance. */
+    /**
+     * Seated guests per tier (FloorNow.visitors): each tier walks in its own
+     * clothes with a ring in its colour, a Whale glows. When set, it wins over
+     * the guestsPerHour estimate. At most MAX_GUESTS are drawn (scaled down per tier).
+     */
+    visitors?: VisitorCounts
+    /** Guests turned away at the door this tick (FloorNow.turnedAway): the floor may draw a queue at the entrance. */
     queue?: number
     /** The ad campaign running (flyers, billboard, tv), or null: the floor may show it (a billboard, a TV). */
     campaign?: string | null
@@ -92,6 +97,9 @@ export interface FloorMove {
     y: number
     walk: boolean
 }
+
+/** At most this many NPC guests walk the floor (a phone's budget). */
+export const MAX_GUESTS = 60
 
 /** At most this many other players are drawn (the owner first). */
 export const MAX_REMOTES = 20
