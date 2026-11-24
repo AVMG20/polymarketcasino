@@ -13,7 +13,7 @@ export function useCasinoStats() {
     function show() {
         open.value = true
     }
-    /** The top bar button: a tap that just closed the panel (outside tap) doesn't reopen it. */
+    /** A toggle button: a tap that just closed the panel (outside tap) doesn't reopen it. */
     function toggle() {
         if (open.value) close()
         else if (Date.now() - closedAt > 350) open.value = true

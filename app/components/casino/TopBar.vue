@@ -44,8 +44,11 @@ onMounted(() => {
         <Button size="icon" variant="ghost" class="max-sm:size-11" title="Leaderboard" aria-label="Leaderboard" :aria-expanded="leaderboard.open.value" @click="leaderboard.toggle()">
           <Trophy class="size-4 text-[#ffc93a]" :stroke-width="2.5" />
         </Button>
-        <Button v-if="!onStats" size="icon" variant="ghost" class="max-sm:size-11" title="Casino stats" aria-label="Casino stats" :aria-expanded="casinoStats.open.value" @click="casinoStats.toggle()">
-          <ChartNoAxesColumn class="size-4" />
+        <!-- Your game stats. The casino's guests and income charts open from the guests popover. -->
+        <Button v-if="!onStats" as-child size="icon" variant="ghost" class="max-sm:size-11" title="Game stats">
+          <NuxtLink to="/stats" aria-label="Game stats" @click="casinoStats.close()">
+            <ChartNoAxesColumn class="size-4" />
+          </NuxtLink>
         </Button>
         <CasinoCoinChip v-if="away" :amount="coins" />
         <!-- On My Casino the HUD shows the chips (animated). -->
