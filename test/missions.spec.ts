@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { db } from '../server/database'
 import { coinTransactions, dailyMissions } from '../server/database/schema'
 import { claimMission, ensureMissions, parseMissionBody, recordMissions } from '../server/utils/missions'
+import { serverGame } from '../server/utils/games'
 import { playRound } from '../server/utils/rounds'
 import { collectCage, getTycoonState, startBuild, startCampaign } from '../server/utils/tycoon'
 import { writeTx } from '../server/database'
 import { amsterdamDay } from '../shared/economy'
 import {
-    BONUS_MISSION, MISSION_FLOOR_PER_HOUR, MISSIONS, missionReward, pickMissions, roundMissionEvents, WELCOME_AFTER_MS,
+    BONUS_MISSION, bestMultiple, MISSION_FLOOR_PER_HOUR, MISSIONS, missionReward, pickMissions, roundMissionEvents, WELCOME_AFTER_MS,
     type MissionId
 } from '../shared/missions'
 import { seededRng } from '../shared/rng'
@@ -57,9 +58,33 @@ describe('mission rules', () => {
         expect(roundMissionEvents({ playerId: 'a', game: 'spinata', stake: 10, payout: 12 })).toEqual(['rounds', 'slot-wins'])
         expect(roundMissionEvents({ playerId: 'a', game: 'spinata', stake: 10, payout: 10 })).toEqual(['rounds'])
         expect(roundMissionEvents({ playerId: 'a', game: 'limbo', stake: 10, payout: 50 })).toEqual(['rounds', 'big-win'])
+        expect(roundMissionEvents({ playerId: 'a', game: 'limbo', stake: 10, payout: 70 })).toEqual(['rounds', 'big-win'])
+        expect(roundMissionEvents({ playerId: 'a', game: 'limbo', stake: 10, payout: 49.9 })).toEqual(['rounds'])
+        // One 7× ball in a three-ball Pegfall drop: 7.6× of one ball back on 3× staked.
+        expect(roundMissionEvents({ playerId: 'a', game: 'plinko', stake: 30, payout: 76, multiple: 7 })).toEqual(['rounds', 'big-win'])
+        expect(roundMissionEvents({ playerId: 'a', game: 'plinko', stake: 30, payout: 28, multiple: 1.4 })).toEqual(['rounds'])
         expect(roundMissionEvents({ playerId: 'a', game: 'blackjack', stake: 100, payout: 200 })).toEqual(['rounds', 'table-hands'])
         expect(roundMissionEvents({ playerId: 'a', game: 'dice', stake: 10, payout: 0, host: 'b' })).toEqual(['rounds', 'visit'])
         expect(roundMissionEvents({ playerId: 'a', game: 'dice', stake: 10, payout: 0, host: 'a' })).toEqual(['rounds'])
+    })
+
+    it('counts one 5× Pegfall ball in a drop of ten', () => {
+        const plinko = serverGame('plinko')!
+        let checked = 0
+        for (let seed = 1; seed <= 400 && checked < 3; seed++) {
+            const outcome = plinko.play({ bet: 10, options: { rows: 8, risk: 'low', balls: 10 }, rng: seededRng(seed) })
+            const hit = (outcome.result as { balls: { multiplier: number }[] }).balls.some(ball => ball.multiplier >= 5)
+            if (!hit || outcome.payout >= outcome.stake * 5) continue
+            checked++
+            expect(roundMissionEvents({ playerId: 'a', game: 'plinko', stake: outcome.stake, payout: outcome.payout, multiple: outcome.multiple })).toContain('big-win')
+        }
+        expect(checked).toBe(3)
+    })
+
+    it('takes the best single bet of a round', () => {
+        expect(bestMultiple([{ stake: 10, payout: 0 }, { stake: 10, payout: 360 }, { stake: 20, payout: 40 }])).toBe(36)
+        expect(bestMultiple([{ stake: 0, payout: 0 }])).toBe(0)
+        expect(bestMultiple([])).toBe(0)
     })
 
     it('sizes rewards from the full guest income, with a floor for young casinos', () => {

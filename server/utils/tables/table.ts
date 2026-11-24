@@ -334,6 +334,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
                     staked: normalizeCoins(result.staked),
                     payout: normalizeCoins(result.payout),
                     summary: { round: this.roundId, ...result.summary },
+                    multiple: result.multiple,
                     host: player.host
                 })
                 player.wagerIds = []

@@ -5,6 +5,7 @@ import { parseMagicHandsOptions, playMagicHands } from '#shared/games/magichands
 import { parsePlinkoOptions, playPlinko } from '#shared/games/plinko'
 import { parsePolyMastersOptions, playPolyMasters } from '#shared/games/polymasters'
 import { GAMES, type GameInfo } from '#shared/games/registry'
+import { bestMultiple } from '#shared/missions'
 import { parseRouletteBets, playRoulette, totalStake } from '#shared/games/roulette'
 import { parseWheelOptions, playWheel } from '#shared/games/wheel'
 import { costFor, formatCoins, payFor, sumCoins } from '#shared/money'
@@ -36,6 +37,8 @@ export interface PlayOutcome<T = unknown> {
     result: T
     /** Kept with the round in game_rounds. */
     summary: Record<string, unknown>
+    /** A round of several bets (balls, hands, a layout): the best return of one of them, × its bet (missions). */
+    multiple?: number
 }
 
 export interface ServerGame {
@@ -200,7 +203,8 @@ const implementations: Record<string, ServerGame> = {
                 stake,
                 payout: payFor(bet, result.win),
                 result,
-                summary: { bet, hands: parsed.placements.length, winners: result.winners.length, win: result.win }
+                summary: { bet, hands: parsed.placements.length, winners: result.winners.length, win: result.win },
+                multiple: Math.max(0, ...result.wins.map(hand => hand.multiplier))
             }
         }
     },
@@ -217,7 +221,8 @@ const implementations: Record<string, ServerGame> = {
                 stake,
                 payout: payFor(bet, result.multiplier),
                 result,
-                summary: { bet, rows: parsed.rows, risk: parsed.risk, balls: parsed.balls, slots: result.balls.map(ball => ball.slot), win: result.multiplier }
+                summary: { bet, rows: parsed.rows, risk: parsed.risk, balls: parsed.balls, slots: result.balls.map(ball => ball.slot), win: result.multiplier },
+                multiple: Math.max(0, ...result.balls.map(ball => ball.multiplier))
             }
         }
     },
@@ -252,7 +257,7 @@ const implementations: Record<string, ServerGame> = {
             if (stake > maxBet) throw new RangeError(`At most ${formatCoins(maxBet)} coins per spin`)
             const result = playRoulette(rng, bets)
             const payout = sumCoins(result.bets.map(b => b.payout))
-            return { stake, payout, result, summary: { pocket: result.pocket, bets: bets.length } }
+            return { stake, payout, result, summary: { pocket: result.pocket, bets: bets.length }, multiple: bestMultiple(result.bets.map(b => ({ stake: b.amount, payout: b.payout }))) }
         }
     }
 }

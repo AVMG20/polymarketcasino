@@ -2,9 +2,10 @@ import { cryptoRng, type Rng } from '#shared/rng'
 import { Shoe } from '#shared/tables/cards'
 import { isChip, scaleAmount, TABLE_MAX_BET, TABLE_MIN_BET } from '#shared/tables/chips'
 import {
-    BAC_SPOTS, BAC_TIMERS, bacTotal, dealBaccarat, emptyBacBets, isBacSpot, resolveBacBets,
+    BAC_SPOTS, BAC_TIMERS, bacTotal, dealBaccarat, emptyBacBets, isBacSpot, resolveBacBets, bacSpotReturn,
     type BacAction, type BacBets, type BacGameEvent, type BacHistoryEntry, type BacRound, type BacSeat, type BacShared
 } from '#shared/tables/baccarat'
+import { bestMultiple } from '#shared/missions'
 import type { TablePayout } from '#shared/tables/protocol'
 import { fail, LiveTable, type TableConfig, type TablePlayer } from './table'
 
@@ -166,7 +167,8 @@ export class BaccaratTable extends LiveTable<BacSeat, BacShared, BacAction> {
             const bets = player.game.staked
             if (!bacTotal(bets)) continue
             const { staked, payout } = resolveBacBets(bets, round)
-            payouts.push({ playerId: player.playerId, staked, payout, summary: { bets, winner: round.winner, player: round.playerTotal, banker: round.bankerTotal } })
+            const multiple = bestMultiple(BAC_SPOTS.map(spot => ({ stake: bets[spot], payout: bacSpotReturn(spot, bets[spot], round) })))
+            payouts.push({ playerId: player.playerId, staked, payout, multiple, summary: { bets, winner: round.winner, player: round.playerTotal, banker: round.bankerTotal } })
         }
         this.settle(payouts)
         this.history.push({ winner: round.winner, playerPair: round.playerPair, bankerPair: round.bankerPair })

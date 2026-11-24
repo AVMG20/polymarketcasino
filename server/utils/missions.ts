@@ -17,7 +17,7 @@ import {
     type MissionView
 } from '../../shared/missions'
 import { cryptoRng, type Rng } from '../../shared/rng'
-import { progressOf, type TycoonActionResponse } from '../../shared/tycoon'
+import { CAMPAIGNS, campaignBlocker, progressOf, type TycoonActionResponse } from '../../shared/tycoon'
 import { coinTransaction } from './ledger'
 import { getTycoonState, peekCasino, type Casino } from './tycoon'
 
@@ -40,13 +40,16 @@ import { getTycoonState, peekCasino, type Casino } from './tycoon'
 const BONUS_TITLE = 'Clear all three'
 
 /** Missions this casino can do today. */
-function eligibleMissions(tx: Tx, playerId: string, casino: Casino): MissionId[] {
+function eligibleMissions(tx: Tx, playerId: string, casino: Casino, now: number): MissionId[] {
     const builtLive = Object.entries(casino.games).some(([slug, level]) => level >= 1 && !!findGame(slug)?.live)
     const canBuild = progressOf(casino) < 1
+    // Flyers need no Marketing; only a full week of queued ads leaves nothing to start.
+    const canCampaign = CAMPAIGNS.some(campaign => !campaignBlocker(casino, campaign.id, now))
     const otherCasino = !!tx.select({ id: casinoProfiles.playerId }).from(casinoProfiles).where(ne(casinoProfiles.playerId, playerId)).limit(1).get()
     return MISSIONS.map(mission => mission.id).filter((id) => {
         if (id === 'table-hands') return builtLive
         if (id === 'build') return canBuild
+        if (id === 'campaign') return canCampaign
         if (id === 'visit') return otherCasino
         return true
     })
@@ -59,7 +62,7 @@ export function ensureMissions(tx: Tx, playerId: string, now = Date.now(), rng: 
         .where(and(eq(dailyMissions.playerId, playerId), eq(dailyMissions.day, day))).limit(1).get()
     if (have) return day
     const casino = peekCasino(playerId, now, tx)
-    const picked = pickMissions(rng, eligibleMissions(tx, playerId, casino))
+    const picked = pickMissions(rng, eligibleMissions(tx, playerId, casino, now))
     const rows = picked.map((id, slot) => {
         const def = findMission(id)!
         return { playerId, day, mission: id as string, slot, target: def.target, reward: missionReward(casino, def.hours) }

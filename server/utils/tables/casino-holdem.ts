@@ -1,3 +1,4 @@
+import { payFor } from '#shared/money'
 import { cryptoRng, type Rng } from '#shared/rng'
 import { faceOf, Shoe, type Card } from '#shared/tables/cards'
 import { isChip, scaleAmount, TABLE_MAX_BET, TABLE_MIN_BET } from '#shared/tables/chips'
@@ -5,6 +6,7 @@ import {
     bestHand, CH_CALL_MULTIPLIER, CH_TIMERS, chDealerQualifies, evaluateFive, resolveCh,
     type ChAction, type ChHand, type ChSeat, type ChShared, type ChSpot
 } from '#shared/tables/casino-holdem'
+import { bestMultiple } from '#shared/missions'
 import type { TablePayout } from '#shared/tables/protocol'
 import { fail, LiveTable, type TableConfig, type TablePlayer } from './table'
 
@@ -303,6 +305,10 @@ export class CasinoHoldemTable extends LiveTable<ChSeat, ChShared, ChAction> {
                 playerId: player.playerId,
                 staked: result.staked,
                 payout: result.payout,
+                multiple: bestMultiple([
+                    { stake: seat.aa, payout: result.aaMultiplier ? payFor(seat.aa, 1 + result.aaMultiplier) : 0 },
+                    { stake: seat.ante + seat.call, payout: result.payout - (result.aaMultiplier ? payFor(seat.aa, 1 + result.aaMultiplier) : 0) }
+                ]),
                 summary: { hand: hand.label, dealer: this.dealerHand!.label, outcome: result.outcome, ante: seat.ante, call: seat.call, aa: seat.aa }
             })
         }

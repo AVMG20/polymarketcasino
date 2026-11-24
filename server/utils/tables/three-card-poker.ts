@@ -5,6 +5,7 @@ import {
     evaluateTcp, resolveTcp, TCP_TIMERS, tcpDealerQualifies,
     type TcpAction, type TcpHand, type TcpSeat, type TcpShared, type TcpSpot
 } from '#shared/tables/three-card-poker'
+import { bestMultiple } from '#shared/missions'
 import type { TablePayout } from '#shared/tables/protocol'
 import { fail, LiveTable, type TableConfig, type TablePlayer } from './table'
 
@@ -268,7 +269,11 @@ export class ThreeCardPokerTable extends LiveTable<TcpSeat, TcpShared, TcpAction
             const seat = player.game
             const hand = evaluateTcp(seat.cards.map(faceOf))
             const result = resolveTcp({ ante: seat.ante, pairPlus: seat.pairPlus, played: seat.decision === 'play' }, hand, dealer)
-            payouts.push({ playerId: player.playerId, staked: result.staked, payout: result.payout, summary: { hand: hand.label, dealer: dealer.label, decision: seat.decision, ante: seat.ante, pairPlus: seat.pairPlus } })
+            const multiple = bestMultiple([
+                { stake: seat.pairPlus, payout: result.pairPlus },
+                { stake: seat.decision === 'play' ? seat.ante * 2 : seat.ante, payout: result.payout - result.pairPlus }
+            ])
+            payouts.push({ playerId: player.playerId, staked: result.staked, payout: result.payout, multiple, summary: { hand: hand.label, dealer: dealer.label, decision: seat.decision, ante: seat.ante, pairPlus: seat.pairPlus } })
         }
         const hold = this.payoutHold()
         this.settle(payouts)

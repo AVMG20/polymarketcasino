@@ -98,7 +98,7 @@ export async function playRound(playerId: string, slug: string, body: PlayBody):
             funding: paid.coins > 0 ? 'coins' : 'chips',
             summary: outcome.summary
         }).returning({ id: gameRounds.id }).get()
-        recordMissions(coins.tx, playerId, roundMissionEvents({ playerId, game: slug, stake, payout, host }))
+        recordMissions(coins.tx, playerId, roundMissionEvents({ playerId, game: slug, stake, payout, multiple: outcome.multiple, host }))
         return { roundId: round.id, balance: paid.balance, chips, chipsEarned: payout, stakeCoins: paid.coins, stakeChips: paid.chips }
     })
 

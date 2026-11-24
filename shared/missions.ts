@@ -33,7 +33,7 @@ export interface MissionDef {
 export const MISSIONS: readonly MissionDef[] = [
     { id: 'rounds', title: 'Play 20 rounds', target: 20, hours: 0.5, group: 'play' },
     { id: 'slot-wins', title: 'Win 3 times on slots', target: 3, hours: 0.75, group: 'play' },
-    { id: 'big-win', title: 'Land a 5× win', target: 1, hours: 1, group: 'play' },
+    { id: 'big-win', title: 'Win 5× your bet', target: 1, hours: 1, group: 'play' },
     { id: 'table-hands', title: 'Play 5 hands at a live table', target: 5, hours: 0.75, group: 'play' },
     { id: 'collects', title: 'Collect the cage twice', target: 2, hours: 0.5, group: 'casino' },
     { id: 'build', title: 'Start a build', target: 1, hours: 0.5, group: 'casino' },
@@ -51,8 +51,27 @@ export const BONUS_HOURS = 0.75
  * missions add half again to the starter cage.
  */
 export const MISSION_FLOOR_PER_HOUR = 1_500
-/** A win this many times the stake (or more) counts for `big-win`. */
+/**
+ * A win this many times its own bet (or more) counts for `big-win`: one
+ * Pegfall ball, one Magic Hands hand, one roulette or side bet, or the
+ * whole round when it is a single bet.
+ */
 export const BIG_WIN_MULTIPLE = 5
+
+/** One bet of a round and what it returned (stake included). */
+export interface BetReturn {
+    stake: number
+    payout: number
+}
+
+/** The best return of any one bet in the round, in multiples of that bet (0 when nothing was staked). */
+export function bestMultiple(bets: readonly BetReturn[]): number {
+    let best = 0
+    for (const bet of bets) {
+        if (bet.stake > 0 && bet.payout > 0) best = Math.max(best, bet.payout / bet.stake)
+    }
+    return best
+}
 
 export function findMission(id: string): MissionDef | undefined {
     return MISSIONS.find(mission => mission.id === id)
@@ -86,12 +105,18 @@ export function pickMissions(rng: Rng, eligible: readonly MissionId[]): MissionI
     return picked
 }
 
-/** What one settled round counts toward. `host`: the casino it was played in, when visiting. */
-export function roundMissionEvents(round: { playerId: string, game: string, stake: number, payout: number, host?: string | null }): MissionId[] {
+/**
+ * What one settled round counts toward. `host`: the casino it was played in,
+ * when visiting. `multiple`: the best return of one bet in the round (a ball,
+ * a hand, a spot on the layout; `bestMultiple`), for rounds of several bets.
+ */
+export function roundMissionEvents(round: { playerId: string, game: string, stake: number, payout: number, multiple?: number, host?: string | null }): MissionId[] {
     const info = findGame(round.game)
     const events: MissionId[] = ['rounds']
     if (info?.kind === 'slot' && round.payout > round.stake) events.push('slot-wins')
-    if (round.stake > 0 && round.payout >= round.stake * BIG_WIN_MULTIPLE) events.push('big-win')
+    const multiple = Math.max(round.multiple ?? 0, bestMultiple([round]))
+    // Payouts round down to 0.0001: a hair under 5× is still the 5× the game showed.
+    if (multiple >= BIG_WIN_MULTIPLE - 1e-6) events.push('big-win')
     if (info?.live) events.push('table-hands')
     if (round.host && round.host !== round.playerId) events.push('visit')
     return events

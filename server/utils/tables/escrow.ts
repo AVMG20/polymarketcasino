@@ -81,6 +81,8 @@ export function settleWagers(input: {
     staked: number
     payout: number
     summary: Record<string, unknown>
+    /** The best return of one bet in the round (missions). */
+    multiple?: number
     /** The casino the player sat down in when visiting: the hand counts toward the visit mission. */
     host?: string | null
 }): CommittedCoins<SettleResult> {
@@ -113,7 +115,7 @@ export function settleWagers(input: {
             funding: sameCoins(stakeChips, escrow) ? 'chips' : 'coins',
             summary: input.summary
         }).run()
-        recordMissions(coins.tx, input.playerId, roundMissionEvents({ playerId: input.playerId, game: input.game, stake: input.staked, payout: input.payout, host: input.host }))
+        recordMissions(coins.tx, input.playerId, roundMissionEvents({ playerId: input.playerId, game: input.game, stake: input.staked, payout: input.payout, multiple: input.multiple, host: input.host }))
         return { kind: 'settled', chipsEarned: input.payout, ...balancesOf(coins, input.playerId) }
     })
 }

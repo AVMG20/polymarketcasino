@@ -102,4 +102,6 @@ export interface TablePayout {
     payout: number
     /** Kept with the round in game_rounds. */
     summary: Record<string, unknown>
+    /** The best return of one bet this round (a hand, a side bet, a spot), × that bet: the 5× win mission. */
+    multiple?: number
 }

@@ -193,7 +193,9 @@ twice; a second purchase that settles anyway (left pending from before) is refun
 Three missions a player per Amsterdam day, drawn on the day's first read or event: one to play (20 rounds,
 3 slot wins, a 5× win, 5 live-table hands), one for the casino (collect the cage twice, start a build, run a
 campaign), and one more of anything left, a visit included (3 rounds at someone else's casino). A mission
-the casino can't do isn't drawn (no live table built, nothing left to build, no other casino). Rewards are
+the casino can't do isn't drawn (no live table built, nothing left to build, a week of ads queued, no other
+casino). A 5× win is one bet paying 5× (or more) itself: one Pegfall ball, one Magic Hands hand, one roulette
+spot, one blackjack hand or side bet, a baccarat spot, the pair plus or AA bonus; a single-bet game, the round. Rewards are
 **coins**, fixed when the day's missions are drawn: 0.5-1 hour of the casino's full guest income each
 (`missionReward`, at least 1,500 coins an hour, about a casino with the Main Floor open, so a new casino gets
 750-1,500 a mission and about 3,750 for the first day: half again the starter cage, earned in the first

@@ -8,6 +8,7 @@ import {
     settleHand, settleSideBets, type BjHand, type BjSideBet, type BjSpot
 } from '#shared/tables/blackjack'
 import type { BjGameEvent, BjSeat, BjShared, BjTableAction } from '#shared/tables/blackjack-wire'
+import { bestMultiple, type BetReturn } from '#shared/missions'
 import type { TablePayout } from '#shared/tables/protocol'
 import { fail, LiveTable, type TableConfig, type TablePlayer } from './table'
 
@@ -455,6 +456,7 @@ export class BlackjackTable extends LiveTable<BjSeat, BjShared, BjTableAction> {
             const seat = p.game
             let staked = 0
             let payout = 0
+            const bets: BetReturn[] = []
             for (const hand of seat.hands) {
                 const result = settleHand(hand, this.dealerCards)
                 hand.status = result.status
@@ -462,6 +464,7 @@ export class BlackjackTable extends LiveTable<BjSeat, BjShared, BjTableAction> {
                 hand.net = result.net
                 staked += handStake(hand)
                 payout += result.payout
+                bets.push({ stake: handStake(hand), payout: result.payout })
             }
             if (seat.insurance > 0) {
                 staked += seat.insurance
@@ -470,6 +473,7 @@ export class BlackjackTable extends LiveTable<BjSeat, BjShared, BjTableAction> {
             for (const side of seat.sideResults ?? []) {
                 staked += side.stake
                 payout += side.payout
+                bets.push(side)
             }
             // Side bets that were placed but never resolved (no results yet) still count as staked.
             if (!seat.sideResults) staked += sum(seat.pendingSide)
@@ -477,6 +481,7 @@ export class BlackjackTable extends LiveTable<BjSeat, BjShared, BjTableAction> {
                 playerId: p.playerId,
                 staked,
                 payout,
+                multiple: bestMultiple(bets),
                 summary: { hands: seat.hands.map(hand => ({ cards: hand.cards.map(c => `${c.rank}${c.suit![0]}`), status: hand.status, bet: hand.bet, doubled: hand.doubled })), dealer: handScore(this.dealerCards).total, insurance: seat.insurance }
             })
         }
