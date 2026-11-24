@@ -1,4 +1,4 @@
-import type { ZoneId } from '#shared/tycoon'
+import type { ZoneId } from '../tycoon'
 import { CAGE, DESK, GRID_H, GRID_W, PLOTS, PORCH, PROPS, areaAt, doorwayBetween, inGrid, type Rect, type Tile } from './layout'
 
 /**

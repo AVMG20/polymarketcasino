@@ -1,5 +1,5 @@
 import { INK, Painter, circlePoly, darken, faceColors, lighten, mix, project, rgba, roundRect, type Pt } from '../iso'
-import type { PropKind } from '../layout'
+import type { PropKind } from '#shared/floor/layout'
 import { ARCHITECT_LOOK, CASHIER_LOOK, drawFigure } from './characters'
 import { PAL } from './palette'
 

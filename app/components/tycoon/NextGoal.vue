@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import { Flag, Hourglass } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import type { BuildKind } from '#shared/tycoon'
 
 /**
  * The next goal while the player saves up: the cheapest build they can't
- * afford yet, a ring of chips held against its price and a rough time to it.
- * Tap to open its build card.
+ * afford yet, under a "goal" flag, with a ring of chips held against its
+ * price and the chips still missing (or "Play!" / "Collect!" when the coins
+ * in hand or in the cage should win the rest). The rough time to it is in
+ * the tooltip. Tap to open its build card.
  */
 const emit = defineEmits<{ open: [kind: BuildKind, id: string] }>()
 const tycoon = useTycoon()
@@ -67,20 +70,34 @@ const title = computed(() => {
       v-if="goal"
       type="button"
       class="goal pointer-events-auto relative ml-2 grid size-[60px] shrink-0 place-items-center rounded-[22px] transition-transform active:scale-95"
-      :title="title"
       :aria-label="title"
       @click="emit('open', goal.kind, goal.id)"
     >
+      <!-- The flag says what this is: a goal you are saving chips for. -->
+      <span class="flag absolute -top-2 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-full border-2 border-black/50 px-1.5 text-[9px] leading-[14px] tracking-wide uppercase">
+        <Flag class="size-2.5" :stroke-width="3.5" /><span class="g-num">Goal</span>
+      </span>
       <TycoonRing :progress="progress" :size="50" :stroke="4.5" color="#4aa6ff">
         <span class="block size-[38px] overflow-hidden rounded-full border-2 border-black/50">
           <TycoonItemArt :kind="goal.kind" :id="goal.id" />
         </span>
       </TycoonRing>
       <span
-        v-if="eta"
-        class="g-num absolute -bottom-2 left-1/2 -translate-x-1/2 rounded-full border-2 border-black/50 px-1.5 text-[11px] leading-4 whitespace-nowrap"
+        class="g-num absolute -bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-full border-2 border-black/50 px-1.5 text-[11px] leading-4 whitespace-nowrap"
         :class="source === 'play' ? 'bg-[#3fd25a] text-[#0b3a17]' : source === 'collect' ? 'bg-[#ffc93a] text-[#4a2a00]' : 'bg-[#1b1329]'"
-      >{{ eta }}</span>
+      >
+        <template v-if="source === 'play'">Play!</template>
+        <template v-else-if="source === 'collect'">Collect!</template>
+        <template v-else><CasinoChipIcon class="size-3" />{{ formatCoins(goal.missingChips, true) }}</template>
+      </span>
+      <!-- Desktop: a card with the goal's name, chips and rough time, on hover. -->
+      <span class="tip pointer-events-none absolute top-full left-1/2 z-50 mt-3 -translate-x-1/2 hidden w-max max-w-56 rounded-2xl p-2.5 text-left">
+        <span class="block text-[10px] font-semibold tracking-wide text-[var(--g-muted)] uppercase">Saving for</span>
+        <span class="g-title block truncate text-base leading-tight">{{ goal.name }}</span>
+        <span class="mt-1 flex items-center gap-1 text-sm"><TycoonCost :amount="tycoon.chips.value" compact /><span class="text-white/50">/</span><TycoonCost :amount="price" compact /></span>
+        <span v-if="source === 'wait' && eta" class="mt-1 flex items-center gap-1 text-xs text-white/75"><Hourglass class="size-3.5 text-[#ffc93a]" :stroke-width="3" />{{ eta }} of cage income</span>
+        <span v-else-if="source" class="mt-1 block text-xs text-white/75">{{ source === 'play' ? 'Your coins should win the rest' : 'Collect your cage, then play' }}</span>
+      </span>
     </button>
   </Transition>
 </template>
@@ -90,6 +107,18 @@ const title = computed(() => {
   background: linear-gradient(180deg, #3b2c58, #2a1f3f 60%);
   border: 2px solid #120c1d;
   box-shadow: 0 4px 0 #120c1d, 0 10px 20px rgb(0 0 0 / 0.35), inset 0 2px 0 rgb(255 255 255 / 0.12);
+}
+.flag {
+  background: linear-gradient(180deg, #ffd65a, #f4a91f);
+  color: #4a2a00;
+}
+.tip {
+  background: linear-gradient(180deg, #3b2c58, #2a1f3f);
+  border: 2px solid #120c1d;
+  box-shadow: 0 4px 0 #120c1d, 0 10px 20px rgb(0 0 0 / 0.4);
+}
+@media (hover: hover) and (pointer: fine) {
+  .goal:hover .tip, .goal:focus-visible .tip { display: block; }
 }
 .goal-enter-active { transition: transform 0.22s cubic-bezier(0.3, 1.4, 0.5, 1), opacity 0.15s ease; }
 .goal-leave-active { transition: transform 0.15s ease, opacity 0.15s ease; }

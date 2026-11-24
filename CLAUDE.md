@@ -32,22 +32,27 @@ the Bun and Nuxt versions; don't move the dev server to Node (bun:sqlite would n
 - `shared/`: rules and math used by both sides. `rng.ts` (CSPRNG + seeded), `money.ts`, `economy.ts`,
   `stars.ts`, `games/` (registry, dice, limbo, roulette), `slots/` (one rules module per slot),
   `tables/` (cards and shoe, chips and limits, the socket protocol, one rules file per live table),
+  `floor/` (the My Casino floor plan and walk grid: the client draws it, the floor socket checks moves on it),
   `tycoon.ts` (My Casino: catalog, economy numbers, pure helpers and the API shapes).
 - `server/utils/`: `ledger.ts` (the only way coins move), `stars.ts`, `wallet.ts` (convert, wallet state),
   `rounds.ts` (play and settle a round), `games.ts` (server half of every game), `steps.ts` (multi-step
   rounds: start, move, cash out, abandoned-round sweep), `hub.ts` (hub client),
   `launch.ts`, `session.ts`, `env.ts`, `tables/` (the live tables: `table.ts` base, `escrow.ts`,
   `socket.ts`, one file per game, `index.ts` registry), `chips.ts` (the only way chips move),
-  `tycoon.ts` (casino profile, constructions, cage, build, campaigns), `tycoon-gems.ts` (gem purchases).
+  `tycoon.ts` (casino profile, constructions, cage, build, campaigns), `tycoon-gems.ts` (gem purchases),
+  `floor-presence.ts` (live floor rooms, pure) + `floor-socket.ts` (its upgrade auth, DB source and the
+  process's rooms), `socket-auth.ts` (Origin + session checks every socket shares), `rate-limit.ts`.
 - `server/api/`: `auth/launch`, `auth/logout`, `dev/login`, `config`, `me`, `wallet/*`,
-  `games/[slug]/play`, `games/[slug]/{start,act,cashout,round}` (multi-step games), `games`, `tables` (occupancy), `tables/[slug]/ws` (WebSocket), `tycoon`
+  `games/[slug]/play`, `games/[slug]/{start,act,cashout,round}` (multi-step games), `games`, `tables` (occupancy), `tables/[slug]/ws` (WebSocket), `floor/[casinoId]/ws` (who walks
+  around a casino floor: positions and looks, no money, no writes), `tycoon`
   (state), `tycoon/collect`, `tycoon/build`, `tycoon/campaign`, `tycoon/gems`. `server/routes/healthz`.
   `server/plugins/hub-sync.ts` (manifest, heartbeat, retry sweeps), `server/plugins/tables.ts` (escrow
   refunds at boot, shutdown and every five minutes), `server/plugins/step-rounds.ts` (settles multi-step
   rounds idle for a day). `server/middleware/`: `frame-ancestors` (CSP on pages), `same-origin`
   (refuses cross-site API writes, see below).
 - `app/`: `composables/` (`useCasinoSession`, `useWallet`, `useHubBridge`, `useGameRound`,
-  `useSlotSound`, `useLiveTable`, `useTableSound`), `components/casino/` (shell and lobby),
+  `useSlotSound`, `useLiveTable`, `useTableSound`, `useFloorPresence`: the floor socket, feeding
+  CasinoFloor's `remotes` and sending its `move`s), `components/casino/` (shell and lobby),
   `components/game/` (shared game UI), `components/live-table/` (the live tables: shell, stage, seats/plates, phase ring, chip rack, bet bar; `components/table/` keeps Avatar, Bankroll, Feed),
   `components/games/` (one component per game; ported slots sit on the old site's slot shell in
   `components/slots/` + `useSlotGame`, see `docs/slot-porting.md`), `utils/slots/` (slot art, synths,

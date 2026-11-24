@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { Check, Crown, Glasses, Lock, PaintRoller, Shirt } from 'lucide-vue-next'
-import { cosmeticsIn, findCosmetic, isFree, type AvatarLook, type AvatarSlot, type CosmeticDef } from '#shared/cosmetics'
+import { Check, Crown, Glasses, Lock, Palette, PaintRoller, Scissors, Shirt, Smile } from 'lucide-vue-next'
+import { AUTO, LOOK_SLOTS, cosmeticsIn, findCosmetic, isFree, type AvatarLook, type AvatarSlot, type CosmeticDef, type LookSlot, type WearSlot } from '#shared/cosmetics'
 import { ZONES, type ZoneId } from '#shared/tycoon'
+import { nameLookIds } from '~/utils/floor/art/characters'
 import type { WardrobeTab } from '~/composables/useCosmetics'
 
 /**
  * The wardrobe: your avatar turning on a spotlight, wearing what you try on.
- * Tabs for hats, outfits and accessories (tap to try, then wear or buy), and
- * Rooms: a skin for each zone you own, previewed live on the floor.
- * Opened by tapping your own avatar on the floor, or from the shop.
+ * Look (free: hair style, hair colour, skin tone; tap to try, one button
+ * wears the lot), tabs for hats, outfits and accessories (tap to try, then
+ * wear or buy with gems or chips), and Rooms: a skin for each zone you own,
+ * previewed live on the floor. Opened by tapping your own avatar on the
+ * floor, or from the shop.
  */
 const tycoon = useTycoon()
 const cosmetics = useCosmetics()
@@ -31,16 +34,64 @@ watch(open, (value) => {
 })
 
 const TABS: { value: WardrobeTab, label: string, icon: typeof Crown, color: string }[] = [
+    { value: 'look', label: 'Look', icon: Scissors, color: '#ff7ab8' },
     { value: 'hat', label: 'Hats', icon: Crown, color: '#ffc93a' },
     { value: 'outfit', label: 'Outfits', icon: Shirt, color: '#4aa6ff' },
     { value: 'accessory', label: 'Extras', icon: Glasses, color: '#ff5470' },
     { value: 'rooms', label: 'Rooms', icon: PaintRoller, color: '#3fd25a' }
 ]
-const slot = computed<AvatarSlot | null>(() => (tab.value === 'rooms' ? null : tab.value))
+
+function dropTrial(key: AvatarSlot) {
+    const next = { ...trial.value }
+    delete next[key]
+    trial.value = next
+}
+
+// ---- Look: hair style, hair colour, skin tone (all free) ----
+
+/** What the player's name gives them: what `auto` (never changed) shows. */
+const nameIds = computed(() => nameLookIds(name.value))
+const resolve = (avatar: AvatarLook, slot: LookSlot) => (avatar[slot] === AUTO ? nameIds.value[slot] : avatar[slot])
+const hairs = cosmeticsIn('hair')
+const hairColors = cosmeticsIn('haircolor')
+const skinTones = cosmeticsIn('skintone')
+/** The look slots tried on that differ from what's worn. */
+const lookChanges = computed(() => LOOK_SLOTS.filter(slot => trial.value[slot] !== undefined && trial.value[slot] !== resolve(worn.value, slot)))
+/** The preview on this tab drops the hat, so the hair shows. */
+const lookPreview = computed<AvatarLook>(() => ({ ...look.value, hat: 'none' }))
+const saving = ref(false)
+
+function tryLook(slot: LookSlot, id: string) {
+    if (id === resolve(worn.value, slot)) dropTrial(slot)
+    else trial.value = { ...trial.value, [slot]: id }
+}
+
+const shownIs = (slot: LookSlot, id: string) => resolve(look.value, slot) === id
+const wornIs = (slot: LookSlot, id: string) => resolve(worn.value, slot) === id
+
+/** Wear every changed look slot (one equip each: there's no bulk call). */
+async function wearLook() {
+    if (saving.value || !lookChanges.value.length) return
+    saving.value = true
+    try {
+        for (const slot of lookChanges.value) {
+            if (!(await cosmetics.equip(`${slot}:${trial.value[slot]}`))) break
+            dropTrial(slot)
+        }
+    } finally {
+        saving.value = false
+    }
+}
+
+// ---- Hats, outfits, extras ----
+
+const slot = computed<WearSlot | null>(() => (tab.value === 'hat' || tab.value === 'outfit' || tab.value === 'accessory' ? tab.value : null))
 const items = computed(() => (slot.value ? cosmeticsIn(slot.value) : []))
 /** The item of this tab on the preview (tried on, or worn). */
 const selected = computed<CosmeticDef | null>(() => (slot.value ? findCosmetic(`${slot.value}:${look.value[slot.value]}`) ?? null : null))
 const shake = ref(0)
+const isWorn = (item: CosmeticDef) => worn.value[item.slot as WearSlot] === item.id
+const priceOf = (item: CosmeticDef) => (item.gems ? { amount: item.gems, currency: 'gems' as const } : { amount: item.chips, currency: 'chips' as const })
 
 function tryOn(item: CosmeticDef) {
     if (item.slot === 'skin') return
@@ -50,7 +101,7 @@ function tryOn(item: CosmeticDef) {
 async function act() {
     const item = selected.value
     if (!item || item.slot === 'skin') return
-    if (worn.value[item.slot] === item.id) return
+    if (isWorn(item)) return
     if (cosmetics.owns(item.key)) {
         if (await cosmetics.equip(item.key)) dropTrial(item.slot)
         return
@@ -62,13 +113,9 @@ async function act() {
     if (await cosmetics.buy(item)) dropTrial(item.slot)
 }
 
-function dropTrial(key: AvatarSlot) {
-    const next = { ...trial.value }
-    delete next[key]
-    trial.value = next
-}
-
 // Rooms: the zones you own; the one picked is framed on the floor while its skins show.
+// On phones the drawer stays low on this tab, so the framed zone (its live skin) shows above it.
+const ROOMS_HEIGHT = '58dvh'
 const ownedZones = computed(() => ZONES.filter(zone => tycoon.state.value?.zones.includes(zone.id)))
 const room = computed<ZoneId>({
     get: () => {
@@ -80,24 +127,110 @@ const room = computed<ZoneId>({
 </script>
 
 <template>
-  <TycoonDrawer :open="open" title="Wardrobe" :icon="Shirt" color="#a879ff" height="78dvh" @close="cosmetics.hide()">
-    <div class="sticky top-0 z-10 grid grid-cols-4 gap-2 bg-gradient-to-b from-[#33264f] from-80% to-transparent px-3 pt-1 pb-3">
+  <TycoonDrawer :open="open" title="Wardrobe" :icon="Shirt" color="#a879ff" :height="tab === 'rooms' ? ROOMS_HEIGHT : '78dvh'" @close="cosmetics.hide()">
+    <div class="sticky top-0 z-10 grid grid-cols-5 gap-1.5 bg-gradient-to-b from-[#33264f] from-80% to-transparent px-3 pt-1 pb-3">
       <button
         v-for="t in TABS"
         :key="t.value"
         type="button"
-        class="g-btn h-14 flex-col gap-0.5! rounded-2xl text-[11px] uppercase"
+        class="g-btn h-14 min-w-0 flex-col gap-0.5! rounded-2xl px-0! text-[11px] uppercase"
         :class="tab === t.value ? '' : 'g-dark opacity-90'"
         :style="tab === t.value ? { '--face': t.color, '--edge': `color-mix(in oklab, ${t.color} 55%, black)` } : undefined"
         :aria-pressed="tab === t.value"
+        :title="t.label"
         @click="tab = t.value"
       >
-        <component :is="t.icon" class="size-6" :stroke-width="2.75" />
-        {{ t.label }}
+        <component :is="t.icon" class="size-6 shrink-0" :stroke-width="2.75" />
+        <span class="max-w-full truncate">{{ t.label }}</span>
       </button>
     </div>
 
-    <div v-if="slot" class="space-y-3 px-3 pb-4">
+    <!-- Look: free hair style, hair colour and skin tone. -->
+    <div v-if="tab === 'look'" class="space-y-3 px-3 pb-4">
+      <div class="stage relative flex items-end justify-center overflow-hidden rounded-[22px] px-3 pt-2 pb-3">
+        <div class="spot absolute inset-x-0 bottom-2 mx-auto h-8 w-40 rounded-[50%]" />
+        <TycoonAvatarPortrait :name="name" :avatar="lookPreview" crop="full" :size="150" animate class="relative" />
+      </div>
+
+      <section aria-label="Hair style">
+        <h3 class="label"><Scissors class="size-3.5" :stroke-width="3" /> Hair</h3>
+        <div class="grid grid-cols-4 gap-2">
+          <button
+            v-for="h in hairs"
+            :key="h.key"
+            type="button"
+            class="item relative flex flex-col items-center rounded-2xl p-1 transition-transform active:scale-95"
+            :class="shownIs('hair', h.id) ? 'picked' : ''"
+            :aria-pressed="shownIs('hair', h.id)"
+            :aria-label="`${h.name} hair${wornIs('hair', h.id) ? ' (worn)' : ''}`"
+            :title="h.name"
+            @click="tryLook('hair', h.id)"
+          >
+            <span class="relative grid aspect-square w-full place-items-center overflow-hidden rounded-xl bg-black/30">
+              <TycoonAvatarPortrait :name="name" :avatar="{ ...lookPreview, hair: h.id }" crop="bust" :size="80" class="size-full!" />
+              <span v-if="wornIs('hair', h.id)" class="worn"><Check class="size-3 text-white" :stroke-width="4" /></span>
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <section aria-label="Hair colour">
+        <h3 class="label"><Palette class="size-3.5" :stroke-width="3" /> Colour</h3>
+        <div class="grid grid-cols-6 gap-2">
+          <button
+            v-for="c in hairColors"
+            :key="c.key"
+            type="button"
+            class="swatch"
+            :class="shownIs('haircolor', c.id) ? 'picked' : ''"
+            :style="{ '--sw': c.color }"
+            :aria-pressed="shownIs('haircolor', c.id)"
+            :aria-label="`${c.name} hair${wornIs('haircolor', c.id) ? ' (worn)' : ''}`"
+            :title="c.name"
+            @click="tryLook('haircolor', c.id)"
+          >
+            <span v-if="wornIs('haircolor', c.id)" class="worn"><Check class="size-3 text-white" :stroke-width="4" /></span>
+          </button>
+        </div>
+      </section>
+
+      <section aria-label="Skin tone">
+        <h3 class="label"><Smile class="size-3.5" :stroke-width="3" /> Skin</h3>
+        <div class="-mx-1 grid grid-cols-7 gap-[3px]">
+          <button
+            v-for="c in skinTones"
+            :key="c.key"
+            type="button"
+            class="swatch"
+            :class="shownIs('skintone', c.id) ? 'picked' : ''"
+            :style="{ '--sw': c.color }"
+            :aria-pressed="shownIs('skintone', c.id)"
+            :aria-label="`${c.name} skin${wornIs('skintone', c.id) ? ' (worn)' : ''}`"
+            :title="c.name"
+            @click="tryLook('skintone', c.id)"
+          >
+            <span v-if="wornIs('skintone', c.id)" class="worn"><Check class="size-3 text-white" :stroke-width="4" /></span>
+          </button>
+        </div>
+      </section>
+
+      <div class="sticky bottom-0 z-10 -mx-3 bg-gradient-to-t from-[#2a1f40] from-75% to-transparent px-3 pt-4 pb-1">
+        <button
+          v-if="lookChanges.length"
+          type="button"
+          class="g-btn g-green h-14 w-full rounded-2xl text-xl uppercase"
+          :disabled="saving || tycoon.busy.value"
+          @click="wearLook"
+        >
+          <Check class="size-6" :stroke-width="3" /> Wear
+        </button>
+        <div v-else class="g-btn g-dark h-14 w-full rounded-2xl text-lg" aria-disabled="true">
+          <Check class="size-6" :stroke-width="3" /> Your look
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="slot" class="space-y-3 px-3 pb-4">
       <!-- The preview: your avatar on a spotlight, wearing what you try on. -->
       <div class="stage relative flex items-end justify-center gap-3 overflow-hidden rounded-[22px] px-3 pt-2 pb-3">
         <div class="spot absolute inset-x-0 bottom-2 mx-auto h-8 w-40 rounded-[50%]" />
@@ -112,25 +245,25 @@ const room = computed<ZoneId>({
           class="item relative flex flex-col items-center rounded-2xl p-1 pb-1.5 transition-transform active:scale-95"
           :class="selected?.key === item.key ? 'picked' : ''"
           :aria-pressed="selected?.key === item.key"
-          :aria-label="`${item.name}${worn[item.slot as AvatarSlot] === item.id ? ' (worn)' : cosmetics.owns(item.key) ? ' (owned)' : ''}`"
+          :aria-label="`${item.name}${isWorn(item) ? ' (worn)' : !isFree(item) && cosmetics.owns(item.key) ? ' (owned)' : ''}`"
           :title="item.name"
           @click="tryOn(item)"
         >
-          <span class="relative grid aspect-square w-full place-items-center overflow-hidden rounded-xl bg-black/30" :class="item.premium ? 'g-gem-glow' : ''">
-            <TycoonAvatarPortrait :name="name" :avatar="{ ...worn, [item.slot]: item.id }" :crop="item.slot === 'hat' ? 'bust' : 'upper'" :size="80" />
-            <span v-if="worn[item.slot as AvatarSlot] === item.id" class="absolute top-1 right-1 grid size-5 place-items-center rounded-full border-2 border-black/50 bg-[#3fd25a]"><Check class="size-3 text-white" :stroke-width="4" /></span>
+          <span class="relative grid aspect-square w-full place-items-center overflow-hidden rounded-xl" :class="item.premium ? 'premium g-gem-glow' : 'bg-black/30'">
+            <TycoonAvatarPortrait :name="name" :avatar="{ ...look, [item.slot]: item.id }" :crop="item.slot === 'hat' ? 'bust' : 'upper'" :size="80" />
+            <span v-if="isWorn(item)" class="worn"><Check class="size-3 text-white" :stroke-width="4" /></span>
           </span>
           <span class="mt-1 w-full truncate text-center text-[12px] leading-4 font-semibold">{{ item.name }}</span>
           <span class="mt-0.5 flex h-5 items-center text-[13px]">
             <span v-if="isFree(item) || cosmetics.owns(item.key)" class="text-[11px] font-semibold text-[var(--g-muted)] uppercase">{{ isFree(item) ? 'Free' : 'Owned' }}</span>
-            <TycoonCost v-else :amount="item.gems" currency="gems" compact />
+            <TycoonCost v-else v-bind="priceOf(item)" compact />
           </span>
         </button>
       </div>
 
       <!-- The one action for the item tried on: always in reach under the grid. -->
       <div v-if="selected" class="sticky bottom-0 z-10 -mx-3 bg-gradient-to-t from-[#2a1f40] from-75% to-transparent px-3 pt-4 pb-1">
-        <div v-if="worn[selected.slot as AvatarSlot] === selected.id" class="g-btn g-dark h-14 w-full rounded-2xl text-lg" aria-disabled="true">
+        <div v-if="isWorn(selected)" class="g-btn g-dark h-14 w-full rounded-2xl text-lg" aria-disabled="true">
           <Check class="size-6" :stroke-width="3" /> {{ selected.name }}
         </div>
         <button v-else-if="cosmetics.owns(selected.key)" type="button" class="g-btn g-green h-14 w-full rounded-2xl text-xl uppercase" :disabled="tycoon.busy.value" @click="act">
@@ -141,16 +274,16 @@ const room = computed<ZoneId>({
           :key="shake"
           type="button"
           class="g-btn h-14 w-full rounded-2xl px-4 text-xl"
-          :class="[cosmetics.blocker(selected) ? 'g-off' : 'g-gem', shake ? 'shake' : '']"
+          :class="[cosmetics.blocker(selected) ? 'g-off' : selected.gems ? 'g-gem' : 'g-blue', shake ? 'shake' : '']"
           :disabled="tycoon.busy.value"
           :aria-disabled="!!cosmetics.blocker(selected)"
           :title="cosmetics.blocker(selected) ?? `Buy and wear the ${selected.name}`"
           :aria-label="`Buy the ${selected.name}`"
           @click="act"
         >
-          <Lock v-if="!tycoon.state.value?.gemsEnabled" class="size-5 shrink-0" :stroke-width="3" />
+          <Lock v-if="selected.gems && !tycoon.state.value?.gemsEnabled" class="size-5 shrink-0" :stroke-width="3" />
           <span class="truncate">{{ selected.name }}</span>
-          <span class="ml-auto flex items-center rounded-xl bg-black/25 px-3 py-1.5"><TycoonCost :amount="selected.gems" currency="gems" /></span>
+          <span class="ml-auto flex items-center rounded-xl bg-black/25 px-3 py-1.5"><TycoonCost v-bind="priceOf(selected)" /></span>
         </button>
       </div>
     </div>
@@ -191,6 +324,49 @@ const room = computed<ZoneId>({
   border-color: #ffc93a;
   box-shadow: 0 3px 0 #7a4a00, 0 0 0 2px #ffc93a, 0 0 14px rgb(255 201 58 / 0.5);
 }
+/* The dearest pieces sit on a lit backdrop. */
+.premium { background: radial-gradient(circle at 50% 35%, rgb(255 225 140 / 0.3), transparent 70%), rgb(0 0 0 / 0.3); }
+.worn {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: grid;
+  width: 1.25rem;
+  height: 1.25rem;
+  place-items: center;
+  border-radius: 9999px;
+  border: 2px solid rgb(0 0 0 / 0.5);
+  background: #3fd25a;
+}
+.label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0 0 0.45rem 0.15rem;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--g-muted);
+}
+/* A chunky round paint pot: the colour, a gloss on top, a dark rim and a drop shadow. */
+.swatch {
+  position: relative;
+  justify-self: center;
+  width: 100%;
+  max-width: 3.25rem;
+  min-height: 2.75rem;
+  aspect-ratio: 1;
+  border-radius: 9999px;
+  border: 3px solid #120c1d;
+  background: radial-gradient(circle at 35% 30%, rgb(255 255 255 / 0.55), transparent 32%), radial-gradient(circle at 50% 120%, rgb(0 0 0 / 0.35), transparent 60%), var(--sw);
+  box-shadow: 0 3px 0 #120c1d;
+  transition: transform 0.12s ease;
+}
+.swatch:active { transform: scale(0.9); }
+.swatch.picked { box-shadow: 0 3px 0 #120c1d, 0 0 0 3px #ffc93a, 0 0 14px rgb(255 201 58 / 0.6); transform: scale(1.06); }
+.swatch .worn { top: -0.35rem; right: -0.35rem; }
 .shake { animation: shake 0.36s ease; }
 @keyframes shake {
   20% { transform: translateX(-6px); }
@@ -200,5 +376,6 @@ const room = computed<ZoneId>({
 }
 @media (prefers-reduced-motion: reduce) {
   .shake { animation: none; }
+  .swatch { transition: none; }
 }
 </style>

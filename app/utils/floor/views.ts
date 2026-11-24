@@ -11,7 +11,7 @@ import {
 } from './art/machines'
 import { BADGE, BUILD_SIGN, CAGE_PILE, CAGE_TOP, DESK_TOP, SALE_SIGN, craneHook, drawBuildBadge, drawBuildSign, drawCage, drawDesk, drawLockSign, drawPlotOutline, drawSaleSign, drawScaffold } from './art/props'
 import { footprintCanvas, hexNum, project, type Pt } from './iso'
-import type { PlotLayout } from './layout'
+import type { PlotLayout } from '#shared/floor/layout'
 import type { FloorPlot } from './types'
 
 type Pixi = typeof import('pixi.js')

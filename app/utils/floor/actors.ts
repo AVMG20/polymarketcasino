@@ -3,7 +3,7 @@ import type { TextureBank } from './art/bank'
 import { FIGURE_FOOT, FIGURE_H, FIGURE_W, drawFigure, lookKey, type Frame, type Look, type Pose } from './art/characters'
 import type { Emote, FxTextures } from './art/fx'
 import { project } from './iso'
-import type { Tile } from './layout'
+import type { Tile } from '#shared/floor/layout'
 
 type Pixi = typeof import('pixi.js')
 

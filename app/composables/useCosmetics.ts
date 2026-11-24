@@ -5,14 +5,15 @@ import {
     isFree,
     ownsCosmetic,
     skinOf,
-    type AvatarSlot,
     type CosmeticDef,
     type CosmeticsState,
-    type SkinId
+    type SkinId,
+    type WearSlot
 } from '#shared/cosmetics'
 import type { ZoneId } from '#shared/tycoon'
 
-export type WardrobeTab = AvatarSlot | 'rooms'
+/** The wardrobe's tabs: your look (hair, colour, skin), what you wear, and room skins. */
+export type WardrobeTab = 'look' | WearSlot | 'rooms'
 
 /** A zone skin shown on the floor before it is bought or put on (picker hover / tap). */
 export interface SkinPreview {
@@ -30,7 +31,7 @@ const EMPTY: CosmeticsState = { avatar: DEFAULT_AVATAR, skins: {}, owned: [] }
  */
 export function useCosmetics() {
     const tycoon = useTycoon()
-    const wardrobe = useState('cosmetics:wardrobe', () => ({ open: false, tab: 'hat' as WardrobeTab, zone: null as ZoneId | null }))
+    const wardrobe = useState('cosmetics:wardrobe', () => ({ open: false, tab: 'look' as WardrobeTab, zone: null as ZoneId | null }))
     const preview = useState<SkinPreview | null>('cosmetics:skin-preview', () => null)
 
     const state = computed<CosmeticsState>(() => tycoon.state.value?.cosmetics ?? EMPTY)
@@ -55,7 +56,12 @@ export function useCosmetics() {
     /** Buy `def` (chips or gems) and put it on: worn, or on `zone` for a skin. True when it went through. */
     async function buy(def: CosmeticDef, zone?: ZoneId): Promise<boolean> {
         if (blocker(def)) return false
-        if (def.chips) return !!(await tycoon.buyCosmetic(def.key, def.slot === 'skin' ? zone : undefined))
+        if (def.chips) {
+            if (!(await tycoon.buyCosmetic(def.key, def.slot === 'skin' ? zone : undefined))) return false
+            // The chip buy only puts a skin on (with its zone); an avatar item is worn right after.
+            if (def.slot !== 'skin') await tycoon.equipCosmetic(def.key)
+            return true
+        }
         if (!(await tycoon.buyGem('cosmetic', def.key))) return false
         if (def.slot !== 'skin' || zone) await tycoon.equipCosmetic(def.key, def.slot === 'skin' ? zone : undefined)
         return true
@@ -70,7 +76,7 @@ export function useCosmetics() {
         return skinOf(state.value.skins, zone)
     }
 
-    function show(tab: WardrobeTab = 'hat', zone: ZoneId | null = null) {
+    function show(tab: WardrobeTab = 'look', zone: ZoneId | null = null) {
         wardrobe.value = { open: true, tab, zone }
     }
 

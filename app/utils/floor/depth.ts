@@ -1,5 +1,5 @@
 import { HH, HW } from './iso'
-import { GRID_H, GRID_W } from './layout'
+import { GRID_H, GRID_W } from '#shared/floor/layout'
 
 /**
  * Depth order for an isometric floor. Static things (walls, machines,

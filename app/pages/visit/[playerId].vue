@@ -31,6 +31,8 @@ onMounted(() => {
 
 const ownerId = computed(() => typeof route.params.playerId === 'string' ? route.params.playerId : '')
 const visit = ref<CasinoVisit | null>(null)
+// Everyone walking around this casino, its owner too when they are in.
+const presence = useFloorPresence(() => visit.value?.owner.id)
 /** Server time minus Date.now() when the visit was read. */
 const offset = ref(0)
 const failed = ref<'missing' | 'error' | null>(null)
@@ -215,7 +217,7 @@ useHead({ title: () => ownerName.value ? `${ownerName.value}'s casino` : 'Visiti
 
 <template>
   <div class="relative h-[calc(100dvh-var(--topbar-h,3.5rem))] overflow-hidden bg-[#1c1424]">
-    <CasinoFloor v-if="scene" :key="`${visit?.owner.id}:${floorKey}`" ref="floor" class="absolute inset-0" :scene="scene" :paused="fullScreenGame" @interact="onInteract" @ready="onFloorReady" @error="onFloorError" />
+    <CasinoFloor v-if="scene" :key="`${visit?.owner.id}:${floorKey}`" ref="floor" class="absolute inset-0" :scene="scene" :paused="fullScreenGame" :remotes="presence.remotes.value" @interact="onInteract" @move="presence.move" @ready="onFloorReady" @error="onFloorError" />
 
     <!-- Loading, missing casino, or no floor. -->
     <div v-if="!scene || !floorReady" class="g-ui absolute inset-0 z-20 grid place-items-center bg-[#1c1424]">
@@ -239,8 +241,11 @@ useHead({ title: () => ownerName.value ? `${ownerName.value}'s casino` : 'Visiti
     <template v-if="visit && floorReady">
       <!-- Whose casino this is. -->
       <header class="g-ui g-panel absolute inset-x-2 top-2 z-30 flex items-center gap-2.5 rounded-[22px] p-2 pr-2.5 md:right-auto md:left-3 md:w-[26rem]">
-        <button type="button" class="grid size-[46px] shrink-0 place-items-center overflow-hidden rounded-full border-2 border-black/50 bg-[#2a1f3f]" :aria-label="`About ${ownerName}`" @click="info = { kind: 'owner' }">
-          <TycoonAvatarPortrait :name="visit.owner.name" :avatar="visit.owner.avatar" :size="44" />
+        <button type="button" class="relative size-[46px] shrink-0" :aria-label="`About ${ownerName}`" @click="info = { kind: 'owner' }">
+          <span class="grid size-full place-items-center overflow-hidden rounded-full border-2 border-black/50 bg-[#2a1f3f]">
+            <TycoonAvatarPortrait :name="visit.owner.name" :avatar="visit.owner.avatar" :size="44" />
+          </span>
+          <span v-if="presence.ownerOnline.value" class="online absolute -right-0.5 -bottom-0.5 size-3.5 rounded-full border-2 border-[#1c1424] bg-[#4ade80]" :title="`${ownerName} is here now`" />
         </button>
         <div class="min-w-0 flex-1">
           <p class="text-[11px] leading-3 font-semibold tracking-wider text-[var(--g-muted)] uppercase">Visiting</p>
@@ -327,6 +332,11 @@ useHead({ title: () => ownerName.value ? `${ownerName.value}'s casino` : 'Visiti
 
 <style scoped>
 .liked { --face: #c23a56; --edge: #7d1830; }
+.online { animation: online-pulse 2s ease-in-out infinite; }
+@keyframes online-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(74 222 128 / 0.55); }
+  50% { box-shadow: 0 0 0 5px rgb(74 222 128 / 0); }
+}
 .stage { background: radial-gradient(ellipse at 50% 100%, rgb(255 214 120 / 0.3), transparent 70%), #2a1f3f; }
 .loader-chip { animation: loader-spin 1.1s cubic-bezier(0.5, 0, 0.5, 1) infinite; filter: drop-shadow(0 4px 0 rgb(0 0 0 / 0.4)); }
 @keyframes loader-spin {
@@ -335,6 +345,6 @@ useHead({ title: () => ownerName.value ? `${ownerName.value}'s casino` : 'Visiti
   100% { transform: rotateY(360deg) translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .loader-chip { animation: none; }
+  .loader-chip, .online { animation: none; }
 }
 </style>

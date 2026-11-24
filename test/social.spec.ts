@@ -143,7 +143,7 @@ describe('visiting', () => {
         const visitor = casino()
 
         const visit = getCasinoVisit(visitor, owner, now)
-        expect(visit.owner).toEqual({ id: owner, name: 'Test player', image: null, avatar: { hat: 'none', outfit: 'classic', accessory: 'none' } })
+        expect(visit.owner).toEqual({ id: owner, name: 'Test player', image: null, avatar: { hat: 'none', outfit: 'classic', accessory: 'none', hair: 'auto', haircolor: 'auto', skintone: 'auto' } })
         expect(visit.zones).toEqual(['backroom', 'main'])
         expect(visit.games).toEqual({ plinko: 3, spinata: 1, roulette: 2 })
         expect(visit.golden).toEqual(['roulette'])

@@ -17,10 +17,10 @@ import { HH, HW, footprintCanvas, hashString, project, unproject, type Pt } from
 import {
     CAGE, CHANDELIERS, DESK, DOORWAYS, GRID_H, GRID_W, PLOTS, PORCH, PROPS, SPAWN, ZONE_RECTS, ZONE_ORDER,
     areaAt, doorwayBetween, saleSpot, zoneAt, zonesBounds, type Rect, type Tile
-} from './layout'
-import { NavGrid } from './nav'
+} from '#shared/floor/layout'
+import { NavGrid } from '#shared/floor/nav'
 import { Picker } from './pick'
-import type { FloorApi, FloorCollectOptions, FloorFocusOptions, FloorPlot, FloorScene, FloorTarget } from './types'
+import { MAX_REMOTES, type FloorApi, type FloorCollectOptions, type FloorFocusOptions, type FloorMove, type FloorPlot, type FloorRemote, type FloorScene, type FloorTarget } from './types'
 import { CageView, DeskView, PlotView, SaleSignView, plotKey, type PlotShow, type ViewContext } from './views'
 
 type Pixi = typeof import('pixi.js')
@@ -38,6 +38,8 @@ export interface FloorEngineOptions {
     resume?: FloorView | null
     /** Rendering threw (corrupted renderer state): the owner rebuilds the floor. Called once. */
     onRenderError?: (error: unknown) => void
+    /** The avatar set off for a tile or was put on one (live presence tells the room). */
+    onMove?: (move: FloorMove) => void
 }
 
 /** Camera and avatar position, carried over when the engine is rebuilt. */
@@ -100,8 +102,20 @@ const TOUCH_RING: [number, number][] = [[0, -7], [7, 0], [0, 7], [-7, 0], [5, -5
 
 const ZONE_NAMES = Object.fromEntries(ZONES.map(z => [z.id, z.name])) as Record<ZoneId, string>
 
-/** Visit mode: where the casino's owner stands, beside the front of their builder desk. */
-const OWNER_SPOT: Tile = { x: DESK.front.x - 1, y: DESK.front.y }
+/**
+ * Visit mode, owner away: where they doze, on the open floor beside their
+ * builder desk, facing the entrance (clear of the desk, the cage, the lamps
+ * and the plots at every decor level).
+ */
+const OWNER_SPOT: Tile = { x: DESK.rect.x + DESK.rect.w, y: DESK.rect.y }
+const OWNER_FACE: Tile = { x: OWNER_SPOT.x + 2, y: OWNER_SPOT.y + 2 }
+
+/** Another player on the floor, as drawn. */
+interface RemoteView {
+    actor: Actor
+    seq: number
+    look: string
+}
 
 /** Canvas origin moved so grid (sx, sy) of the footprint becomes the art's origin. */
 function shifted(c: { ox: number, oy: number }, sx: number, sy: number): { ox: number, oy: number } {
@@ -222,10 +236,17 @@ export class FloorEngine implements FloorApi {
     private skinned: { sprite: Sprite, zone: ZoneId, key: (skin: SkinId) => string, bake: (skin: SkinId) => Baked }[] = []
     /** Player looks whose figure textures are in the bank, to free them when nobody wears them. */
     private figureLooks = ''
-    /** Visit mode: the casino's owner, idling by the builder desk. */
+    /** Visit mode: the casino's owner, dozing by the builder desk while they are away. */
     private owner: Actor | null = null
     private ownerName = ''
     private ownerT = 0
+    private ownerZzz: Container | null = null
+    private ownerScene: FloorScene['owner'] = null
+    /** Other players on the floor right now, by player id. */
+    private remotes = new Map<string, RemoteView>()
+    private ownerLive = false
+    private readonly onMove: ((move: FloorMove) => void) | null
+    private lastMove = ''
 
     constructor(opts: FloorEngineOptions) {
         const { PIXI, app } = opts
@@ -233,6 +254,7 @@ export class FloorEngine implements FloorApi {
         this.app = app
         this.reduced = opts.reducedMotion
         this.onInteract = opts.onInteract
+        this.onMove = opts.onMove ?? null
         this.names = opts.names
         this.bank = new TextureBank(PIXI, bakeResolution(app))
         this.fx = bakeFx(this.bank)
@@ -342,6 +364,7 @@ export class FloorEngine implements FloorApi {
             this.player.x = opts.resume.player.x
             this.player.y = opts.resume.player.y
             this.player.place()
+            this.announce(false)
         }
 
         this.resize(app.screen.width, app.screen.height)
@@ -392,7 +415,8 @@ export class FloorEngine implements FloorApi {
             this.overlay.addChild(this.player.tag)
             this.player.place()
         }
-        this.syncOwner(scene.owner ?? null)
+        this.ownerScene = scene.owner ?? null
+        this.syncOwner()
         const owned = new Set(scene.zones.filter(z => z.owned).map(z => z.id))
         if (!owned.size) owned.add('backroom')
         const key = JSON.stringify([
@@ -430,40 +454,153 @@ export class FloorEngine implements FloorApi {
                 this.frameOwned(false)
                 const path = this.nav.findPath(SPAWN, { x: 18, y: 19 })
                 if (path) this.player.walk(path)
+                this.announce(!!path)
             }
         }
     }
 
-    /** Visit mode: put the casino's owner by their builder desk (or take them away). */
-    private syncOwner(owner: { name: string, avatar?: AvatarLook | null } | null) {
+    /**
+     * Visit mode: the casino's owner. On the floor, they are a live figure
+     * (setRemotes); away, they doze by their builder desk (or, on your own
+     * floor, there is no one).
+     */
+    private syncOwner() {
+        const owner = this.ownerLive ? null : this.ownerScene ?? null
         const name = owner ? `${owner.name}\u0001${lookKey(avatarLook(owner.name, owner.avatar))}` : ''
         if (name === this.ownerName) return
         this.ownerName = name
         this.owner?.destroy()
         this.owner = null
+        this.ownerZzz = null
         if (!owner) return
         this.owner = new Actor(this.PIXI, figureFrames(this.bank, avatarLook(owner.name, owner.avatar)), this.fx, OWNER_SPOT)
         this.owner.tag = makeNameTag(this.PIXI, owner.name, false)
         this.overlay.addChild(this.owner.tag)
         this.objects.addChild(this.owner.container)
-        this.owner.face({ x: OWNER_SPOT.x + 1, y: OWNER_SPOT.y + 1 })
+        this.owner.face(OWNER_FACE)
+        // Away: a little dimmer, a softer tag, and a Zzz.
+        this.owner.body.tint = 0xc9c0d6
+        this.owner.tag.alpha = 0.8
+        // The Z's float off the end of the name tag (above it in the overlay, never hidden by it).
+        this.ownerZzz = this.makeZzz()
+        this.ownerZzz.position.set(this.owner.tag.halfW + 5, -2)
+        this.owner.tag.addChild(this.ownerZzz)
         this.owner.place()
-        this.ownerT = 2
+        this.ownerT = 0
     }
 
-    /** The owner idles: turns to a visitor nearby and now and then shows an emote. */
+    /** Three Z's that drift up from a dozing figure's head. */
+    private makeZzz(): Container {
+        const { PIXI } = this
+        const box = new PIXI.Container()
+        for (let i = 0; i < 3; i++) {
+            const z = new PIXI.Text({
+                text: 'z',
+                resolution: 2,
+                style: { fontFamily: '"Lilita One", system-ui, sans-serif', fontSize: 9 + i * 2.5, fill: 0xe8e0ff, stroke: { color: 0x2a1b30, width: 2.5 } }
+            })
+            z.anchor.set(0.5)
+            box.addChild(z)
+        }
+        return box
+    }
+
+    /** The away owner breathes slowly and the Z's float up. */
     private updateOwner(dt: number) {
         const owner = this.owner
         if (!owner) return
         owner.update(dt)
         owner.container.zIndex = this.actorZ(owner)
-        this.ownerT -= dt
-        if (this.ownerT > 0) return
-        this.ownerT = 5 + Math.random() * 4
-        const near = Math.hypot(this.player.x - owner.x, this.player.y - owner.y) < 4
-        if (near) owner.face(this.player.tile)
-        else owner.face({ x: OWNER_SPOT.x + 1, y: OWNER_SPOT.y + 1 })
-        if (!this.reduced) owner.showEmote(near ? (Math.random() < 0.5 ? 'heart' : 'smile') : Math.random() < 0.5 ? 'note' : 'smile', 1.6)
+        this.ownerT += dt
+        const zzz = this.ownerZzz
+        if (!zzz) return
+        zzz.children.forEach((z, i) => {
+            if (this.reduced) {
+                z.position.set(i * 6, -i * 5)
+                z.alpha = 0.9
+                return
+            }
+            const k = (this.ownerT * 0.45 + i / 3) % 1
+            z.position.set(k * 14 + Math.sin((this.ownerT + i) * 2.2) * 1.5, 4 - k * 18)
+            z.alpha = k < 0.15 ? k / 0.15 : 1 - (k - 0.15) / 0.85
+            z.scale.set(0.7 + k * 0.5)
+        })
+        if (!this.reduced) owner.body.scale.y = 1 + Math.sin(this.ownerT * 1.6) * 0.018
+    }
+
+    // ── live presence ─────────────────────────────────────────────────────
+
+    /**
+     * Other players on this floor now. Newcomers appear where they stand; a
+     * move walks the path our own grid finds to their tile (or hops there
+     * when there is none, or the floor is paused). At most MAX_REMOTES are
+     * drawn, the owner first.
+     */
+    setRemotes(list: FloorRemote[]) {
+        if (this.destroyed) return
+        const shown = [...list].sort((a, b) => Number(b.owner) - Number(a.owner)).slice(0, MAX_REMOTES)
+        const ids = new Set(shown.map(r => r.id))
+        for (const [id, view] of this.remotes) {
+            if (ids.has(id)) continue
+            if (!this.paused) this.poof(view.actor.x, view.actor.y)
+            view.actor.destroy()
+            this.remotes.delete(id)
+        }
+        for (const r of shown) {
+            const look = avatarLook(r.name, r.avatar)
+            const key = lookKey(look)
+            const view = this.remotes.get(r.id)
+            if (!view) {
+                const actor = new Actor(this.PIXI, figureFrames(this.bank, look), this.fx, r.tile)
+                actor.tag = makeNameTag(this.PIXI, r.name, false)
+                this.overlay.addChild(actor.tag)
+                this.objects.addChild(actor.container)
+                actor.face({ x: r.tile.x + 1, y: r.tile.y + 1 })
+                actor.place()
+                if (!this.paused) this.poof(actor.x, actor.y)
+                this.remotes.set(r.id, { actor, seq: r.seq, look: key })
+                continue
+            }
+            if (key !== view.look) {
+                view.look = key
+                view.actor.setFrames(figureFrames(this.bank, look))
+                if (!this.reduced && !this.paused) view.actor.showEmote('star', 1.2)
+            }
+            if (r.seq !== view.seq) {
+                view.seq = r.seq
+                this.moveRemote(view.actor, r.tile, r.walk)
+            }
+        }
+        this.ownerLive = shown.some(r => r.owner)
+        this.syncOwner()
+        this.pruneFigures()
+    }
+
+    private moveRemote(actor: Actor, tile: Tile, walk: boolean) {
+        const here = actor.tile
+        if (!actor.moving && here.x === tile.x && here.y === tile.y) return
+        const path = walk && !this.paused ? this.nav.findPath(actor.nextTile, tile) : null
+        if (path) {
+            actor.walk(path)
+            return
+        }
+        const show = !this.paused
+        if (show) this.poof(actor.x, actor.y)
+        actor.stop()
+        actor.x = tile.x + 0.5
+        actor.y = tile.y + 0.5
+        actor.place()
+        if (show) this.poof(actor.x, actor.y)
+    }
+
+    /** Tell the room where the avatar is headed (walking) or stands (put there). */
+    private announce(walk: boolean) {
+        if (!this.onMove) return
+        const dest = this.player.path.at(-1) ?? this.player.tile
+        const key = `${dest.x},${dest.y},${walk}`
+        if (key === this.lastMove) return
+        this.lastMove = key
+        this.onMove({ x: dest.x, y: dest.y, walk })
     }
 
     /** The cage fills between scene rebuilds (the page updates it in place every second or so). */
@@ -842,6 +979,7 @@ export class FloorEngine implements FloorApi {
     private pruneFigures() {
         const looks = new Set<string>([this.playerLook])
         if (this.owner) looks.add(this.ownerName.split('\u0001')[1] ?? '')
+        for (const view of this.remotes.values()) looks.add(view.look)
         for (const view of this.plots.values()) for (const key of view.seatLookKeys) looks.add(key)
         const id = [...looks].sort().join(',')
         if (id === this.figureLooks) return
@@ -1124,6 +1262,7 @@ export class FloorEngine implements FloorApi {
         }
         this.showMarker(dest, false)
         this.player.walk(path)
+        this.announce(true)
     }
 
     /** A tile next to `stand` the avatar can actually reach, with the route there. */
@@ -1162,6 +1301,7 @@ export class FloorEngine implements FloorApi {
         this.pending = it
         this.showMarker(route.tile, true)
         this.player.walk(route.path)
+        this.announce(true)
         if (!this.player.moving) this.arrive()
     }
 
@@ -1225,6 +1365,7 @@ export class FloorEngine implements FloorApi {
             this.player.y = spot.y + 0.5
             this.player.place()
             if (poof) this.poof(this.player.x, this.player.y)
+            this.announce(false)
         }
         this.marker.visible = false
         this.player.face(it.face)
@@ -1433,6 +1574,7 @@ export class FloorEngine implements FloorApi {
         if (this.labelsDirty) this.collectLabels()
         this.yieldTag(this.player.tag, ease)
         if (this.owner) this.yieldTag(this.owner.tag, ease)
+        for (const view of this.remotes.values()) this.yieldTag(view.actor.tag, ease)
     }
 
     private yieldTag(tag: NameTag | null, ease: number) {
@@ -1485,6 +1627,10 @@ export class FloorEngine implements FloorApi {
         this.playerRing.alpha = this.reduced ? 0.5 : 0.45 + Math.sin(this.time * 3) * 0.15
         this.guests.update(dt, this.partyOn)
         this.updateOwner(dt)
+        for (const view of this.remotes.values()) {
+            view.actor.update(dt)
+            view.actor.container.zIndex = this.actorZ(view.actor)
+        }
 
         // Machines and props.
         for (const view of this.plots.values()) view.update(dt)
@@ -1582,6 +1728,8 @@ export class FloorEngine implements FloorApi {
         this.player.destroy()
         this.owner?.destroy()
         this.owner = null
+        for (const view of this.remotes.values()) view.actor.destroy()
+        this.remotes.clear()
         this.app.stage.removeChildren().forEach(c => c.destroy({ children: true }))
         this.bank.destroy()
     }

@@ -4,8 +4,8 @@ import type { TextureBank } from './art/bank'
 import { lookFromSeed, type Look } from './art/characters'
 import type { Emote, FxTextures } from './art/fx'
 import { project } from './iso'
-import { SPAWN, type Tile } from './layout'
-import type { NavGrid } from './nav'
+import { SPAWN, type Tile } from '#shared/floor/layout'
+import type { NavGrid } from '#shared/floor/nav'
 
 type Pixi = typeof import('pixi.js')
 

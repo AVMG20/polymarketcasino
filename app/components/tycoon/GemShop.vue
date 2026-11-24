@@ -95,7 +95,7 @@ async function gild() {
     </div>
 
     <!-- Cosmetics: the wardrobe (avatar items, room skins). -->
-    <button type="button" class="tile g-gem-glow flex w-full items-center gap-3 rounded-[20px] p-1.5 pr-3 text-left transition-transform active:scale-[0.98]" @click="cosmetics.show()">
+    <button type="button" class="tile g-gem-glow flex w-full items-center gap-3 rounded-[20px] p-1.5 pr-3 text-left transition-transform active:scale-[0.98]" @click="cosmetics.show('hat')">
       <span class="block size-14 shrink-0 overflow-hidden rounded-[14px] border-2 border-black/50"><TycoonIllo name="wardrobe" color="#a879ff" /></span>
       <span class="g-title min-w-0 flex-1 truncate text-lg">Wardrobe</span>
       <ChevronRight class="size-6 shrink-0 text-[var(--g-muted)]" :stroke-width="3" />

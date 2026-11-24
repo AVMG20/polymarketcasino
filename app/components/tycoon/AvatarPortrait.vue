@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { AvatarLook } from '#shared/cosmetics'
-import { FIGURE_FOOT, FIGURE_H, FIGURE_W, avatarLook, drawFigure, type Frame, type Pose } from '~/utils/floor/art/characters'
+import { FIGURE_FOOT, FIGURE_H, FIGURE_W, avatarLook, drawFigure, figureTop, type Frame, type Pose } from '~/utils/floor/art/characters'
 
 /**
  * A player's chibi figure with their avatar cosmetics, drawn with the
@@ -25,21 +25,18 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const look = computed(() => avatarLook(props.name || 'player', props.avatar))
 
 /**
- * Where the top of a bust starts (figure px): the head sits at y 24-46 and
- * the hair tops out near 21; each hat reaches higher. A bust is cropped from
- * there to the shoulders (y 52), so a bare head fills a round frame and a
- * tall hat zooms out just as far as it needs.
+ * A bust is cropped from the top of the head, hat or hair (figureTop: a
+ * top hat, a party hat, an afro or a mohawk reach higher) to the shoulders
+ * (y 52), so a bare head fills a round frame and a tall hat zooms out just
+ * as far as it needs. A bare head keeps a little air above it.
  */
-const BUST_TOP: Record<string, number> = { none: 19.5, cap: 19, hardhat: 18, beanie: 15, crown: 13, cowboy: 13, tophat: 8, party: 8 }
 const BUST_BOTTOM = 52
+const BUST_AIR = 19.5
 
 // The part of the figure canvas each crop shows (figure px).
 const view = computed(() => {
     if (props.crop === 'bust') {
-        const { hat, style } = look.value
-        // A bun or spikes stick up past a bare head (or a cap).
-        const hair = (hat === 'none' || hat === 'cap') && (style === 'bun' || style === 'spiky') ? 15.5 : 99
-        const top = Math.min(hair, BUST_TOP[hat] ?? 8)
+        const top = Math.min(BUST_AIR, figureTop(look.value) - 0.5)
         const side = BUST_BOTTOM - top
         return { x: 20.5 - side / 2, y: top, w: side, h: side }
     }

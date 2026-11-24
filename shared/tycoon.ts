@@ -36,7 +36,7 @@ import { normalizeCoins, roundCoins } from './money'
 
 // ── Zones ────────────────────────────────────────────────────────────────
 
-/** Areas of the floor, bought in order. The client lays them out (app/utils/floor/layout.ts). */
+/** Areas of the floor, bought in order. The client lays them out (shared/floor/layout.ts). */
 export type ZoneId = 'backroom' | 'main' | 'pit' | 'lounge' | 'highlimit' | 'penthouse'
 
 export interface Cost {

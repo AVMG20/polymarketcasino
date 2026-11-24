@@ -1,4 +1,4 @@
-import { TYCOON_GAMES, ZONES, type Archetype, type ZoneId } from '#shared/tycoon'
+import { TYCOON_GAMES, ZONES, type Archetype, type ZoneId } from '../tycoon'
 
 /**
  * The casino's floor plan, in grid tiles (see iso.ts). The building is a

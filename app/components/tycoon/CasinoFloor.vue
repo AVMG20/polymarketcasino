@@ -4,7 +4,7 @@ import '@fontsource/fredoka/600.css'
 import { GAMES } from '#shared/games/registry'
 import type { FloorEngine, FloorView } from '~/utils/floor/engine'
 import { holdGlobalPixiResources } from '~/utils/floor/pixi-guard'
-import type { FloorApi, FloorScene, FloorTarget } from '~/utils/floor/types'
+import type { FloorApi, FloorMove, FloorRemote, FloorScene, FloorTarget } from '~/utils/floor/types'
 import { safeDestroy } from '~/utils/slot-pixi'
 
 /**
@@ -20,10 +20,14 @@ import { safeDestroy } from '~/utils/slot-pixi'
 const props = defineProps<{
     scene: FloorScene
     paused?: boolean
+    /** Other players on this floor right now (useFloorPresence). */
+    remotes?: FloorRemote[]
 }>()
 
 const emit = defineEmits<{
     interact: [target: FloorTarget]
+    /** The avatar set off for a tile or was put on one: tell the room. */
+    move: [move: FloorMove]
     ready: []
     /** WebGL could not start (or keeps failing): the page shows a fallback. */
     error: [error: unknown]
@@ -73,6 +77,9 @@ watch(() => [props.scene?.cage?.fill, props.scene?.cage?.stored] as const, ([fil
     if (fill !== undefined && stored !== undefined) engine?.setCage(fill, stored)
 })
 watch(() => props.paused, syncPaused)
+watch(() => props.remotes, (remotes) => {
+    engine?.setRemotes(remotes ?? [])
+})
 
 function onContextLost(e: Event) {
     e.preventDefault()
@@ -192,9 +199,11 @@ async function boot(resume: FloorView | null) {
             names: Object.fromEntries(GAMES.map(g => [g.slug, g.name])),
             onInteract: target => emit('interact', target),
             onRenderError,
+            onMove: move => emit('move', move),
             resume
         })
         engine.setScene(props.scene)
+        engine.setRemotes(props.remotes ?? [])
         // Dev only: poke the engine from the console (picking, context loss).
         if (import.meta.dev) (window as unknown as { __floor?: FloorEngine }).__floor = engine
     } catch (err) {

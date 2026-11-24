@@ -1,6 +1,6 @@
 import type { Archetype } from '#shared/tycoon'
 import { INK, Painter, circlePoly, darken, faceColors, lighten, mix, project, rgba, roundRect, roundRectPoly, type Pt } from '../iso'
-import { ARCH_SIZE } from '../layout'
+import { ARCH_SIZE } from '#shared/floor/layout'
 import { DEALER_LOOK, DEALER_LOOK_2, drawFigure } from './characters'
 import { PAL } from './palette'
 

@@ -17,6 +17,8 @@ const cosmetics = useCosmetics()
 const sound = useTycoonSound()
 const leaderboard = useLeaderboard()
 const session = useCasinoSession()
+// Visitors walking around your casino (and you, in your other tabs' eyes).
+const presence = useFloorPresence(() => session.player.value?.id)
 
 const floor = ref<FloorApi | null>(null)
 const floorReady = ref(false)
@@ -288,7 +290,7 @@ useHead({ title: 'My Casino' })
 
 <template>
   <div data-floor-root class="relative h-[calc(100dvh-var(--topbar-h,3.5rem))] overflow-hidden bg-[#1c1424]" @click.capture="onTap">
-    <CasinoFloor v-if="scene" :key="floorKey" ref="floor" class="absolute inset-0" :scene="scene" :paused="fullScreenGame" @interact="onInteract" @ready="onFloorReady" @error="onFloorError" />
+    <CasinoFloor v-if="scene" :key="floorKey" ref="floor" class="absolute inset-0" :scene="scene" :paused="fullScreenGame" :remotes="presence.remotes.value" @interact="onInteract" @move="presence.move" @ready="onFloorReady" @error="onFloorError" />
 
     <div v-if="!scene || !floorReady" class="g-ui absolute inset-0 z-20 grid place-items-center bg-[#1c1424]">
       <div v-if="(!scene && tycoon.loadFailed.value) || floorFailed" class="flex flex-col items-center gap-4 px-6 text-center">

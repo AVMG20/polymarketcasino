@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowBigUp, Crown, HardHat, Lock } from 'lucide-vue-next'
+import { ArrowBigUp, Crown, HardHat, Lock, Clock } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import type { BuildKind } from '#shared/tycoon'
 
@@ -15,7 +15,8 @@ const actionIcon = computed(() => (isNewBuild(props.kind, props.id, v.value.leve
 const costTitle = computed(() => {
     if (!v.value.affordable) return `Need ${formatCoins(v.value.missingChips)} more chips`
     if (v.value.buildersFull) return 'Every builder is busy'
-    return `${isNewBuild(props.kind, props.id, v.value.level) ? 'Build' : 'Upgrade'} ${v.value.name}`
+    const time = v.value.cost ? ` (${formatDuration(v.value.cost.buildMs)})` : ''
+    return `${isNewBuild(props.kind, props.id, v.value.level) ? 'Build' : 'Upgrade'} ${v.value.name}${time}`
 })
 
 /** Hovering the build/upgrade button flips the art to the numbers that step changes (desktop). */
@@ -58,13 +59,18 @@ async function tap() {
       <span v-else-if="v.maxed" class="absolute top-1 right-1 grid size-7 place-items-center rounded-full border-2 border-black/50 bg-[#ffc93a]"><Crown class="size-4 text-[#7a4a00]" :stroke-width="3" /></span>
       <!-- Hover: the numbers this step changes -->
       <Transition name="stats-flip">
-        <span v-if="stats.length" class="absolute inset-0 flex flex-col justify-center gap-1.5 bg-[#140d20]/94 p-2 text-left">
+        <span v-if="hovered && v.cost && !v.lockZone && !v.running" class="absolute inset-0 flex flex-col justify-center gap-1.5 bg-[#140d20]/94 p-2 text-left">
           <span v-for="stat in stats" :key="stat.label" class="flex min-w-0 items-center gap-1.5" :title="stat.title ?? stat.label">
             <component :is="stat.icon" class="size-4 shrink-0" :style="{ color: stat.color }" :stroke-width="2.75" />
             <span class="g-num ml-auto flex min-w-0 items-center gap-1 truncate text-[13px] leading-none">
-              <template v-if="stat.now !== null"><span class="text-white/55">{{ stat.now }}</span><span class="text-white/40">→</span></template>
+              <template v-if="stat.now !== null"><span class="text-white/55">{{ stat.now.replace(/\/h$/, '') }}</span><span class="text-white/40">→</span></template>
               <span class="text-[#6ee787]">{{ stat.next }}</span>
             </span>
+          </span>
+          <!-- How long this step takes to build -->
+          <span class="flex min-w-0 items-center gap-1.5" :class="stats.length ? 'mt-0.5 border-t border-white/10 pt-1.5' : ''" :title="`Takes ${formatDuration(v.cost.buildMs)} to build`">
+            <Clock class="size-4 shrink-0 text-[#ffc93a]" :stroke-width="2.75" />
+            <span class="g-num ml-auto truncate text-[13px] leading-none text-[#ffc93a]">{{ formatDuration(v.cost.buildMs) }}</span>
           </span>
         </span>
       </Transition>

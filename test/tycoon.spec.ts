@@ -624,7 +624,7 @@ describe('live tables and My Casino', () => {
         expect(table.occupancy()).toMatchObject({ slug: 'blackjack', seated: [], seats: table.config.seats })
         const built = seedPlayer(10_000)
         table.run(() => table.sit(built, 'Builder', null, 0))
-        expect(table.occupancy().seated).toEqual([{ name: 'Builder', image: null, avatar: { hat: 'none', outfit: 'classic', accessory: 'none' } }])
+        expect(table.occupancy().seated).toEqual([{ name: 'Builder', image: null, avatar: { hat: 'none', outfit: 'classic', accessory: 'none', hair: 'auto', haircolor: 'auto', skintone: 'auto' } }])
         table.run(() => table.leave(built))
     })
 })

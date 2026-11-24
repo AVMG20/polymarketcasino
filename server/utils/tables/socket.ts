@@ -2,8 +2,8 @@ import { eq } from 'drizzle-orm'
 import { db } from '../../database'
 import { players } from '../../database/schema'
 import type { ClientMessage } from '#shared/tables/protocol'
-import { casinoEnv } from '../env'
-import { playerIdFromCookieHeader } from '../session'
+import { takeToken } from '../rate-limit'
+import { refuseCrossSiteSocket, socketPlayer, type SocketUpgradeRequest } from '../socket-auth'
 import { chipBalance } from '../tycoon'
 import type { TablePeer } from './bus'
 import { TableError, type LiveTable } from './table'
@@ -15,11 +15,6 @@ export interface TableSocketContext {
     playerId: string
     name: string
     image: string | null
-}
-
-interface UpgradeRequest {
-    url: string
-    headers: Headers
 }
 
 /** The table a socket URL names: /api/tables/<slug>/ws. */
@@ -34,16 +29,14 @@ export function tableSlugFromUrl(url: string): string | null {
  * with the player's cookie), a known table, and a valid casino session for a
  * player that exists. Returns the socket's context, or the refusal to send.
  */
-export async function authorizeTableUpgrade(request: UpgradeRequest): Promise<TableSocketContext | Response> {
-    const origin = request.headers.get('origin')
-    if (!origin || origin !== casinoEnv().publicUrl) return new Response('Cross-site socket refused', { status: 403 })
+export async function authorizeTableUpgrade(request: SocketUpgradeRequest): Promise<TableSocketContext | Response> {
+    const crossSite = refuseCrossSiteSocket(request)
+    if (crossSite) return crossSite
     const slug = tableSlugFromUrl(request.url)
     if (!slug) return new Response('Unknown table', { status: 404 })
-    const playerId = await playerIdFromCookieHeader(request.headers.get('cookie'))
-    if (!playerId) return new Response('Unauthorized', { status: 401 })
-    const player = db.select({ name: players.name, image: players.image }).from(players).where(eq(players.id, playerId)).get()
-    if (!player) return new Response('Unauthorized', { status: 401 })
-    return { slug, playerId, name: player.name, image: player.image }
+    const player = await socketPlayer(request)
+    if (player instanceof Response) return player
+    return { slug, ...player }
 }
 
 const MAX_MESSAGE_BYTES = 2_048
@@ -71,18 +64,9 @@ export function openTableSocket(peer: TablePeer, context: TableSocketContext, ta
     table.run(() => table.setConnected(context.playerId, true))
 }
 
-function allow(state: PeerState): boolean {
-    const now = Date.now()
-    state.tokens = Math.min(BURST, state.tokens + ((now - state.refilledAt) / 1000) * RATE)
-    state.refilledAt = now
-    if (state.tokens < 1) return false
-    state.tokens--
-    return true
-}
-
 export function tableSocketMessage(peer: TablePeer, text: string) {
     const state = peers.get(peer)
-    if (!state || text.length > MAX_MESSAGE_BYTES || !allow(state)) return
+    if (!state || text.length > MAX_MESSAGE_BYTES || !takeToken(state, BURST, RATE)) return
     let message: ClientMessage
     try {
         message = JSON.parse(text)

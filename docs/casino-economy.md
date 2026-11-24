@@ -238,7 +238,7 @@ gems (the old chip pack is gone; a pack still pending from before v2 is refunded
 | `rush` | 5-100, `ceil(full-floor income × 4 h / 1,000 × 1.25)` (a new casino: 5; maxed: 38) | high rollers: every visitor spends double for 4 hours; priced from the floor with every seat taken (not from the occupancy at purchase, which a campaign started next would raise), so a rush with or without a campaign is never a cheaper way to coins than converting (at most 800 coins a gem) |
 | `builder` | 60 | a permanent extra builder (one more construction at once; once, next to the Crew) |
 | `golden` | 30 | a golden skin for one built game (cosmetic) |
-| `cosmetic` | 5-100 (target: the item key, `hat:crown`) | an avatar item or a premium zone skin (`shared/cosmetics.ts`; cosmetic only) |
+| `cosmetic` | 5-200 (target: the item key, `hat:crown`) | an avatar item or a premium zone skin (`shared/cosmetics.ts`; cosmetic only) |
 
 Purchases follow the convert flow exactly: a `gem_purchases` row (`pending`, its own idempotency key) is
 inserted in the same immediate transaction that checks the purchase against the casino, the hub spends,
@@ -258,11 +258,17 @@ chips ≈ 10% of a regular player's mid-game day (about 95,000 chips won a day o
 ### Cosmetics (`shared/cosmetics.ts`)
 
 Avatar items (hats, outfits, accessories) and zone skins never change odds, income, seats or the casino
-value. A few of each are free (the defaults among them). Avatar items cost gems (5-50, the premium Crown 90
-and Gold Suit 100). Zone skins: Art Deco, Tropical and Wild West cost chips (2,400 / 4,800 / 7,200: a chip
-sink, so buying one can lower the star level), Royal and Midnight gems (40 / 60). Bought once, owned for
-good; equipping is free (a skin goes on any owned zone). Chip buys are one `coinTransaction`: the
-`casino_cosmetics` insert (primary key = the double-buy guard) and the chip debit; gem buys use the gem flow
+value. The avatar's own look is free: hair style, hair colour and skin tone (each slot defaults to `auto`,
+what the player's name gives). A few hats, outfits and accessories are free (the defaults among them). The
+others cost gems (5-50; premium Crown 90, Gold Suit 100, Diamond Suit 200) or, the mid and late game
+pieces, chips: Fedora 40,000, Velvet Blazer 120,000, Ice Chain 250,000, Royal Robe 600,000 and Golden
+Laurel 750,000 (a maxed casino wins 100-200k chips a day, so the dearest are days of winnings and a star
+level or two given up: an end-game sink). Zone skins: Art Deco, Tropical and Wild West cost chips (2,400 /
+4,800 / 7,200), Ice Palace 35,000 (mid game), Vegas Gold 150,000 and Cosmic 500,000 (late and end game);
+Royal, Midnight and Jade Temple gems (40 / 60 / 150). A chip buy is a chip sink, so it can lower the star
+level. Bought once, owned for good; equipping is free (a skin goes on any owned zone). Chip buys are one
+`coinTransaction`: the `casino_cosmetics` insert (primary key = the double-buy guard) and the chip debit;
+gem buys use the gem flow
 (item `cosmetic`). Visitors see the owner's look and zone skins; nobody sees what anyone owns.
 
 ### Pace (simulation, seed 7)

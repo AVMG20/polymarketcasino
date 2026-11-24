@@ -1,9 +1,9 @@
 import type { Component } from 'vue'
-import { Armchair, Castle, Cherry, Crown, DoorClosed, HardHat, LayoutGrid, LockOpen, Megaphone, Spade, Sparkles, Store, TrendingUp, Users, Vault } from 'lucide-vue-next'
+import { Castle, Cherry, Coins, Crown, DoorClosed, HardHat, LayoutGrid, LockOpen, Megaphone, Spade, Sparkles, Store, Users, Vault } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import { formatCoins } from '#shared/money'
 import {
-    cageCapacity, CAMPAIGNS, campaignBoost, findTycoonGame, fullIncomePerHour, seatsOf, TYCOON_GAMES, visitorCount,
+    cageCapacity, CAMPAIGNS, campaignBoost, findTycoonGame, floorSeats, fullIncomePerHour, guestsPerHour, TYCOON_GAMES, visitorCount,
     visitorDemand, type BuildKind, type CampaignId, type TycoonState, type UpgradeId
 } from '#shared/tycoon'
 import { formatFixed } from '~/utils/format-decimal'
@@ -106,11 +106,7 @@ export function buildEffects(kind: BuildKind, id: string, level: number): BuildE
         const now = level > 0 ? def?.guestsPerHour[level - 1] ?? 0 : 0
         const then = def?.guestsPerHour[next - 1]
         if (then === undefined) return []
-        const seats = seatsOf(id, next) - seatsOf(id, level)
-        return [
-            ...(seats > 0 ? [{ icon: Armchair, text: `+${seats}`, title: 'Seats: room for more visitors', color: '#ffb35c' }] : []),
-            { icon: Users, text: `+${formatCoins(Math.round((then - now) * 100) / 100)}/h`, title: 'Guest coins per hour with every seat taken', color: '#7dd3fc' }
-        ]
+        return [{ icon: Coins, text: `+${formatCoins(Math.round((then - now) * 100) / 100)}/h`, title: 'More coins an hour for your cage (with every seat taken)', color: '#ffc93a' }]
     }
     switch (id) {
         case 'cage':
@@ -154,15 +150,17 @@ export function buildStats(kind: BuildKind, id: string, level: number, state: St
     if (kind === 'game') {
         const def = findTycoonGame(id)
         if (!def || next > def.levels.length) return []
-        const income = (l: number) => (l > 0 ? `+${formatCoins(fullIncomePerHour({ games: { [id]: l } }))}/h` : null)
-        const rows: BuildStat[] = [
-            { icon: Armchair, label: 'Seats', now: level > 0 ? String(seatsOf(id, level)) : null, next: String(seatsOf(id, next)), color: '#ffb35c' },
-            { icon: TrendingUp, label: 'Income, full', now: income(level), next: income(next)!, color: '#7ee08f', title: 'Guest coins an hour this game earns with every seat taken' }
-        ]
-        if (state) {
-            const after = { ...state, games: { ...state.games, [id]: next } }
-            rows.push({ icon: Users, label: 'Visitors', now: String(visitorCount(state, now)), next: String(visitorCount(after, now)), color: '#7dd3fc', title: 'Visitors on your floor now and after (more games draw more)' })
+        if (!state) {
+            const income = (l: number) => (l > 0 ? `+${formatCoins(fullIncomePerHour({ games: { [id]: l } }))}/h` : null)
+            return [{ icon: Coins, label: 'Income, full', now: income(level), next: income(next)!, color: '#ffc93a', title: 'Coins an hour this game earns with every seat taken' }]
         }
+        // What the player cares about: the coins the cage earns an hour, now and after.
+        // Seats ride along with the visitors (12/14): a visitor needs a seat, and a full floor needs more seats.
+        const after = { ...state, games: { ...state.games, [id]: next } }
+        const rows: BuildStat[] = [
+            { icon: Coins, label: 'Cage income', now: `+${formatCoins(guestsPerHour(state, now))}/h`, next: `+${formatCoins(guestsPerHour(after, now))}/h`, color: '#ffc93a', title: 'Coins your cashier cage earns an hour, now and after this step' },
+            { icon: Users, label: 'Visitors / seats', now: `${visitorCount(state, now)}/${floorSeats(state)}`, next: `${visitorCount(after, now)}/${floorSeats(after)}`, color: '#7dd3fc', title: 'Visitors on your floor / seats for them. Every visitor needs a seat to play, and only visitors who play earn coins: more seats let more visitors in. Ads, Marketing and Decor bring more visitors.' }
+        ]
         return rows
     }
     switch (id as UpgradeId) {

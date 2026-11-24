@@ -63,13 +63,38 @@ export interface FloorScene {
     /** `avatar`: what the player's figure wears (missing = the defaults). */
     player: { name: string, image: string | null, avatar?: AvatarLook | null }
     /**
-     * Visit mode (someone else's casino, read-only): its owner, idling by the
-     * builder desk with a name tag. Unset on your own floor.
+     * Visit mode (someone else's casino, read-only): its owner. While they are
+     * on the floor (a FloorRemote with `owner`) that live figure is them; else
+     * they idle, dozing, by the builder desk. Unset on your own floor.
      */
     owner?: { name: string, image: string | null, avatar?: AvatarLook | null } | null
     /** Server time minus Date.now(), ms. */
     clockOffset: number
 }
+
+/** Another player on this floor right now (live presence), drawn walking with a name tag. */
+export interface FloorRemote {
+    id: string
+    name: string
+    avatar: AvatarLook | null
+    /** The casino's owner: stands in for the idle owner figure. */
+    owner: boolean
+    /** The tile they walk to (`walk`) or stand on. */
+    tile: { x: number, y: number }
+    walk: boolean
+    /** Bumps on every move, so the same tile twice is still a move. */
+    seq: number
+}
+
+/** Your own avatar set off for a tile (`walk`) or was put there (join, teleport): what the room hears. */
+export interface FloorMove {
+    x: number
+    y: number
+    walk: boolean
+}
+
+/** At most this many other players are drawn (the owner first). */
+export const MAX_REMOTES = 20
 
 /** What the player walked up to and clicked. */
 export type FloorTarget =

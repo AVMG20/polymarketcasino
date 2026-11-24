@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { Armchair, Check, PaintRoller } from 'lucide-vue-next'
+import { Check, Coins, PaintRoller } from 'lucide-vue-next'
+import { formatCoins } from '#shared/money'
 import { findGame } from '#shared/games/registry'
-import { seatsOf, TYCOON_GAMES, type ZoneId } from '#shared/tycoon'
+import { fullIncomePerHour, TYCOON_GAMES, type ZoneId } from '#shared/tycoon'
 
 /**
  * What a zone brings, on its detail card: the games it holds (with their
- * level once built), the seats they add at level 1, and, once the zone is
+ * level once built), the coins an hour they can add at level 1, and, once the zone is
  * open, its skins (previewed live on the floor).
  */
 const props = defineProps<{ id: ZoneId }>()
@@ -16,7 +17,8 @@ const games = computed(() => TYCOON_GAMES.filter(game => game.zone === props.id)
     name: findGame(game.slug)?.name ?? game.slug,
     level: tycoon.state.value?.games[game.slug] ?? 0
 })))
-const seats = computed(() => games.value.reduce((sum, game) => sum + seatsOf(game.slug, 1), 0))
+/** Cage coins an hour these games add at level 1 with every seat taken. */
+const income = computed(() => fullIncomePerHour({ games: Object.fromEntries(games.value.map(game => [game.slug, 1])) }))
 const owned = computed(() => !!tycoon.state.value?.zones.includes(props.id))
 </script>
 
@@ -25,7 +27,7 @@ const owned = computed(() => !!tycoon.state.value?.zones.includes(props.id))
     <div class="g-well rounded-2xl p-2">
       <div class="mb-1.5 flex items-center justify-between px-1">
         <span class="text-[11px] font-semibold tracking-wider text-[var(--g-muted)] uppercase">{{ games.length }} games</span>
-        <span class="g-num flex items-center gap-1 text-sm text-[#9fd7ff]" :title="`${seats} seats for visitors with every game here built`"><Armchair class="size-4" :stroke-width="2.75" />+{{ seats }}</span>
+        <span class="g-num flex items-center gap-1 text-sm text-[#ffc93a]" :title="`Up to ${formatCoins(income)} more coins an hour for your cage with every game here built`"><Coins class="size-4" :stroke-width="2.75" />+{{ formatCoins(income) }}/h</span>
       </div>
       <div class="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
         <div

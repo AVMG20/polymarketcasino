@@ -66,10 +66,25 @@ export const ZONE_STYLE: Record<ZoneId, ZoneStyle> = {
 }
 
 /** A zone skin's signature motif, painted into its floor (and echoed on its walls). */
-export type Motif = 'none' | 'fan' | 'palm' | 'horseshoe' | 'crown' | 'moon'
+export type Motif = 'none' | 'fan' | 'palm' | 'horseshoe' | 'crown' | 'moon' | 'snowflake' | 'diamond' | 'lotus' | 'planet'
+
+/**
+ * The dearest skins lay a floor of their own instead of the zone kind's
+ * carpet or marble: ice (frosted marble with crystals), gold (black marble
+ * with gold veins, inlay and glints), jade (green stone, gold trim) and space
+ * (a starfield with nebula tints). Each also paints its walls richer.
+ */
+export type Finish = 'ice' | 'gold' | 'jade' | 'space'
 
 export interface SkinStyle extends ZoneStyle {
     motif: Motif
+    finish?: Finish
+    /** Veins in the stone (finishes). */
+    vein?: string
+    /** The emblem's medallion (default: the floor, darkened). */
+    medal?: string
+    /** The emblem itself (default: the pattern colour). */
+    emblem?: string
 }
 
 /** Zone skins (shared/cosmetics.ts): one theme that fits any zone. Classic is the zone's own style. */
@@ -77,8 +92,12 @@ const SKIN_STYLE: Record<Exclude<SkinId, 'classic'>, SkinStyle> = {
     deco: { wall: '#1f2a2e', trim: '#e0b85a', floor: '#22343a', floorAlt: '#1a2a2f', pattern: '#e0b85a', kind: 'carpet', rug: '#0f1d21', motif: 'fan' },
     tropical: { wall: '#2a9d8f', trim: '#ffe0a3', floor: '#e6c98f', floorAlt: '#d8b878', pattern: '#2fa58f', kind: 'wood', rug: '#2fa58f', motif: 'palm' },
     western: { wall: '#8a5a36', trim: '#e8c58c', floor: '#a8673a', floorAlt: '#97592f', pattern: '#e8c58c', kind: 'wood', rug: '#7d2f22', motif: 'horseshoe' },
+    frost: { wall: '#4f9fd0', trim: '#eef9ff', floor: '#d4ecf8', floorAlt: '#c0e0f2', pattern: '#3f95cc', kind: 'marble', rug: '#2b78b0', motif: 'snowflake', finish: 'ice', vein: '#ffffff', medal: '#2b78b0', emblem: '#f4fbff' },
     royal: { wall: '#7d1328', trim: '#f4c14f', floor: '#9d1b32', floorAlt: '#871629', pattern: '#f4c14f', kind: 'carpet', rug: '#5c0d1d', motif: 'crown' },
-    midnight: { wall: '#1d2a5c', trim: '#c9d3f0', floor: '#202e66', floorAlt: '#1a2655', pattern: '#c9d3f0', kind: 'carpet', rug: '#121a3d', motif: 'moon' }
+    midnight: { wall: '#1d2a5c', trim: '#c9d3f0', floor: '#202e66', floorAlt: '#1a2655', pattern: '#c9d3f0', kind: 'carpet', rug: '#121a3d', motif: 'moon' },
+    vegas: { wall: '#2b1e2e', trim: '#f4c14f', floor: '#3b2d3e', floorAlt: '#2e2232', pattern: '#f4c14f', kind: 'marble', rug: '#8e1430', motif: 'diamond', finish: 'gold', vein: '#f4c14f', medal: '#8e1430', emblem: '#ffd864' },
+    jade: { wall: '#1c6a4a', trim: '#f4c14f', floor: '#3aa579', floorAlt: '#31926a', pattern: '#f4c14f', kind: 'marble', rug: '#a3202f', motif: 'lotus', finish: 'jade', vein: '#b4f2d2', medal: '#a3202f', emblem: '#ffd35e' },
+    cosmic: { wall: '#231650', trim: '#d9c8ff', floor: '#2e2268', floorAlt: '#271c5a', pattern: '#ffb86b', kind: 'carpet', rug: '#170f3c', motif: 'planet', finish: 'space', vein: '#c58bff', medal: '#170f3c', emblem: '#ffbe76' }
 }
 
 /** The style a zone wears with a skin. */

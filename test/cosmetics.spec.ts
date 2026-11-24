@@ -77,15 +77,20 @@ describe('catalog', () => {
         for (const def of C.COSMETICS) {
             expect(def.key).toBe(`${def.slot}:${def.id}`)
             expect(def.gems > 0 && def.chips > 0).toBe(false)
-            if (def.slot !== 'skin') expect(def.chips).toBe(0)
             if (def.gems) expect(def.gems).toBeGreaterThanOrEqual(5)
-            if (def.gems) expect(def.gems).toBeLessThanOrEqual(def.premium ? 100 : 50)
+            if (def.gems) expect(def.gems).toBeLessThanOrEqual(def.premium ? 200 : 50)
+            // The look (hair, hair colour, skin tone) is always free.
+            if ((C.LOOK_SLOTS as readonly string[]).includes(def.slot)) expect(C.isFree(def)).toBe(true)
         }
         expect(new Set(C.COSMETICS.map(c => c.key)).size).toBe(C.COSMETICS.length)
         // The defaults are free, and every slot has a few free items.
         for (const slot of C.AVATAR_SLOTS) {
             expect(C.isFree(C.findCosmetic(`${slot}:${C.DEFAULT_AVATAR[slot]}`)!)).toBe(true)
             expect(C.cosmeticsIn(slot).filter(C.isFree).length).toBeGreaterThanOrEqual(2)
+        }
+        for (const slot of C.LOOK_SLOTS) {
+            expect(C.DEFAULT_AVATAR[slot]).toBe(C.AUTO)
+            expect(C.cosmeticsIn(slot).length).toBeGreaterThanOrEqual(6)
         }
         expect(C.isFree(C.findCosmetic('skin:classic')!)).toBe(true)
         const skins = C.cosmeticsIn('skin').filter(s => !C.isFree(s))
@@ -96,6 +101,7 @@ describe('catalog', () => {
     it('normalizes stored looks and skins', () => {
         expect(C.normalizeAvatar(null)).toEqual(C.DEFAULT_AVATAR)
         expect(C.normalizeAvatar({ hat: 'crown', outfit: 'nope', accessory: 3 })).toEqual({ ...C.DEFAULT_AVATAR, hat: 'crown' })
+        expect(C.normalizeAvatar({ hair: 'afro', haircolor: 'pink', skintone: 'green' })).toEqual({ ...C.DEFAULT_AVATAR, hair: 'afro', haircolor: 'pink' })
         expect(C.normalizeSkins({ main: 'royal', pit: 'classic', lounge: 'moon', highlimit: 7 })).toEqual({ main: 'royal' })
     })
 })
@@ -112,7 +118,12 @@ describe('defaults and equipping', () => {
         expect(worn.state.cosmetics!.avatar).toEqual({ ...C.DEFAULT_AVATAR, hat: 'cap' })
         equipCosmetic(dev, { key: 'accessory:shades' })
         equipCosmetic(dev, { key: 'outfit:stripes' })
-        expect(getTycoonState(dev).cosmetics!.avatar).toEqual({ hat: 'cap', outfit: 'stripes', accessory: 'shades' })
+        expect(getTycoonState(dev).cosmetics!.avatar).toEqual({ ...C.DEFAULT_AVATAR, hat: 'cap', outfit: 'stripes', accessory: 'shades' })
+        // The look is free for anyone too.
+        equipCosmetic(dev, { key: 'hair:afro' })
+        equipCosmetic(dev, { key: 'haircolor:pink' })
+        equipCosmetic(dev, { key: 'skintone:cocoa' })
+        expect(getTycoonState(dev).cosmetics!.avatar).toMatchObject({ hair: 'afro', haircolor: 'pink', skintone: 'cocoa', hat: 'cap' })
 
         expect(() => equipCosmetic(dev, { key: 'hat:crown' })).toThrow(expect.objectContaining({ statusCode: 403 }))
         expect(() => equipCosmetic(dev, { key: 'skin:deco', zone: 'backroom' })).toThrow(expect.objectContaining({ statusCode: 403 }))
@@ -163,7 +174,16 @@ describe('buying with chips', () => {
         await expect(buyCosmeticWithChips(id, { key: 'skin:classic' })).rejects.toMatchObject({ statusCode: 400 })
         await expect(buyCosmeticWithChips(id, { key: 'skin:royal' })).rejects.toMatchObject({ statusCode: 400 })
         await expect(buyCosmeticWithChips(id, { key: 'hat:crown' })).rejects.toMatchObject({ statusCode: 400 })
+        await expect(buyCosmeticWithChips(id, { key: 'hair:afro' })).rejects.toMatchObject({ statusCode: 400 })
         expect(chipsOf(id)).toBe(100_000)
+    })
+
+    it('sells avatar items priced in chips and wears them', async () => {
+        const fedora = C.findCosmetic('hat:fedora')!
+        const id = newPlayer('hub', fedora.chips + 5)
+        await buyCosmeticWithChips(id, { key: fedora.key })
+        expect(chipsOf(id)).toBe(5)
+        expect(equipCosmetic(id, { key: fedora.key }).state.cosmetics!.avatar.hat).toBe('fedora')
     })
 
     it('sells one to a burst of parallel buys', async () => {
@@ -258,7 +278,7 @@ describe('what others see', () => {
         const visitor = newPlayer()
 
         const visit = getCasinoVisit(visitor, owner)
-        expect(visit.owner.avatar).toEqual({ hat: 'crown', outfit: 'classic', accessory: 'shades' })
+        expect(visit.owner.avatar).toEqual({ ...C.DEFAULT_AVATAR, hat: 'crown', accessory: 'shades' })
         expect(visit.skins).toEqual({ backroom: 'western' })
         const json = JSON.stringify(visit)
         for (const secret of ['owned', 'chips', 'cosmetics', 'gems', 'coins', 'cage']) expect(json).not.toContain(`"${secret}"`)
