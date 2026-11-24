@@ -52,6 +52,20 @@ const waiting = computed(() => tycoon.waiting.value)
 const perHour = computed(() => tycoon.perHour.value)
 /** The average for this floor and these rules (null from a server without visitor tiers). */
 const expected = computed(() => tycoon.expectedPerHour.value)
+/**
+ * Luck makes some hours busy and some quiet. Instead of a second coins/h
+ * number next to the current one, the hour gets a word when it is clearly
+ * off the floor's average (the average itself is in the tooltip).
+ */
+const mood = computed<{ label: string, color: string } | null>(() => {
+    const avg = expected.value
+    if (avg === null || avg <= 0 || full.value) return null
+    const ratio = perHour.value / avg
+    if (ratio < 0.85) return { label: 'Quiet hour', color: '#9fb4d8' }
+    if (ratio > 1.15) return { label: 'Busy hour', color: '#7ee08f' }
+    return null
+})
+const moodTitle = computed(() => (expected.value !== null ? `Luck makes some hours busy and some quiet. On average this floor earns ${formatCoins(expected.value)} coins an hour.` : ''))
 const floorNow = computed(() => tycoon.floorNow.value)
 /** Tiers that can visit now, and the next one still to open (for the guests popover). */
 const tiers = computed(() => openTiers(floorNow.value).map(t => ({ ...t, n: tycoon.visitorTiers.value[t.id] ?? 0, odds: floorNow.value?.odds[t.id] ?? 0 })))
@@ -279,11 +293,11 @@ useEventListener('keydown', (event: KeyboardEvent) => {
                 </p>
                 <p v-if="floorHint" class="px-1 text-[12px] leading-4 font-semibold text-[#ffb35c]">{{ floorHint }}</p>
                 <p v-if="waiting" class="px-1 text-[12px] leading-4 font-semibold text-[#ffb35c]">{{ waiting }} turned away just now: no free seat{{ rules.house.value && rules.house.value.rules.door !== 'open' ? ' or your door policy' : '' }}</p>
-                <p class="stat-row border-t border-white/10 pt-2" title="Luck makes some hours good and some quiet: the average is what this floor earns over time">
+                <p class="stat-row border-t border-white/10 pt-2" :title="moodTitle">
                   <CasinoCoinIcon class="size-4" />
                   <span v-if="full" class="g-num text-[#ffb35c]">Cage full: collect</span>
                   <span v-else class="g-num text-[#7ee08f]">{{ formatCoins(perHour) }}/h now</span>
-                  <span v-if="expected !== null" class="g-num ml-auto text-[var(--g-muted)]">~{{ formatCoins(expected) }} avg</span>
+                  <span v-if="mood" class="ml-auto text-[12px] font-semibold" :style="{ color: mood.color }">{{ mood.label }}</span>
                 </p>
                 <div class="flex gap-2">
                   <button type="button" class="g-btn g-dark h-11 flex-1 rounded-xl text-[15px]" @click="guestsOpen = false; casinoStats.show()">
@@ -379,15 +393,16 @@ useEventListener('keydown', (event: KeyboardEvent) => {
       <Transition name="pop">
         <div v-if="info" class="g-panel absolute top-full left-0 z-10 mt-2.5 w-60 space-y-1.5 rounded-2xl p-3 text-sm">
           <p class="stat-row"><CasinoCoinIcon class="size-4" /> Coins <span class="g-num ml-auto">{{ formatCoins(stored) }} / {{ formatCoins(state?.cage.capacity ?? 0) }}</span></p>
-          <p class="stat-row"><CasinoCoinIcon class="size-4" /> Per hour <span class="g-num ml-auto" :class="full ? 'text-[#ffb35c]' : ''">{{ full ? 'Stopped: full' : `+${formatCoins(perHour)}/h` }}</span></p>
+          <p class="stat-row" :title="moodTitle">
+            <CasinoCoinIcon class="size-4" /> Per hour
+            <span v-if="mood" class="text-[11px] font-semibold" :style="{ color: mood.color }">{{ mood.label }}</span>
+            <span class="g-num ml-auto" :class="full ? 'text-[#ffb35c]' : ''">{{ full ? 'Stopped: full' : `+${formatCoins(perHour)}/h` }}</span>
+          </p>
           <p class="stat-row"><Timer class="size-4 text-[#ffc93a]" :stroke-width="3" /> Full in <span class="g-num ml-auto">{{ fullInMs !== null ? formatDuration(fullInMs) : '–' }}</span></p>
           <p v-if="campaign" class="stat-row">
             <span class="size-5 shrink-0"><TycoonCampaignArt :id="campaign.def.id" plain /></span>
             {{ campaign.def.name }} <span class="g-num text-[#7dd3fc]">{{ formatBoost(tycoon.campaigns.value.find(c => c.running)?.boost ?? 1) }}</span>
             <span class="g-num ml-auto">{{ formatCountdown(campaign.leftMs) }}</span>
-          </p>
-          <p v-if="expected !== null" class="stat-row" title="Luck makes some hours good and some quiet: this is what your floor earns over time">
-            <CasinoCoinIcon class="size-4 opacity-70" /> On average <span class="g-num ml-auto text-[var(--g-muted)]">~{{ formatCoins(expected) }}/h</span>
           </p>
           <p v-if="tycoon.rushActive.value" class="stat-row"><Zap class="size-4 text-[#ff9a2e]" :stroke-width="3" /> Big Spenders ×2 <span class="g-num ml-auto">{{ formatCountdown(tycoon.rushLeftMs.value) }}</span></p>
           <div class="flex gap-2 pt-1">

@@ -40,7 +40,7 @@ function optionTitle(o: HouseRuleOption): string {
     <p v-if="expected !== null" class="g-well flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-semibold" title="What your floor earns an hour on average with these rules (good and quiet hours even out)">
       <CasinoCoinIcon class="size-5 shrink-0" />
       <span class="text-[var(--g-muted)]">On average</span>
-      <span class="g-num ml-auto text-base text-[#7ee08f]">~{{ formatCoins(expected) }}/h</span>
+      <span class="g-num ml-auto text-base text-[#7ee08f]">{{ formatCoins(expected) }}/h avg</span>
     </p>
 
     <p v-if="cooling" class="flex items-center gap-1.5 rounded-xl bg-[#ff9a2e]/15 px-3 py-2 text-[13px] font-semibold text-[#ffb35c]" role="status">
