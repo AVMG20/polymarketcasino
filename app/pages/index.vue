@@ -323,7 +323,7 @@ useHead({ title: 'My Casino' })
     </div>
 
     <template v-if="scene">
-      <TycoonHud @build="openMenu()" @games="gamesOpen = true" @cage="walkFloor({ kind: 'cage' })" @shop="openMenu('gems')" @zone="id => openCard('zone', id)" @popover="open => (hudPopover = open)" @campaigns="openPanel('campaigns')" @missions="openPanel('missions')" @goal="openCard" />
+      <TycoonHud @build="openMenu()" @games="gamesOpen = true" @cage="walkFloor({ kind: 'cage' })" @shop="openMenu('gems')" @zone="id => openCard('zone', id)" @popover="open => (hudPopover = open)" @campaigns="openPanel('campaigns')" @missions="openPanel('missions')" />
       <TycoonOnboarding ref="onboarding" :paused="overlayOpen" @cage="walkFloor({ kind: 'cage' })" @games="gamesOpen = true" @limbo="openCard('game', 'limbo')" @build="(kind, id) => openCard(kind, id)" />
     </template>
 

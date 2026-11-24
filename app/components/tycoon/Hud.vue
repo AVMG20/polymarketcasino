@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ChartArea, Hammer, LayoutGrid, ListChecks, Megaphone, Plus, ScrollText, Sparkles, Timer, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
-import { findZone, type BuildKind, type ZoneId } from '#shared/tycoon'
+import { findZone, type ZoneId } from '#shared/tycoon'
 
 /**
  * Everything laid over the floor: the resource bar and the cage jar up top,
  * the construction rings on the right and the round action buttons below.
  */
-const emit = defineEmits<{ build: [], games: [], cage: [], shop: [], zone: [id: ZoneId], popover: [open: boolean], campaigns: [], missions: [], goal: [kind: BuildKind, id: string] }>()
+const emit = defineEmits<{ build: [], games: [], cage: [], shop: [], zone: [id: ZoneId], popover: [open: boolean], campaigns: [], missions: [] }>()
 const tycoon = useTycoon()
 const { coins } = useCasinoSession()
 const sound = useTycoonSound()
@@ -410,8 +410,6 @@ useEventListener('keydown', (event: KeyboardEvent) => {
       <span v-if="tycoon.claimable.value" class="dot g-num grid min-w-6 place-items-center px-1 text-xs leading-none" :class="reducedMotion ? '' : 'g-bounce'">{{ tycoon.claimable.value }}</span>
     </button>
 
-    <!-- Saving up: the next build, chips held against its price, a rough time to it. -->
-    <TycoonNextGoal @open="(kind, id) => emit('goal', kind, id)" />
     </div>
 
     <!-- Construction rings -->

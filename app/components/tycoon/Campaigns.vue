@@ -135,12 +135,12 @@ function buttonTitle(c: CampaignView): string {
         <p class="g-title mt-1 truncate text-center leading-5" :class="c.def.name.length > 12 ? 'text-[12.5px] tracking-tight' : 'text-[15px]'" :title="c.def.name">{{ c.def.name }}</p>
         <p
           v-if="c.gain.coins >= 1"
-          class="g-num flex min-w-0 items-center justify-center gap-0.5 text-[13px] leading-5 whitespace-nowrap sm:gap-1"
+          class="g-num flex min-w-0 items-center justify-center gap-0.5 overflow-hidden text-[13px] leading-5 whitespace-nowrap"
           :title="`On average over its ${formatDuration(c.def.ms)}: ${c.def.goal === 'wealth' ? `+${formatFixed(c.gain.richGuests, 1)} High Rollers and Whales` : `+${Math.round(c.gain.guests)} guests`} and +${formatCoins(c.gain.coins)} coins (it costs ${formatCoins(c.cost)} chips)`"
         >
-          <template v-if="c.def.goal === 'wealth'"><Gem class="size-3.5 shrink-0 text-[#c084fc]" :stroke-width="3" /><span class="text-[#c084fc]">+{{ formatFixed(c.gain.richGuests, 1) }}</span></template>
-          <template v-else><Users class="size-3.5 shrink-0 text-[#7dd3fc]" :stroke-width="3" /><span class="text-[#7dd3fc]">+{{ Math.round(c.gain.guests) }}</span></template>
-          <CasinoCoinIcon class="ml-1 size-3.5 shrink-0" /><span :class="payback(c) >= 1 ? 'text-[#7ee08f]' : 'text-[#ffb35c]'">+{{ formatCoins(c.gain.coins, true) }}</span>
+          <template v-if="c.def.goal === 'wealth'"><template v-if="c.gain.richGuests >= 0.05"><Gem class="size-3.5 shrink-0 text-[#c084fc]" :stroke-width="3" /><span class="mr-1 text-[#c084fc]">+{{ formatFixed(c.gain.richGuests, 1) }}</span></template></template>
+          <template v-else><Users class="size-3.5 shrink-0 text-[#7dd3fc]" :stroke-width="3" /><span class="mr-1 text-[#7dd3fc]">+{{ Math.round(c.gain.guests) }}</span></template>
+          <CasinoCoinIcon class="size-3.5 shrink-0" /><span :class="payback(c) >= 1 ? 'text-[#7ee08f]' : 'text-[#ffb35c]'">+{{ formatCoins(Math.floor(c.gain.coins), true) }}</span>
         </p>
         <p v-else-if="c.lockedAt === null" class="text-center text-[11px] leading-[14px] font-semibold text-[#ffb35c]" :title="c.def.goal === 'wealth' ? 'No richer guests to bring yet: open their room first' : 'Every seat is taken: more guests would have nowhere to sit. Build seats, or go for richer guests.'">{{ c.def.goal === 'wealth' ? 'Nothing to gain yet' : 'Floor full' }}</p>
 

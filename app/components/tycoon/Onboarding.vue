@@ -69,7 +69,7 @@ const limboDone = computed(() => {
         || Object.entries(s.games).some(([slug, level]) => level > 1 || !['plinko', 'spinata'].includes(slug))
         || Object.values(s.upgrades).some(level => level > 0)
 })
-/** The first build the tip points at: the cheapest one that can start now (what the Build badge and the goal use too). */
+/** The first build the tip points at: the cheapest one that can start now (what the Build badge uses too). */
 const firstBuild = computed(() => tycoon.startable.value[0] ?? null)
 // Winning chips is the lesson: once there are chips, the loop tip is done.
 watch(() => tycoon.chips.value, (chips) => {
