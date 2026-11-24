@@ -72,15 +72,17 @@ const flows = computed(() => (stats.value?.flows ?? []).filter(f => f.category !
     ...FLOW_LABELS[f.category],
     detail: f.category === 'convert' ? `${formatCoins(f.amount / COINS_PER_GEM)} gems` : `${f.count}×`
 })))
+
+const casinoStats = useCasinoStats()
 </script>
 
 <template>
   <div class="mx-auto max-w-7xl space-y-5 px-4 py-6">
     <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
       <h1 class="mr-auto font-display text-2xl font-extrabold tracking-tight">Stats</h1>
-      <NuxtLink to="/casino-stats" class="inline-flex h-10 items-center gap-1.5 rounded-xl border bg-card px-3 text-sm font-medium outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 sm:h-8">
+      <button type="button" class="inline-flex h-10 items-center gap-1.5 rounded-xl border bg-card px-3 text-sm font-medium outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 sm:h-8" @click="casinoStats.show()">
         <ChartArea class="size-4 text-muted-foreground" aria-hidden="true" /> My Casino
-      </NuxtLink>
+      </button>
       <button
         v-if="game"
         type="button"

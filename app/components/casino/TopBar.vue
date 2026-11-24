@@ -13,7 +13,8 @@ const tycoon = useTycoon()
 const route = useRoute()
 // Every page but My Casino gets the way back to it.
 const away = computed(() => route.path !== '/')
-const onStats = computed(() => route.path === '/stats' || route.path === '/casino-stats')
+const onStats = computed(() => route.path === '/stats')
+const casinoStats = useCasinoStats()
 // Visiting another casino: the bar blends into that floor too.
 const onFloor = computed(() => !away.value || route.path.startsWith('/visit/'))
 const leaderboard = useLeaderboard()
@@ -43,10 +44,8 @@ onMounted(() => {
         <Button size="icon" variant="ghost" class="max-sm:size-11" title="Leaderboard" aria-label="Leaderboard" :aria-expanded="leaderboard.open.value" @click="leaderboard.toggle()">
           <Trophy class="size-4 text-[#ffc93a]" :stroke-width="2.5" />
         </Button>
-        <Button v-if="!onStats" as-child size="icon" variant="ghost" class="max-sm:size-11" title="Stats">
-          <NuxtLink to="/casino-stats" aria-label="Stats">
-            <ChartNoAxesColumn class="size-4" />
-          </NuxtLink>
+        <Button v-if="!onStats" size="icon" variant="ghost" class="max-sm:size-11" title="Casino stats" aria-label="Casino stats" :aria-expanded="casinoStats.open.value" @click="casinoStats.toggle()">
+          <ChartNoAxesColumn class="size-4" />
         </Button>
         <CasinoCoinChip v-if="away" :amount="coins" />
         <!-- On My Casino the HUD shows the chips (animated). -->
@@ -73,4 +72,5 @@ onMounted(() => {
     </div>
   </header>
   <TycoonLeaderboard />
+  <TycoonStatsSheet />
 </template>

@@ -2,6 +2,7 @@
 import { Award, Check, Lock } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import { levelUnlocks, MAX_CASINO_LEVEL } from '#shared/casino-level'
+import { findDecor, type DecorType } from '#shared/decor'
 import { formatCoins } from '#shared/money'
 import { decorName } from '~/utils/decor-art'
 import { specialLift, type SpecialLift } from '~/utils/tycoon-art'
@@ -30,6 +31,36 @@ const nextLifts = computed<Record<string, SpecialLift | null>>(() => {
     return Object.fromEntries(next.value.decor.map(type => [type, specialLift(st, type, st.serverNow)]))
 })
 
+
+/**
+ * The unlock under the mouse (or tapped): what it is and what it does. A
+ * game shows its tagline, a plain decoration "just for looks", a special its
+ * bonus on this floor (worked out only for the one shown).
+ */
+const peek = ref<string | null>(null)
+function setPeek(key: string | null) {
+    peek.value = key
+}
+function enter(event: PointerEvent, key: string) {
+    if (event.pointerType === 'mouse') setPeek(key)
+}
+function leave(event: PointerEvent, key: string) {
+    if (event.pointerType === 'mouse' && peek.value === key) setPeek(null)
+}
+function tap(key: string) {
+    setPeek(peek.value === key ? null : key)
+}
+watch(open, (o) => {
+    if (!o) peek.value = null
+})
+const gameTagline = (slug: string) => findGame(slug)?.tagline ?? ''
+const peekLift = computed<SpecialLift | null>(() => {
+    const st = tycoon.state.value
+    const key = peek.value
+    if (!st || !key?.startsWith('decor:')) return null
+    const type = key.slice(6) as DecorType
+    return findDecor(type)?.special ? specialLift(st, type, st.serverNow) : null
+})
 </script>
 
 <template>
@@ -71,7 +102,7 @@ const nextLifts = computed<Record<string, SpecialLift | null>>(() => {
         <li
           v-for="u in unlocks"
           :key="u.level"
-          class="flex min-h-14 items-center gap-2.5 py-1.5"
+          class="relative flex min-h-14 items-center gap-2.5 py-1.5"
           :class="u.level <= lv.level ? '' : 'opacity-60'"
         >
           <span
@@ -83,8 +114,33 @@ const nextLifts = computed<Record<string, SpecialLift | null>>(() => {
             <template v-else>{{ u.level }}</template>
           </span>
           <span class="flex min-w-0 flex-1 flex-wrap gap-1.5">
-            <span v-for="slug in u.games" :key="slug" class="block size-10 shrink-0 overflow-hidden rounded-lg border-2 border-black/50" :title="gameName(slug)"><TycoonGameArt :slug="slug" /></span>
-            <span v-for="type in u.decor" :key="type" class="block size-10 shrink-0 overflow-hidden rounded-lg border-2 border-black/50" :title="decorName(type)"><TycoonDecorArt :type="type" /></span>
+            <span v-for="slug in u.games" :key="slug" @pointerenter="enter($event, `game:${slug}`)" @pointerleave="leave($event, `game:${slug}`)">
+              <button type="button" class="block size-11 shrink-0 overflow-hidden rounded-lg border-2" :class="peek === `game:${slug}` ? 'border-[#ffc93a]' : 'border-black/50'" :aria-label="gameName(slug)" @click="tap(`game:${slug}`)"><TycoonGameArt :slug="slug" /></button>
+              <Transition name="pop">
+                <span v-if="peek === `game:${slug}`" class="peek g-panel">
+                  <span class="block text-[13px] font-bold">{{ gameName(slug) }}</span>
+                  <span class="block text-[11px] font-semibold tracking-wide text-[#7dd3fc] uppercase">New game</span>
+                  <span v-if="gameTagline(slug)" class="mt-0.5 block text-xs leading-4 text-[var(--g-muted)]">{{ gameTagline(slug) }}</span>
+                </span>
+              </Transition>
+            </span>
+            <span v-for="type in u.decor" :key="type" @pointerenter="enter($event, `decor:${type}`)" @pointerleave="leave($event, `decor:${type}`)">
+              <button type="button" class="block size-11 shrink-0 overflow-hidden rounded-lg border-2" :class="peek === `decor:${type}` ? 'border-[#ffc93a]' : 'border-black/50'" :aria-label="decorName(type)" @click="tap(`decor:${type}`)"><TycoonDecorArt :type="type" /></button>
+              <Transition name="pop">
+                <span v-if="peek === `decor:${type}`" class="peek g-panel">
+                  <span class="block text-[13px] font-bold">{{ decorName(type) }}</span>
+                  <template v-if="findDecor(type)?.special">
+                    <span class="block text-[11px] font-semibold tracking-wide text-[#ffc93a] uppercase">Special · one of each</span>
+                    <span v-if="peekLift" class="mt-1 block"><TycoonSpecialStat :lifts="[peekLift]" /></span>
+                    <span class="mt-0.5 block text-xs leading-4 text-[var(--g-muted)]">{{ findDecor(type)?.blurb }}</span>
+                  </template>
+                  <template v-else>
+                    <span class="block text-[11px] font-semibold tracking-wide text-[var(--g-muted)] uppercase">Decoration · just for looks</span>
+                    <span class="mt-0.5 block text-xs leading-4 text-[var(--g-muted)]">{{ findDecor(type)?.blurb }}</span>
+                  </template>
+                </span>
+              </Transition>
+            </span>
           </span>
           <Lock v-if="u.level > lv.level" class="size-4 shrink-0 text-[var(--g-muted)]" :stroke-width="3" />
         </li>
@@ -92,3 +148,22 @@ const nextLifts = computed<Record<string, SpecialLift | null>>(() => {
     </div>
   </TycoonDrawer>
 </template>
+
+<style scoped>
+/* What an unlock does: a small card under its row (hover with a mouse, tap on touch). */
+.peek {
+  position: absolute;
+  top: calc(100% - 4px);
+  left: 2.9rem;
+  right: 0;
+  z-index: 20;
+  border-radius: 14px;
+  padding: 8px 10px;
+  pointer-events: none;
+}
+</style>
+<style scoped>
+.pop-enter-active { transition: transform 0.18s cubic-bezier(0.3, 1.4, 0.5, 1), opacity 0.15s ease; }
+.pop-leave-active { transition: transform 0.12s ease, opacity 0.12s ease; }
+.pop-enter-from, .pop-leave-to { opacity: 0; transform: translateY(-4px) scale(0.97); }
+</style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChartArea, Hammer, LayoutGrid, ListChecks, Megaphone, Plus, ScrollText, Sofa, Sparkles, Timer, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
+import { ChartArea, Hammer, LayoutGrid, ListChecks, Megaphone, ScrollText, Sofa, Sparkles, Timer, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import { findZone, type ZoneId } from '#shared/tycoon'
 
@@ -9,11 +9,14 @@ import { findZone, type ZoneId } from '#shared/tycoon'
  */
 const emit = defineEmits<{ build: [], games: [], cage: [], shop: [], zone: [id: ZoneId], popover: [open: boolean], campaigns: [], missions: [], level: [], decor: [] }>()
 const tycoon = useTycoon()
+const casinoStats = useCasinoStats()
 const { coins } = useCasinoSession()
 const sound = useTycoonSound()
 
 // Daily missions: a ring of the ones cleared, a badge when one is ready to claim.
 const missions = computed(() => tycoon.missions.value)
+/** Every mission claimed: the button hides until the next day's missions. */
+const allClaimed = computed(() => !!missions.value?.missions.length && missions.value.missions.every(m => m.claimed))
 const missionsCleared = computed(() => missions.value?.missions.filter(m => m.claimed || m.progress >= m.target).length ?? 0)
 const missionPop = ref(0)
 watch(() => tycoon.missionDone.value, done => done && missionPop.value++)
@@ -40,7 +43,6 @@ const openDrawers = useState<number>('tycoon:open-drawers', () => 0)
 const fold = computed(() => (openDrawers.value > 0 ? 'max-md:hidden' : ''))
 const full = computed(() => tycoon.cageFill.value >= 0.999)
 const stored = computed(() => Math.floor(tycoon.cageStored.value))
-const gems = computed(() => (state.value?.gemsEnabled ? tycoon.gems.value : null))
 
 // Visitors on the floor (capped by the seats) and the hourly guest income, live.
 const visitors = computed(() => tycoon.visitors.value)
@@ -188,6 +190,17 @@ useEventListener('keydown', (event: KeyboardEvent) => {
     <!-- Resource bar -->
     <div class="flex items-start justify-between gap-2">
       <div class="pointer-events-auto flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-2 sm:gap-2.5">
+        <!-- The casino level, top left: a ring of XP to the next level. Tap for what each level unlocks. -->
+        <button
+          type="button"
+          class="level-btn relative grid size-11 shrink-0 place-items-center rounded-full transition-transform active:scale-95"
+          :class="levelPop ? 'level-glow' : ''"
+          :title="lv.nextXp === null ? `Casino level ${lv.level}: the top` : `Casino level ${lv.level}: ${formatCoins(lv.xp - lv.levelXp)} / ${formatCoins(lv.nextXp - lv.levelXp)} XP to level ${lv.level + 1}`"
+          :aria-label="`Casino level ${lv.level}`"
+          @click="emit('level')"
+        >
+          <span :key="levelPop" class="grid" :class="levelPop ? 'g-pop' : ''"><TycoonLevelBadge :level="lv.level" :progress="xpShare" :size="40" :stroke="3.5" /></span>
+        </button>
         <span class="res-pill relative" data-pill="coins" title="Coins: for betting. Your cashier cage fills them">
           <span v-if="coinLand" :key="coinLand" class="coin-land pointer-events-none absolute -inset-[2px] rounded-full" />
           <CasinoCoinIcon :key="coinPop" class="res-icon z-[1]" :class="coinPop ? 'g-pop' : ''" />
@@ -199,11 +212,6 @@ useEventListener('keydown', (event: KeyboardEvent) => {
           <TycoonCounter :value="tycoon.chips.value" class="g-num text-[15px] sm:text-lg" />
           <span v-for="f in floaters.filter(x => x.currency === 'chips')" :key="f.id" class="floater g-num pointer-events-none absolute top-full left-7 text-base whitespace-nowrap text-white [text-shadow:0_2px_0_rgb(0_0_0/0.55),0_0_10px_rgb(255_196_40/0.8)]">+{{ formatCoins(f.amount) }}</span>
         </span>
-        <button v-if="state?.gemsEnabled" type="button" class="res-pill pr-1! active:scale-95" title="Gem shop" @click="emit('shop')">
-          <CasinoGemIcon class="res-icon text-[#2fe0d0]" />
-          <span class="g-num text-[15px] sm:text-lg">{{ gems === null ? '–' : formatCoins(gems) }}</span>
-          <span class="ml-1 grid size-6 place-items-center rounded-full border-2 border-black/40 bg-[#3fd25a] shadow-[inset_0_1.5px_0_rgb(255_255_255/0.4)]"><Plus class="size-3.5" :stroke-width="4" /></span>
-        </button>
 
         <!-- Visitors and the ad campaign: one group, so on a phone they wrap together onto a second row. -->
         <div class="flex items-center gap-x-1.5 sm:gap-2.5" :class="fold">
@@ -230,7 +238,7 @@ useEventListener('keydown', (event: KeyboardEvent) => {
             </button>
 
             <Transition name="pop">
-              <div v-if="guestsOpen" class="g-panel absolute top-full left-0 mt-2.5 w-[min(21rem,calc(100vw-1.5rem))] space-y-2 rounded-2xl p-3 text-sm">
+              <div v-if="guestsOpen" class="g-panel absolute top-full left-0 mt-2.5 w-[min(23rem,calc(100vw-1.5rem))] space-y-2 rounded-2xl p-3 text-sm">
                 <p class="flex items-center gap-1.5 font-semibold">
                   <Users class="size-4 text-[#7dd3fc]" :stroke-width="3" /> Guests
                   <span class="g-num ml-auto" :class="floorFull ? 'text-[#ffb35c]' : ''">{{ visitors }} / {{ visitorMax }} seats</span>
@@ -250,6 +258,7 @@ useEventListener('keydown', (event: KeyboardEvent) => {
                     <span class="flex min-w-0 items-center gap-1.5 font-semibold">
                       <span class="size-2.5 shrink-0 rounded-full border border-black/50" :style="{ background: t.color, boxShadow: t.id === 'whale' && t.open ? `0 0 6px 1px ${t.color}` : undefined }" />
                       <span class="truncate">{{ tierPlural(t.id, 2) }}</span>
+                      <span v-if="t.open" class="g-num shrink-0 rounded-full bg-black/30 px-1.5 text-[10.5px] leading-4 text-[var(--g-muted)]" title="Chance that a new guest is one of these">{{ pct(t.odds) }}</span>
                     </span>
                     <template v-if="t.open">
                       <span class="g-num text-right">{{ t.n }}</span>
@@ -277,9 +286,9 @@ useEventListener('keydown', (event: KeyboardEvent) => {
                   <span v-if="expected !== null" class="g-num ml-auto text-[var(--g-muted)]">~{{ formatCoins(expected) }} avg</span>
                 </p>
                 <div class="flex gap-2">
-                  <NuxtLink to="/casino-stats" class="g-btn g-dark h-11 flex-1 rounded-xl text-[15px]" @click="guestsOpen = false">
+                  <button type="button" class="g-btn g-dark h-11 flex-1 rounded-xl text-[15px]" @click="guestsOpen = false; casinoStats.show()">
                     <ChartArea class="size-4.5" :stroke-width="2.75" /> Charts
-                  </NuxtLink>
+                  </button>
                   <button v-if="hasRules" type="button" class="g-btn g-dark relative h-11 flex-1 rounded-xl text-[15px]" @click="openRules">
                     <ScrollText class="size-4.5" :stroke-width="2.75" /> Rules
                     <span v-if="freshRule" class="absolute -top-1 -right-1 size-3 rounded-full border-2 border-white bg-[#ff3b5c]" />
@@ -413,7 +422,7 @@ useEventListener('keydown', (event: KeyboardEvent) => {
 
     <!-- Daily missions: three rings fill as they are done; the badge counts what can be claimed. -->
     <button
-      v-if="missions"
+      v-if="missions && !allClaimed"
       type="button"
       class="missions pointer-events-auto relative ml-2 grid size-[60px] shrink-0 place-items-center rounded-[22px] transition-transform active:scale-95"
       :class="tycoon.claimable.value ? 'missions-ready' : ''"
@@ -429,17 +438,6 @@ useEventListener('keydown', (event: KeyboardEvent) => {
       <span v-if="tycoon.claimable.value" class="dot g-num grid min-w-6 place-items-center px-1 text-xs leading-none" :class="reducedMotion ? '' : 'g-bounce'">{{ tycoon.claimable.value }}</span>
     </button>
 
-    <!-- The casino level: a ring of XP to the next level. Tap for what each level unlocks. -->
-    <button
-      type="button"
-      class="missions pointer-events-auto relative ml-2 grid size-[60px] shrink-0 place-items-center rounded-[22px] transition-transform active:scale-95"
-      :class="levelPop ? 'level-glow' : ''"
-      :title="lv.nextXp === null ? `Casino level ${lv.level}: the top` : `Casino level ${lv.level}: ${formatCoins(lv.xp - lv.levelXp)} / ${formatCoins(lv.nextXp - lv.levelXp)} XP to level ${lv.level + 1}`"
-      :aria-label="`Casino level ${lv.level}`"
-      @click="emit('level')"
-    >
-      <span :key="levelPop" class="grid" :class="levelPop ? 'g-pop' : ''"><TycoonLevelBadge :level="lv.level" :progress="xpShare" /></span>
-    </button>
 
     </div>
 
@@ -538,6 +536,11 @@ useEventListener('keydown', (event: KeyboardEvent) => {
   background: linear-gradient(180deg, #3b2c58, #2a1f3f 60%);
   border: 2px solid #120c1d;
   box-shadow: 0 4px 0 #120c1d, 0 10px 20px rgb(0 0 0 / 0.35), inset 0 2px 0 rgb(255 255 255 / 0.12);
+}
+.level-btn {
+  background: linear-gradient(180deg, #3b2c58, #2a1f3f 60%);
+  border: 2px solid #120c1d;
+  box-shadow: 0 3px 0 #120c1d, inset 0 2px 0 rgb(255 255 255 / 0.12);
 }
 .level-glow { animation: level-glow 1.6s ease-out 1; }
 @keyframes level-glow {
