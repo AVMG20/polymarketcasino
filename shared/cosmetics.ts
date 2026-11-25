@@ -7,7 +7,7 @@
  * - Free items are owned by everyone: the avatar's own look (hair style,
  *   hair colour, skin tone) is all free. Avatar items cost gems (the platform
  *   guide: cosmetic 5-50, premium up to ~200) or, the mid and late game
- *   pieces, a lot of chips (a sink: chips are what stars follow); zone skins
+ *   pieces, a lot of chips (an end-game sink; owning every one is a star goal); zone skins
  *   cost chips or, the premium ones, gems. Gems go through the gem purchase
  *   flow (item 'cosmetic', target = the key); chips through
  *   POST /api/tycoon/cosmetics/buy.

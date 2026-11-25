@@ -6,6 +6,7 @@ import { commitCoins, getCoins, type CoinWork, type CommittedCoins } from '../le
 import { chipBalance } from '../tycoon'
 import { recordMissions } from '../missions'
 import { roundMissionEvents } from '../../../shared/missions'
+import { payRakeback } from '../rakeback'
 
 /**
  * Money at the live tables. A stake is a debit (coins first, then chips for
@@ -14,7 +15,9 @@ import { roundMissionEvents } from '../../../shared/missions'
  * (`open → settled`) and pays the payout in **chips** in the same
  * transaction; refunding claims them `open → refunded` and hands each part
  * of a stake back in its own currency. The claim is the guard: a row closes
- * exactly once, so no retry, timer or sweep can pay a stake twice. All of it
+ * exactly once, so no retry, timer or sweep can pay a stake twice. A settle
+ * also pays the stakes' rakeback (1% in chips, to the seat's host when the
+ * player sat down in someone else's casino); a refund pays none. All of it
  * is synchronous (bun:sqlite), so nothing awaits while a table is mid-change.
  */
 
@@ -48,7 +51,7 @@ export function stakeWagers(playerId: string, game: string, roundId: number, sta
             wagerIds.push(coins.tx.insert(tableWagers).values({ playerId, game, roundId, amount: stake.amount, amountChips: paid.chips, kind: stake.kind }).returning({ id: tableWagers.id }).get().id)
         }
         return { wagerIds, ...balancesOf(coins, playerId) }
-    })
+    }, playerId)
 }
 
 /** Hand claimed rows back, each part in its own currency. Returns the total. */
@@ -61,8 +64,8 @@ function giveBack(coins: CoinWork, playerId: string, game: string, rows: { amoun
 }
 
 export type SettleResult =
-    /** `chipsEarned`: the payout, paid in chips. */
-    | ({ kind: 'settled', chipsEarned: number } & Balances)
+    /** `chipsEarned`: the payout, paid in chips; `rakeback`: the player's rakeback on the stakes (0 when it went to the host). */
+    | ({ kind: 'settled', chipsEarned: number, rakeback: number } & Balances)
     /** Some of the stakes were already closed (a sweep refunded them): the rest came back as a refund. */
     | ({ kind: 'refunded', refunded: number } & Balances)
     /** Nothing was open any more: nothing moved. */
@@ -83,7 +86,7 @@ export function settleWagers(input: {
     summary: Record<string, unknown>
     /** The best return of one bet in the round (missions). */
     multiple?: number
-    /** The casino the player sat down in when visiting: the hand counts toward the visit mission. */
+    /** The casino the player sat down in when visiting: its owner gets the rakeback, and the hand counts toward the visit mission. */
     host?: string | null
 }): CommittedCoins<SettleResult> {
     if (!isCoinAmount(input.payout)) throw new Error(`table payout must be coins with at most 4 decimals, got ${input.payout}`)
@@ -105,7 +108,10 @@ export function settleWagers(input: {
             return { kind: 'refunded', refunded, ...balancesOf(coins, input.playerId) }
         }
         if (input.payout > 0) coins.creditChips({ playerId: input.playerId, amount: input.payout, reason: `win:${input.game}` })
+        const { rakeback } = payRakeback(coins, { playerId: input.playerId, game: input.game, stake: input.staked, host: input.host })
         const stakeChips = sumCoins(claimed.map(row => row.amountChips))
+        // A first hand of a game can reach a star goal, even a lost one whose rakeback went to the host.
+        coins.checkStars(input.playerId)
         coins.tx.insert(gameRounds).values({
             playerId: input.playerId,
             game: input.game,
@@ -116,8 +122,8 @@ export function settleWagers(input: {
             summary: input.summary
         }).run()
         recordMissions(coins.tx, input.playerId, roundMissionEvents({ playerId: input.playerId, game: input.game, stake: input.staked, payout: input.payout, multiple: input.multiple, host: input.host }))
-        return { kind: 'settled', chipsEarned: input.payout, ...balancesOf(coins, input.playerId) }
-    })
+        return { kind: 'settled', chipsEarned: input.payout, rakeback, ...balancesOf(coins, input.playerId) }
+    }, input.playerId)
 }
 
 /** Hand back every still-open row in `wagerIds`, each part in its own currency. Balances are null when nothing came back. */
@@ -132,7 +138,7 @@ export function refundWagers(playerId: string, game: string, wagerIds: string[])
         const refunded = giveBack(coins, playerId, game, claimed)
         if (!refunded) return { refunded: 0, balance: null, chips: null }
         return { refunded, ...balancesOf(coins, playerId) }
-    })
+    }, playerId)
 }
 
 /**

@@ -57,11 +57,12 @@ const makeStale = (conversionId: string) => db.update(gemConversions)
 
 describe('gem conversion', () => {
     it('spends gems at the hub and credits 1,000 coins per gem', async () => {
-        const id = seedPlayer()
+        // A new player (no casino yet): no goal is due.
+        const id = seedPlayer(0, 0, { casino: 'none' })
         hubGems.set(id, 50)
         const result = await convertGems(id, 25)
         expect(result).toMatchObject({ gems: 25, coins: 25_000, balance: 25_000, gemsLeft: 25 })
-        // Stars follow chips: coins from a conversion move none.
+        // Coins reach no casino goal: a conversion reports no star.
         expect(result.stars).toBeNull()
         expect(coinsOf(id).coins).toBe(25_000)
     })

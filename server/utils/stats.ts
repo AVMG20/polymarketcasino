@@ -13,6 +13,7 @@ import {
     type RoundTotals,
     type StatsRange
 } from '../../shared/stats'
+import { playedGames } from './stars'
 
 /**
  * A player's results over a range of Amsterdam days, for the stats page.
@@ -205,18 +206,6 @@ export function playerStats(playerId: string, query: StatsQuery, now: Date = new
 
 function pick({ rounds, wagered, paidOut, net }: RoundTotals) {
     return { rounds, wagered, paidOut, net }
-}
-
-/** Every game the player has a round of, by skipping through the index one game at a time. */
-function playedGames(playerId: string): string[] {
-    return db.all<{ game: string }>(sql`
-        with recursive g(game) as (
-            select min(game) from ${gameRounds} where player_id = ${playerId}
-            union all
-            select (select min(game) from ${gameRounds} where player_id = ${playerId} and game > g.game) from g where g.game is not null
-        )
-        select game from g where game is not null
-    `).map(row => row.game)
 }
 
 /** The Amsterdam day of the player's first ledger row or round, or null if they have none. */

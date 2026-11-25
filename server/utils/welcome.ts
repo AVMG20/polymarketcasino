@@ -1,10 +1,11 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, gt, like, sql } from 'drizzle-orm'
 import type { Tx } from '../database'
-import { casinoProfiles } from '../database/schema'
+import { casinoProfiles, chipTransactions } from '../database/schema'
+import { fromUnits } from '../../shared/money'
 import { placedSpecials, specialBonus } from '../../shared/decor'
 import { WELCOME_AFTER_MS, type WelcomeBack } from '../../shared/missions'
 import { DEFAULT_RULES, DOOR_RULES, runFloor, seatedTotal, type HouseRules, type NotableGuest } from '../../shared/visitors'
-import { campaignsOf, findTycoonGame, findUpgrade, findZone, type BuildKind, type RunningCampaignRef, type TycoonState, type UpgradeId } from '../../shared/tycoon'
+import { campaignsOf, findTycoonGame, floorGames, findUpgrade, findZone, type BuildKind, type RunningCampaignRef, type TycoonState, type UpgradeId } from '../../shared/tycoon'
 import { historyHours, type Casino } from './tycoon'
 
 /**
@@ -17,13 +18,15 @@ import { historyHours, type Casino } from './tycoon'
  * finished, rush and campaign included) and compares its income with what
  * the cage gained: the difference is what a full cage turned away. The
  * replay also finds the whales that came by; the hours come from the
- * history (`historyHours`).
+ * history (`historyHours`), and what visitors' bets paid the casino (their
+ * rakeback) from the chip ledger.
  */
 
 interface Snapshot {
     at: number
     cage: number
     zones: string[] | null
+    /** The games on the floor (put-away ones take no guests). */
     games: Record<string, number>
     upgrades: Record<string, number>
     constructions: { kind: BuildKind, id: string, level: number, readyAt: number }[]
@@ -39,7 +42,7 @@ function snapshotOf(state: TycoonState, rules: HouseRules): Snapshot {
         at: state.serverNow,
         cage: state.cage.stored,
         zones: [...state.zones],
-        games: { ...state.games },
+        games: { ...floorGames(state) },
         upgrades: { ...state.upgrades },
         constructions: state.constructions.map(c => ({ kind: c.kind, id: c.id, level: c.level, readyAt: c.readyAt })),
         rushUntil: state.rushUntil,
@@ -119,6 +122,15 @@ function replay(snap: Snapshot, seed: number, to: number): { income: number, not
     return { income, notable: [...visits.values()].sort((a, b) => a.at - b.at) }
 }
 
+/** Chips other players' bets paid `playerId`'s casino after `since` (the `host:<slug>` rakeback). */
+function visitorChipsSince(tx: Tx, playerId: string, since: number): number {
+    const row = tx.select({ units: sql<number>`coalesce(sum(${chipTransactions.amount}), 0)` })
+        .from(chipTransactions)
+        .where(and(eq(chipTransactions.playerId, playerId), eq(chipTransactions.type, 'credit'), like(chipTransactions.reason, 'host:%'), gt(chipTransactions.createdAt, new Date(since))))
+        .get()
+    return fromUnits(row?.units ?? 0)
+}
+
 /** How often a plain read refreshes the last-seen snapshot. */
 const LAST_SEEN_EVERY_MS = 60_000
 /** The welcome card's hours go back at most this far, and list this many guests at most. */
@@ -176,6 +188,7 @@ export function noteVisit(tx: Tx, casino: Casino, state: TycoonState, welcome: b
         seats: state.floor.seats,
         hours: historyHours(tx, playerId, Math.max(snap.at, now - (WELCOME_HOURS - 1) * 3_600_000), now),
         notable,
-        whales: away.notable.length
+        whales: away.notable.length,
+        visitorChips: visitorChipsSince(tx, playerId, snap.at)
     }
 }

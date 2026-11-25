@@ -81,8 +81,10 @@ describe('gem dig rounds', () => {
         expect(out.chipsEarned).toBe(paid)
         expect(two.round.payout).toBe(paid)
         expect((out.round.view as MinesView).bombs).toHaveLength(3)
-        expect(chipsOf(id)).toBe(paid)
-        expect(chipLedgerSum(id)).toBe(paid)
+        // The cash-out plus the 1% rakeback on the bet.
+        expect(out).toMatchObject({ rakeback: 1, chips: normalizeCoins(paid + 1) })
+        expect(chipsOf(id)).toBe(normalizeCoins(paid + 1))
+        expect(chipLedgerSum(id)).toBe(normalizeCoins(paid + 1))
         expect(ledgerSum(id)).toBe(-100)
         await expect(cashOutStepRound(id, 'mines')).rejects.toMatchObject({ statusCode: 409 })
         expect(currentStepRound(id, 'mines')).toBeNull()
@@ -99,7 +101,8 @@ describe('gem dig rounds', () => {
         const bust = await actStepRound(id, 'mines', { step: 0, action: { type: 'reveal', tile: bomb } })
         expect(bust.round).toMatchObject({ status: 'lost', payout: 0, multiplier: 0 })
         expect((bust.round.view as MinesView).hit).toBe(bomb)
-        expect(chipsOf(id)).toBe(0)
+        // Only the rakeback on the 50 bet.
+        expect(chipsOf(id)).toBe(0.5)
         expect(coinsOf(id).coins).toBe(950)
         // A new round can start once the last one is over.
         await expect(startStepRound(id, 'mines', { bet: 50, options: { mines: 1 } })).resolves.toMatchObject({ balance: 900 })
@@ -132,7 +135,7 @@ describe('gem dig rounds', () => {
         for (const r of burst) if (r.status === 'rejected') expect([400, 409]).toContain(r.reason.statusCode)
         const paid = chipsOf(id)
         expect(chipLedgerSum(id)).toBe(paid)
-        expect(paid).toBe(normalizeCoins(cashOuts.reduce((sum, r) => sum + r.chipsEarned, 0)))
+        expect(paid).toBe(normalizeCoins(cashOuts.reduce((sum, r) => sum + r.chipsEarned + r.rakeback, 0)))
         // Whatever won the race, the round paid at most once and is closed or still open with one step taken.
         const open = currentStepRound(id, 'mines')
         if (cashOuts.length) expect(open).toBeNull()
@@ -164,7 +167,8 @@ describe('gem dig rounds', () => {
         const closed = await settleAbandonedRounds(new Date(Date.now() + 1_000))
         expect(closed).toBeGreaterThanOrEqual(2)
         expect(currentStepRound(played, 'mines')).toBeNull()
-        expect(chipsOf(played)).toBe(payFor(100, minesMultiplier(3, 1)))
+        // Cashed out with its rakeback; the refunded round pays none.
+        expect(chipsOf(played)).toBe(normalizeCoins(payFor(100, minesMultiplier(3, 1)) + 1))
         // The idle round had no gem: 30 coins and 20 chips go back as they came.
         expect(coinsOf(idle).coins).toBe(30)
         expect(chipsOf(idle)).toBe(100)
@@ -172,7 +176,7 @@ describe('gem dig rounds', () => {
         expect(currentStepRound(idle, 'mines')).toBeNull()
         // A second sweep finds nothing to do.
         expect(await settleAbandonedRounds(new Date(Date.now() + 1_000))).toBe(0)
-        expect(chipsOf(played)).toBe(payFor(100, minesMultiplier(3, 1)))
+        expect(chipsOf(played)).toBe(normalizeCoins(payFor(100, minesMultiplier(3, 1)) + 1))
     })
 
     it('needs the game built', async () => {

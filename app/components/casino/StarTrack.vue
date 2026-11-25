@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { formatCoins } from '#shared/money'
-import { CASINO_STARS } from '#shared/stars'
+import { STAR_LEVELS } from '#shared/stars'
 
 /**
- * Ten rounded squares, the first `level` filled amber. Stars follow the chip
- * balance, so the tooltip says how many chips it takes to hold each one.
+ * Ten rounded squares, the first `level` filled amber: one per casino goal
+ * reached, in any order, so the tooltip names the level's title.
  * A star gained pops in, a star lost blinks out (not on the first render).
  */
 const props = withDefaults(defineProps<{ level: number, size?: 'sm' | 'md' }>(), { size: 'md' })
-const stars = computed(() => CASINO_STARS.map((star, i) => ({ ...star, on: i < props.level })))
+const stars = computed(() => STAR_LEVELS.map((star, i) => ({ ...star, on: i < props.level })))
 
 /** The stars between the old and the new level, while they animate. */
 const changed = ref<{ from: number, to: number, up: boolean } | null>(null)
@@ -47,7 +46,7 @@ const animation = (i: number) => {
       </TooltipTrigger>
       <TooltipContent>
         <p class="font-semibold">{{ star.name }}</p>
-        <p class="text-xs opacity-80">Hold {{ formatCoins(star.threshold) }} chips</p>
+        <p class="text-xs opacity-80">{{ i + 1 }} of 10 casino goals</p>
       </TooltipContent>
     </Tooltip>
   </div>

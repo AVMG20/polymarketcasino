@@ -45,7 +45,7 @@ describe('pegfall rules', () => {
 })
 
 describe('pegfall rounds', () => {
-    it('stakes a bet per ball and pays the slots in chips', async () => {
+    it('stakes a bet per ball and pays the slots and the 1% rakeback in chips', async () => {
         const id = seedPlayer(10_000, 10_000, { origin: 'dev' })
         const round = await playRound(id, 'plinko', { bet: 10.5, options: { rows: 8, risk: 'low', balls: 4 } })
         expect(round.stake).toBe(42)
@@ -54,8 +54,8 @@ describe('pegfall rounds', () => {
         expect(round.payout).toBe(payFor(10.5, result.multiplier))
         expect(coinsOf(id).coins).toBe(10_000 - 42)
         expect(ledgerSum(id)).toBe(-42)
-        expect(chipsOf(id)).toBe(round.payout)
-        expect(chipLedgerSum(id)).toBe(round.payout)
+        expect(chipsOf(id)).toBe(normalizeCoins(round.payout + 0.42))
+        expect(chipLedgerSum(id)).toBe(normalizeCoins(round.payout + 0.42))
     })
 
     it('refuses a drop over the maximum stake without charging', async () => {

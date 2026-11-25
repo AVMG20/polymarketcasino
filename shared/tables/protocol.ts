@@ -73,6 +73,10 @@ export interface TableStarChange {
     level: number
     previous: number
     bounty: number
+    /** The casino goals done when the level was reported (shared/stars.ts). */
+    goals: string[]
+    /** Reported before this message: its bounty is in a gem count read since. */
+    late?: true
 }
 
 export type TableEvent =

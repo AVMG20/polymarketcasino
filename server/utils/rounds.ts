@@ -3,11 +3,12 @@ import { formatCoins, isCoinAmount, MAX_COINS, normalizeCoins } from '../../shar
 import { cryptoRng } from '../../shared/rng'
 import { coinTransaction } from './ledger'
 import { serverGame } from './games'
-import type { StarChange } from './stars'
+import { ownStarChange, type StarChange } from './stars'
 import { hostHasGame, parseHost } from './social'
 import { recordMissions } from './missions'
 import { roundMissionEvents } from '../../shared/missions'
 import { advanceCasino, notBuiltError } from './tycoon'
+import { payRakeback } from './rakeback'
 
 export interface RoundResponse {
     roundId: string
@@ -17,7 +18,7 @@ export interface RoundResponse {
     result: unknown
     /** The coin balance after the round. Apply it once the client's animation is done. */
     balance: number
-    /** The star level change this round caused (stars follow chips), once the hub confirmed it. */
+    /** The star level change this round caused (a casino goal reached), once the hub confirmed it. */
     stars: StarChange | null
     /** The chip balance after the round (every payout is chips). */
     chips: number
@@ -26,6 +27,8 @@ export interface RoundResponse {
     stakeChips: number
     /** The round's payout, paid in chips (0 on a loss); the same number as `payout`. */
     chipsEarned: number
+    /** The rakeback the player got on the stake, in chips (0 when it went to the casino they visit); `chips` includes it. */
+    rakeback: number
 }
 
 /**
@@ -39,7 +42,8 @@ export interface RoundResponse {
  * coins don't cover (each part a guarded debit), and the whole payout, stake
  * included, is paid in **chips**, in the same transaction. A `funding` field
  * from an older client is ignored. The game must be built in My Casino (403
- * otherwise).
+ * otherwise). The stake's rakeback (1% in chips) lands in the same
+ * transaction: the player's, or the host's when played in their casino.
  */
 export interface PlayBody {
     bet?: unknown
@@ -84,11 +88,15 @@ export async function playRound(playerId: string, slug: string, body: PlayBody):
 
     const { value, stars } = await coinTransaction((coins) => {
         const casino = advanceCasino(coins.tx, playerId)
+        // Played in the casino the player is visiting (it has the game built): its owner gets the rakeback.
+        const hosted = !!host && host !== playerId && hostHasGame(host, slug, coins.tx)
         // Built in the player's own casino, or in the one they are visiting.
-        if ((casino.games[slug] ?? 0) < 1 && !(host && hostHasGame(host, slug, coins.tx))) throw notBuiltError(slug)
+        if ((casino.games[slug] ?? 0) < 1 && !hosted) throw notBuiltError(slug)
 
         const paid = coins.stake({ playerId, amount: stake, category: slug })
-        const chips = payout > 0 ? coins.creditChips({ playerId, amount: payout, reason: `win:${slug}` }) : paid.chipBalance
+        const afterWin = payout > 0 ? coins.creditChips({ playerId, amount: payout, reason: `win:${slug}` }) : paid.chipBalance
+        const back = payRakeback(coins, { playerId, game: slug, stake, host: hosted ? host : null })
+        const chips = back.chipBalance ?? afterWin
         const round = coins.tx.insert(gameRounds).values({
             playerId,
             game: slug,
@@ -99,8 +107,9 @@ export async function playRound(playerId: string, slug: string, body: PlayBody):
             summary: outcome.summary
         }).returning({ id: gameRounds.id }).get()
         recordMissions(coins.tx, playerId, roundMissionEvents({ playerId, game: slug, stake, payout, multiple: outcome.multiple, host }))
-        return { roundId: round.id, balance: paid.balance, chips, chipsEarned: payout, stakeCoins: paid.coins, stakeChips: paid.chips }
-    })
+        return { roundId: round.id, balance: paid.balance, chips, chipsEarned: payout, rakeback: back.rakeback, stakeCoins: paid.coins, stakeChips: paid.chips }
+    }, playerId)
 
-    return { ...value, game: slug, stake, payout, result: outcome.result, stars: stars[0] ?? null }
+    // The unit may have moved the host's chips too: theirs is reported in the background, the response carries the player's own.
+    return { ...value, game: slug, stake, payout, result: outcome.result, stars: ownStarChange(playerId, stars) }
 }

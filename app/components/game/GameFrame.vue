@@ -5,15 +5,20 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { findGame } from '#shared/games/registry'
 import { formatCoins } from '#shared/money'
 import { isGameUnlocked } from '#shared/tycoon'
+import { RAKEBACK } from '#shared/rakeback'
 
 /** The page around every game: title, RTP, a rules dialog, and the game itself. `wide` lets a table use a big screen. */
 const props = defineProps<{ slug: string, wide?: boolean }>()
 const game = computed(() => findGame(props.slug)!)
 const rulesOpen = ref(false)
+/** "1%": the rakeback every settled bet pays (shared/rakeback.ts). */
+const rakeback = `${Math.round(RAKEBACK * 100)}%`
 const { postTitle } = useHubBridge()
 const tycoon = useTycoon()
 // A live table can be watched by anyone; sitting needs the game built.
-const { hostFor } = useVisitHost()
+const { host, hostFor } = useVisitHost()
+/** The owner's name when this game is played in a casino you're visiting (their casino gets the rakeback). */
+const visiting = computed(() => (hostFor(props.slug) ? host.value?.name ?? null : null))
 const needsBuild = computed(() => !!game.value.live && !hostFor(props.slug) && !!tycoon.state.value && !isGameUnlocked(tycoon.state.value, props.slug))
 // Inside the My Casino overlay: compact header with the close button, no page chrome.
 const embed = inject(GAME_EMBED, null)
@@ -32,6 +37,12 @@ onMounted(() => !embed && postTitle(game.value.name))
   <div v-if="embed" class="g-ui sticky top-0 z-20 mb-3 flex select-none items-center gap-2.5 border-b-2 border-[#120c1d] bg-gradient-to-b from-[#3b2c58] to-[#2a1f3f] px-3 py-1.5 shadow-[0_3px_0_#120c1d] sm:px-4">
       <h1 class="g-title min-w-0 flex-1 truncate bg-transparent text-xl">{{ game.name }}</h1>
       <span class="g-num shrink-0 rounded-full bg-[#1b1329] px-2.5 py-1 text-xs text-[#b6a6d3] shadow-[inset_0_2px_0_rgb(0_0_0/0.35)]" :title="`Return to player · ${game.volatility} volatility`">{{ formatFixed(game.rtp * 100, 1) }}%</span>
+      <!-- Rakeback: every bet gives 1% back in chips, to you, or to the owner of the casino you're visiting. -->
+      <span
+        class="g-num flex shrink-0 items-center gap-1 rounded-full bg-[#1b1329] py-1 pr-2.5 pl-1.5 text-xs shadow-[inset_0_2px_0_rgb(0_0_0/0.35)]"
+        :class="visiting ? 'text-[#b6a6d3]' : 'text-[#7ee08f]'"
+        :title="visiting ? `Every bet gives ${visiting} ${rakeback} back in chips (it's their casino)` : `Every bet gives you ${rakeback} back in chips, win or lose`"
+      ><CasinoChipIcon class="size-3.5" />+{{ rakeback }}<span class="hidden sm:inline">{{ visiting ? ` to ${visiting}` : ' back' }}</span></span>
       <div class="flex items-center gap-1.5">
         <slot name="actions" />
         <button type="button" class="g-btn g-dark size-11 rounded-full" title="Rules" aria-label="Rules" @click="rulesOpen = true">
@@ -74,7 +85,7 @@ onMounted(() => !embed && postTitle(game.value.name))
         <div class="space-y-3 text-sm">
           <slot name="rules" />
           <p class="text-xs text-muted-foreground">
-            Return to player {{ formatFixed(game.rtp * 100, 1) }}%. Bets {{ formatCoins(game.minBet) }} to {{ formatCoins(game.maxBet) }} coins.
+            Return to player {{ formatFixed(game.rtp * 100, 1) }}%, plus {{ rakeback }} of every bet back in chips (to the owner when you play in someone else's casino). Bets {{ formatCoins(game.minBet) }} to {{ formatCoins(game.maxBet) }} coins.
             Every outcome is decided on the server; wins are paid in whole coins, rounded down.
           </p>
         </div>

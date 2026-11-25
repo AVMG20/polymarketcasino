@@ -26,7 +26,8 @@ import { NavGrid } from './nav'
 /**
  * Where things stand on the floor. Every game has a home spot (its old fixed
  * plot, layout.ts) and can be moved to any free spot in a room the player
- * owns; decorations are placed anywhere the same way. One pure check
+ * owns, or (built, not under construction) put away; decorations are placed
+ * and put away the same way. One pure check
  * (`placementProblem`) is shared by the server (POST /api/tycoon/place and
  * /decor), the floor engine (the ghost turns red) and the floor socket's
  * walk grid, so they always agree.
@@ -106,18 +107,22 @@ export interface LayoutSource {
     constructions?: readonly { kind: string, id: string }[]
     /** Stored spots; a game without one stands at its home spot. */
     placements?: Readonly<Record<string, Tile>>
+    /** Built games put away: not on the floor (never at their home spot either). */
+    storedGames?: readonly string[]
     decor?: readonly OwnedDecor[]
 }
 
 /**
  * The layout of a casino: every game built or under construction at its
- * stored spot (else its home spot), and the placed decorations.
+ * stored spot (else its home spot), the put-away ones left out, and the
+ * placed decorations.
  */
 export function layoutStateOf(source: LayoutSource): LayoutState {
     const games: Record<string, Tile> = {}
     const onFloor = new Set<string>()
     for (const [slug, level] of Object.entries(source.games)) if (level >= 1) onFloor.add(slug)
     for (const c of source.constructions ?? []) if (c.kind === 'game') onFloor.add(c.id)
+    for (const slug of source.storedGames ?? []) onFloor.delete(slug)
     for (const slug of onFloor) {
         const at = source.placements?.[slug] ?? homeSpot(slug)
         if (at && findTycoonGame(slug)) games[slug] = { x: at.x, y: at.y }
@@ -261,12 +266,14 @@ export function placementProblem(layout: LayoutInput, target: PlaceTarget, at: T
         if (zone && here !== zone) return 'Keep it inside one room'
         zone = here
     }
-    if (tiles.some(isDoorTile)) return 'Keep the doorways clear'
+    // A flat piece (a rug, the red carpet) is walked over: it may lie in a doorway or where guests
+    // stand in front of a game, and a game's front may reach over it. It still can't overlap anything.
+    if (piece.blocks && tiles.some(isDoorTile)) return 'Keep the doorways clear'
     const others = layout.pieces.filter(p => p.key !== piece.key)
     if (others.some(p => overlaps(p.rect, piece.rect))) return 'Something is in the way'
-    if (others.some(p => p.front.some(t => inRect(piece.rect, t.x, t.y)))) return 'Blocks where guests stand'
+    if (piece.blocks && others.some(p => p.front.some(t => inRect(piece.rect, t.x, t.y)))) return 'Blocks where guests stand'
     for (const t of piece.front) {
-        if (zoneAt(t.x, t.y) !== zone || isDoorTile(t) || others.some(p => inRect(p.rect, t.x, t.y))) return 'Needs open floor in front'
+        if (zoneAt(t.x, t.y) !== zone || isDoorTile(t) || others.some(p => p.blocks && inRect(p.rect, t.x, t.y))) return 'Needs open floor in front'
     }
     // A rug blocks nothing: taking it away or putting it down can't cut anything off. Otherwise the move
     // may cut nothing off that is reachable now: a floor that is already cut off somewhere (an odd old

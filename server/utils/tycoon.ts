@@ -44,6 +44,7 @@ import {
     findTycoonGame,
     findUpgrade,
     findZone,
+    floorGames,
     type BuildBody,
     type CampaignId,
     type RunningCampaignRef,
@@ -60,7 +61,7 @@ import { creditChips } from './chips'
 import { coinTransaction, commitCoins } from './ledger'
 import { missionsState, recordMissions } from './missions'
 import { noteVisit } from './welcome'
-import type { StarChange } from './stars'
+import { ownStarChange, starSummaryOf, type StarChange } from './stars'
 
 /**
  * My Casino on the server: the casino profile, constructions, the cage and
@@ -119,6 +120,8 @@ export interface Casino {
     rulesAt: number | null
     /** Stored game spots (moved or first built); a game missing here stands at home. */
     placements: Record<string, { x: number, y: number }>
+    /** Built games put away (stored as `placements[slug] = null`): off the floor, out of the visitor model. */
+    storedGames: string[]
     /** Decorations owned, placed or put away (known types only). */
     decor: CasinoDecor[]
     /** Levels of the removed Decor upgrade still on the row, not refunded yet (kept on save until `refundDecor`). */
@@ -180,20 +183,34 @@ function decorOf(row: DecorRow): CasinoDecor | null {
     return { id: row.id, type: row.type as DecorType, x: placed ? row.x : null, y: placed ? row.y : null, grantKey: row.grantKey }
 }
 
-/** Stored spots that are whole tiles (anything else reads as home). */
-function placementsOf(raw: unknown): Record<string, { x: number, y: number }> {
-    const out: Record<string, { x: number, y: number }> = {}
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+/** Stored spots that are whole tiles (anything else reads as home but null: put away). */
+function placementsOf(raw: unknown): { placements: Record<string, { x: number, y: number }>, stored: string[] } {
+    const placements: Record<string, { x: number, y: number }> = {}
+    const stored: string[] = []
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { placements, stored }
     for (const [slug, at] of Object.entries(raw as Record<string, unknown>)) {
-        const tile = at as { x?: unknown, y?: unknown } | null
-        if (findTycoonGame(slug) && tile && Number.isInteger(tile.x) && Number.isInteger(tile.y)) out[slug] = { x: tile.x as number, y: tile.y as number }
+        if (!findTycoonGame(slug)) continue
+        if (at === null) {
+            stored.push(slug)
+            continue
+        }
+        const tile = at as { x?: unknown, y?: unknown }
+        if (tile && Number.isInteger(tile.x) && Number.isInteger(tile.y)) placements[slug] = { x: tile.x as number, y: tile.y as number }
     }
-    return out
+    return { placements, stored: stored.sort() }
+}
+
+/** The `placements` column: the spots, and null for every game put away. */
+function placementsRow(casino: Pick<Casino, 'placements' | 'storedGames'>): Record<string, { x: number, y: number } | null> {
+    const row: Record<string, { x: number, y: number } | null> = { ...casino.placements }
+    for (const slug of casino.storedGames) row[slug] = null
+    return row
 }
 
 function fromRow(row: ProfileRow, constructions: ConstructionRow[], decor: DecorRow[], record = true): Casino {
     const upgrades = upgradeLevels(row.upgrades)
     const gemBuilder = row.builders >= 2
+    const { placements, stored } = placementsOf(row.placements)
     return {
         playerId: row.playerId,
         chips: row.chips,
@@ -210,7 +227,9 @@ function fromRow(row: ProfileRow, constructions: ConstructionRow[], decor: Decor
         constructions: constructions.filter(known).sort((a, b) => a.readyAt.getTime() - b.readyAt.getTime()),
         rules: { door: DOOR_RULES.includes(row.door) ? row.door : 'open', vip: !!row.vip },
         rulesAt: row.rulesAt?.getTime() ?? null,
-        placements: placementsOf(row.placements),
+        placements,
+        // Only a built game can be away (a guard against an odd row: anything else stands on the floor).
+        storedGames: stored.filter(slug => (row.games[slug] ?? 0) >= 1),
         legacyDecor: Math.max(0, Math.floor(Number((row.upgrades as Record<string, unknown>).decor) || 0)),
         legacyDecorBuilding: constructions.some(c => c.kind === 'upgrade' && c.target === 'decor'),
         decor: decor.flatMap(d => decorOf(d) ?? []).sort((a, b) => a.id - b.id),
@@ -232,11 +251,11 @@ export function luckSeed(playerId: string): number {
     return seedOf(playerId, casinoEnv().luckSalt)
 }
 
-/** What the visitor model reads of a casino (the specials standing on the floor lift it). */
-export function casinoView(casino: Pick<Casino, 'zones' | 'games' | 'upgrades' | 'rushUntil' | 'campaigns' | 'rules'> & { decor?: readonly OwnedDecor[] }): FloorView {
+/** What the visitor model reads of a casino (the games and specials standing on the floor). */
+export function casinoView(casino: Pick<Casino, 'zones' | 'games' | 'upgrades' | 'rushUntil' | 'campaigns' | 'rules'> & { decor?: readonly OwnedDecor[], storedGames?: readonly string[] }): FloorView {
     return {
         zones: casino.zones,
-        games: casino.games,
+        games: floorGames(casino),
         upgrades: casino.upgrades,
         rushUntil: casino.rushUntil,
         campaign: null,
@@ -247,23 +266,25 @@ export function casinoView(casino: Pick<Casino, 'zones' | 'games' | 'upgrades' |
 }
 
 /** What stands on a casino's floor (shared/floor/placement.ts). */
-export function casinoLayout(casino: Pick<Casino, 'zones' | 'games' | 'constructions' | 'placements' | 'decor'>): LayoutInput {
+export function casinoLayout(casino: Pick<Casino, 'zones' | 'games' | 'constructions' | 'placements' | 'decor'> & { storedGames?: readonly string[] }): LayoutInput {
     return layoutOf(layoutStateOf({
         zones: casino.zones,
         games: casino.games,
         constructions: casino.constructions.map(row => ({ kind: row.kind, id: row.target })),
         placements: casino.placements,
+        storedGames: casino.storedGames,
         decor: casino.decor
     }))
 }
 
 /** Every game on the floor and where it stands, home spots resolved (TycoonState.placements). */
-function placementsView(casino: Pick<Casino, 'zones' | 'games' | 'constructions' | 'placements' | 'decor'>): Record<string, { x: number, y: number }> {
+function placementsView(casino: Pick<Casino, 'zones' | 'games' | 'constructions' | 'placements' | 'storedGames'>): Record<string, { x: number, y: number }> {
     return layoutStateOf({
         zones: casino.zones,
         games: casino.games,
         constructions: casino.constructions.map(row => ({ kind: row.kind, id: row.target })),
-        placements: casino.placements
+        placements: casino.placements,
+        storedGames: casino.storedGames
     }).games as Record<string, { x: number, y: number }>
 }
 
@@ -358,8 +379,8 @@ function mergeHours(pieces: readonly HourPiece[]): HourPiece[] {
 /**
  * Pay back the removed Decor upgrade, once: the chips its levels cost (at the
  * last catalog prices, `decorRefund`) and any Decor level still under
- * construction, as `refund:decor` chips. Runs inside a coin unit (chips move,
- * stars follow); the guards are the conditional update that drops `decor`
+ * construction, as `refund:decor` chips. Runs inside a coin unit (chips move
+ * only there); the guards are the conditional update that drops `decor`
  * from the row only while it still holds the level read, and the delete of
  * the construction rows (… RETURNING), in the same BEGIN IMMEDIATE
  * transaction. Returns the chips paid.
@@ -474,7 +495,7 @@ export function saveCasino(tx: Tx, casino: Casino) {
         campaign: first?.id ?? null,
         campaignUntil: first ? new Date(first.until) : null,
         campaigns: live,
-        placements: casino.placements
+        placements: placementsRow(casino)
     }).where(eq(casinoProfiles.playerId, casino.playerId)).run()
     flushHistory(tx, casino)
 }
@@ -564,6 +585,7 @@ export function toState(casino: Casino, now: number, gemsEnabled: boolean, house
         campaigns,
         golden: [...view.golden],
         placements: placementsView(view),
+        storedGames: [...view.storedGames],
         decor: view.decor.map(item => ({ id: item.id, type: item.type, x: item.x, y: item.y })),
         progress: progressOf(view),
         gemsEnabled
@@ -586,28 +608,31 @@ export function getTycoonState(playerId: string, now = Date.now(), options: { we
 
 /** The owner's read as a coin unit, so the first read can pay back the removed Decor upgrade. */
 function readCasino(playerId: string, now: number, options: { welcome?: boolean }) {
-    return commitCoins(({ tx }) => {
+    return commitCoins(({ tx, checkStars }) => {
         const casino = advanceCasino(tx, playerId, now)
         // The removed Decor upgrade is paid back on the owner's first read after it left (the guards make it once).
         const refunded = refundDecor(tx, casino)
         const state = toState(casino, now, isHubPlayer(playerId, tx), true)
         const welcome = noteVisit(tx, casino, state, options.welcome === true)
-        return { ...state, cosmetics: cosmeticsOf(playerId, tx), missions: missionsState(tx, playerId, now), welcome, ...(refunded > 0 ? { decorRefund: refunded } : {}) }
-    })
+        // A build that finished since the last unit can reach a goal: the read checks the star level.
+        checkStars(playerId)
+        return { ...state, cosmetics: cosmeticsOf(playerId, tx), missions: missionsState(tx, playerId, now), welcome, starGoals: starSummaryOf(playerId, tx, now), ...(refunded > 0 ? { decorRefund: refunded } : {}) }
+    }, playerId)
 }
 
 /**
- * GET /api/tycoon: `getTycoonState`, and once the hub confirmed it, the star
- * level change the read's chip move caused (the Decor refund), else null.
+ * GET /api/tycoon: `getTycoonState`, and the star rise the owner has not been
+ * shown yet (one this read reported, or one reported earlier in the
+ * background: a build that finished, the sweep, a visitor's round), else null.
  */
 export async function readTycoonState(playerId: string, now = Date.now(), options: { welcome?: boolean } = {}): Promise<TycoonState> {
     const { value, stars } = readCasino(playerId, now, options)
     return { ...value, stars: starOf(await stars, playerId) }
 }
 
-/** The star change for this player, in the shape the API sends. */
+/** The star change this response hands its player (claimed as seen), in the shape the API sends. */
 function starOf(stars: StarChange[], playerId: string): TycoonStarChange | null {
-    return stars.find(change => change.playerId === playerId) ?? null
+    return ownStarChange(playerId, stars)
 }
 
 /**
@@ -616,7 +641,7 @@ function starOf(stars: StarChange[], playerId: string): TycoonStarChange | null 
  * collects pay the cage once.
  */
 export async function collectCage(playerId: string, now = Date.now()): Promise<TycoonActionResponse> {
-    const { value } = await coinTransaction((coins) => {
+    const { value, stars } = await coinTransaction((coins) => {
         const casino = advanceCasino(coins.tx, playerId, now)
         const readAt = casino.cageAt
         accrueCage(casino, now)
@@ -631,8 +656,8 @@ export async function collectCage(playerId: string, now = Date.now()): Promise<T
         flushHistory(coins.tx, casino)
         recordMissions(coins.tx, playerId, ['collects'], now)
         return { collected: amount, balance: coins.credit({ playerId, amount, category: 'cage' }).coins }
-    })
-    return { state: getTycoonState(playerId, now), coins: value.balance, gems: null, collected: value.collected, stars: null }
+    }, playerId)
+    return { state: getTycoonState(playerId, now), coins: value.balance, gems: null, collected: value.collected, stars: starOf(stars, playerId) }
 }
 
 /** A BuildBody from the request, typed: anything else is a 400. */
@@ -671,7 +696,7 @@ export async function startBuild(playerId: string, body: BuildBody, now = Date.n
             const spot = newGameSpot(state, id)
             if (!spot) throw createError({ statusCode: 400, statusMessage: NO_ROOM_BLOCKER })
             casino.placements = { ...casino.placements, [id]: spot }
-            coins.tx.update(casinoProfiles).set({ placements: casino.placements }).where(eq(casinoProfiles.playerId, playerId)).run()
+            coins.tx.update(casinoProfiles).set({ placements: placementsRow(casino) }).where(eq(casinoProfiles.playerId, playerId)).run()
         }
 
         if (cost.buildMs <= 0) {
@@ -690,7 +715,7 @@ export async function startBuild(playerId: string, body: BuildBody, now = Date.n
             if (!row) throw createError({ statusCode: 409, statusMessage: 'Already under construction' })
         }
         recordMissions(coins.tx, playerId, ['build'], now)
-    })
+    }, playerId)
     floorChanged(playerId)
     return { state: getTycoonState(playerId, now), coins: null, gems: null, collected: 0, stars: starOf(stars, playerId) }
 }
@@ -752,7 +777,7 @@ export async function startCampaign(playerId: string, id: CampaignId, now = Date
         casino.campaigns = [...casino.campaigns.filter(c => c.id !== id && c.until > now), { id, until: from + def.ms }]
         saveCasino(coins.tx, casino)
         recordMissions(coins.tx, playerId, ['campaign'], now)
-    })
+    }, playerId)
     return { state: getTycoonState(playerId, now), coins: null, gems: null, collected: 0, stars: starOf(stars, playerId) }
 }
 
@@ -883,20 +908,24 @@ export function parseBuyDecorBody(body: unknown): BuyDecorBody {
     return at ? { type: input.type as DecorType, ...at } : { type: input.type as DecorType }
 }
 
-/** POST /api/tycoon/place body: `{ item: 'game', id, x, y }`, `{ item: 'decor', id, x, y }` or `{ item: 'decor', id, store: true }`. */
+/** `store: true` without x and y, or nothing: anything else is a 400. */
+function parseStore(input: Record<string, unknown>): boolean {
+    if (input.store === undefined) return false
+    if (input.store !== true || input.x !== undefined || input.y !== undefined) throw createError({ statusCode: 400, statusMessage: 'store is true, without x and y' })
+    return true
+}
+
+/** POST /api/tycoon/place body: `{ item: 'game' | 'decor', id, x, y }` or `{ item, id, store: true }`. */
 export function parsePlaceBody(body: unknown): PlaceBody {
     const input = bodyObject(body)
     if (input.item === 'game') {
         if (typeof input.id !== 'string' || !ID.test(input.id)) throw createError({ statusCode: 400, statusMessage: 'id names a game' })
-        if (input.store !== undefined) throw createError({ statusCode: 400, statusMessage: 'Only decorations can be put away' })
+        if (parseStore(input)) return { item: 'game', id: input.id, store: true }
         return { item: 'game', id: input.id, ...parseTile(input, true)! }
     }
     if (input.item === 'decor') {
         if (!Number.isSafeInteger(input.id) || (input.id as number) < 1) throw createError({ statusCode: 400, statusMessage: 'id names a decoration' })
-        if (input.store !== undefined) {
-            if (input.store !== true || input.x !== undefined || input.y !== undefined) throw createError({ statusCode: 400, statusMessage: 'store is true, without x and y' })
-            return { item: 'decor', id: input.id as number, store: true }
-        }
+        if (parseStore(input)) return { item: 'decor', id: input.id as number, store: true }
         return { item: 'decor', id: input.id as number, ...parseTile(input, true)! }
     }
     throw createError({ statusCode: 400, statusMessage: 'item is game or decor' })
@@ -932,30 +961,24 @@ export async function buyDecor(playerId: string, body: BuyDecorBody, now = Date.
             .get()
         if (!row) throw createError({ statusCode: 409, statusMessage: `You already own the ${def.name}` })
         if (lifts) saveCasino(coins.tx, casino)
-    })
+    }, playerId)
     if (at) floorChanged(playerId)
     return { state: getTycoonState(playerId, now), coins: null, gems: null, collected: 0, stars: starOf(stars, playerId) }
 }
 
 /**
- * Move a built game, or place, move or put away a decoration. Free. The spot
- * is checked inside the BEGIN IMMEDIATE transaction against the rows read in
- * it, so of two parallel moves onto the same tile only the first lands. A
- * special put down or put away changes the rate: the cage is accrued up to
- * now first. A game under construction can move too (the builders follow it);
- * games can't be put away.
+ * Place, move or put away a game or a decoration. Free. The spot is checked
+ * inside the BEGIN IMMEDIATE transaction against the rows read in it, so of
+ * two parallel moves onto the same tile only the first lands. A game under
+ * construction can move too (the builders follow it) but not be put away. A
+ * game or a special going onto or off the floor changes the rate: the cage is
+ * accrued up to now first.
  */
 export function placeItem(playerId: string, body: PlaceBody, now = Date.now()): TycoonActionResponse {
     writeTx((tx) => {
         const casino = advanceCasino(tx, playerId, now)
         if (body.item === 'game') {
-            const building = casino.constructions.some(row => row.kind === 'game' && row.target === body.id)
-            if (!building && (casino.games[body.id] ?? 0) < 1) throw createError({ statusCode: 404, statusMessage: 'You have not built that game' })
-            const at = { x: body.x, y: body.y }
-            const problem = placementProblem(casinoLayout(casino), { kind: 'game', id: body.id }, at)
-            if (problem) throw createError({ statusCode: 400, statusMessage: problem })
-            casino.placements = { ...casino.placements, [body.id]: at }
-            tx.update(casinoProfiles).set({ placements: casino.placements }).where(eq(casinoProfiles.playerId, playerId)).run()
+            placeGame(tx, casino, body, now)
             return
         }
         const item = casino.decor.find(d => d.id === body.id)
@@ -983,4 +1006,40 @@ export function placeItem(playerId: string, body: PlaceBody, now = Date.now()): 
     })
     floorChanged(playerId)
     return { state: getTycoonState(playerId, now), coins: null, gems: null, collected: 0, stars: null }
+}
+
+/**
+ * `placeItem` for a game, inside its transaction: move one on the floor (the
+ * rate stays: where a game stands never changes income), put a built one
+ * away, or place one from storage. Putting away and placing change the seats:
+ * the cage runs at the old rate up to now first, and the casino is saved with
+ * it.
+ */
+function placeGame(tx: Tx, casino: Casino, body: Extract<PlaceBody, { item: 'game' }>, now: number) {
+    const building = casino.constructions.some(row => row.kind === 'game' && row.target === body.id)
+    if (!building && (casino.games[body.id] ?? 0) < 1) throw createError({ statusCode: 404, statusMessage: 'You have not built that game' })
+    const stored = casino.storedGames.includes(body.id)
+    if ('store' in body) {
+        if (building) throw createError({ statusCode: 400, statusMessage: 'A game under construction can\'t be put away' })
+        if (stored) return
+        accrueCage(casino, now)
+        const placements = { ...casino.placements }
+        delete placements[body.id]
+        casino.placements = placements
+        casino.storedGames = [...casino.storedGames, body.id].sort()
+        saveCasino(tx, casino)
+        return
+    }
+    const at = { x: body.x, y: body.y }
+    const problem = placementProblem(casinoLayout(casino), { kind: 'game', id: body.id }, at)
+    if (problem) throw createError({ statusCode: 400, statusMessage: problem })
+    if (stored) {
+        accrueCage(casino, now)
+        casino.storedGames = casino.storedGames.filter(slug => slug !== body.id)
+        casino.placements = { ...casino.placements, [body.id]: at }
+        saveCasino(tx, casino)
+        return
+    }
+    casino.placements = { ...casino.placements, [body.id]: at }
+    tx.update(casinoProfiles).set({ placements: placementsRow(casino) }).where(eq(casinoProfiles.playerId, casino.playerId)).run()
 }

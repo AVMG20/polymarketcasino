@@ -53,6 +53,8 @@ function tap(key: string) {
 watch(open, (o) => {
     if (!o) peek.value = null
 })
+/** Whether the open card belongs to this row: the row is lifted above the ones below it. */
+const peekIn = (u: { games: string[], decor: string[] }) => !!peek.value && (u.games.some(slug => peek.value === `game:${slug}`) || u.decor.some(type => peek.value === `decor:${type}`))
 const gameTagline = (slug: string) => findGame(slug)?.tagline ?? ''
 const peekLift = computed<SpecialLift | null>(() => {
     const st = tycoon.state.value
@@ -103,11 +105,11 @@ const peekLift = computed<SpecialLift | null>(() => {
           v-for="u in unlocks"
           :key="u.level"
           class="relative flex min-h-14 items-center gap-2.5 py-1.5"
-          :class="u.level <= lv.level ? '' : 'opacity-60'"
+          :class="peekIn(u) ? 'z-30' : ''"
         >
           <span
             class="g-num grid size-9 shrink-0 place-items-center rounded-full border-2 text-sm"
-            :class="u.level <= lv.level ? 'border-[#1b8a33] bg-[#3fd25a] text-white' : u.level === next?.level ? 'border-[#a879ff] bg-[#a879ff]/25' : 'border-black/40 bg-black/30'"
+            :class="u.level <= lv.level ? 'border-[#1b8a33] bg-[#3fd25a] text-white' : u.level === next?.level ? 'border-[#a879ff] bg-[#a879ff]/25 opacity-60' : 'border-black/40 bg-black/30 opacity-60'"
             :title="u.level <= lv.level ? `Level ${u.level}: reached` : `Level ${u.level}`"
           >
             <Check v-if="u.level <= lv.level" class="size-4.5" :stroke-width="4" />
@@ -115,7 +117,7 @@ const peekLift = computed<SpecialLift | null>(() => {
           </span>
           <span class="flex min-w-0 flex-1 flex-wrap gap-1.5">
             <span v-for="slug in u.games" :key="slug" @pointerenter="enter($event, `game:${slug}`)" @pointerleave="leave($event, `game:${slug}`)">
-              <button type="button" class="block size-11 shrink-0 overflow-hidden rounded-lg border-2" :class="peek === `game:${slug}` ? 'border-[#ffc93a]' : 'border-black/50'" :aria-label="gameName(slug)" @click="tap(`game:${slug}`)"><TycoonGameArt :slug="slug" /></button>
+              <button type="button" class="block size-11 shrink-0 overflow-hidden rounded-lg border-2" :class="[peek === `game:${slug}` ? 'border-[#ffc93a]' : 'border-black/50', u.level > lv.level && peek !== `game:${slug}` ? 'opacity-60' : '']" :aria-label="gameName(slug)" @click="tap(`game:${slug}`)"><TycoonGameArt :slug="slug" /></button>
               <Transition name="pop">
                 <span v-if="peek === `game:${slug}`" class="peek g-panel">
                   <span class="block text-[13px] font-bold">{{ gameName(slug) }}</span>
@@ -125,7 +127,7 @@ const peekLift = computed<SpecialLift | null>(() => {
               </Transition>
             </span>
             <span v-for="type in u.decor" :key="type" @pointerenter="enter($event, `decor:${type}`)" @pointerleave="leave($event, `decor:${type}`)">
-              <button type="button" class="block size-11 shrink-0 overflow-hidden rounded-lg border-2" :class="peek === `decor:${type}` ? 'border-[#ffc93a]' : 'border-black/50'" :aria-label="decorName(type)" @click="tap(`decor:${type}`)"><TycoonDecorArt :type="type" /></button>
+              <button type="button" class="block size-11 shrink-0 overflow-hidden rounded-lg border-2" :class="[peek === `decor:${type}` ? 'border-[#ffc93a]' : 'border-black/50', u.level > lv.level && peek !== `decor:${type}` ? 'opacity-60' : '']" :aria-label="decorName(type)" @click="tap(`decor:${type}`)"><TycoonDecorArt :type="type" /></button>
               <Transition name="pop">
                 <span v-if="peek === `decor:${type}`" class="peek g-panel">
                   <span class="block text-[13px] font-bold">{{ decorName(type) }}</span>

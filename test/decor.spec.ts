@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { db } from '../server/database'
 import { casinoConstructions, casinoDecor, casinoProfiles, chipTransactions } from '../server/database/schema'
 import { dbPresenceSource } from '../server/utils/floor-socket'
-import { getCasinoVisit } from '../server/utils/social'
+import { getCasinoVisit, hostHasGame } from '../server/utils/social'
+import { playRound } from '../server/utils/rounds'
 import { writeTx } from '../server/database'
-import { buyDecor, collectCage, finishConstruction, getTycoonState, luckSeed, onFloorChange, parseBuyDecorBody, parsePlaceBody, placeItem, startBuild } from '../server/utils/tycoon'
+import { buyDecor, collectCage, finishConstruction, getTycoonState, hasBuiltGame, luckSeed, onFloorChange, parseBuyDecorBody, parsePlaceBody, placeItem, startBuild } from '../server/utils/tycoon'
 import { casinoLevel, casinoXp, gameUnlockLevel, LEVEL_XP, levelUnlocks, MAX_CASINO_LEVEL } from '../shared/casino-level'
 import { DECOR, findDecor, specialBonus, type DecorType } from '../shared/decor'
 import * as T from '../shared/tycoon'
@@ -31,7 +32,7 @@ import {
 } from '../shared/tycoon'
 import { missionReward } from '../shared/missions'
 import { expectedFloor, expectedPerHour, ruleCombos, runFloor, tierOdds, type FloorView } from '../shared/visitors'
-import { chipsOf, giveChips, seedPlayer } from './setup/players'
+import { chipsOf, coinsOf, giveChips, seedPlayer } from './setup/players'
 
 const HOUR = 3_600_000
 const ALL_ZONES = ZONES.map(zone => zone.id)
@@ -80,6 +81,13 @@ describe('placement rules', () => {
         expect(placementProblem(l, { kind: 'game', id: 'limbo' }, { x: 15, y: 17 })).toBe('Blocks where guests stand')
         // Its own spot doesn't count: moving it a tile is fine.
         expect(placementProblem(l, { kind: 'game', id: 'limbo' }, { x: 20, y: 16 })).toBeNull()
+        // A flat rug is walked over: it may lie where guests stand, in the entrance, and under a machine's front row.
+        const carpet = (x: number, y: number) => placementProblem(l, { kind: 'decor', type: 'red-carpet' }, { x, y })
+        expect(carpet(16, 17)).toBeNull()
+        expect(carpet(17, 21)).toBeNull()
+        expect(carpet(plinko.x, plinko.y)).toBe('Something is in the way')
+        const rugged = layout(['backroom'], [...STARTERS, 'limbo'], [{ id: 1, type: 'red-carpet', x: 16, y: 17 }])
+        expect(placementProblem(rugged, { kind: 'game', id: 'limbo' }, { x: 16, y: 15 })).not.toBe('Needs open floor in front')
         // A game standing on a rug, a rug on a plant: no overlaps at all.
         const rug = layout(['backroom'], STARTERS, [{ id: 1, type: 'rug', x: 16, y: 18 }])
         expect(plantProblem(rug, plant(17, 19))).toBe('Something is in the way')
@@ -309,6 +317,9 @@ describe('decorations on the server', () => {
         expect(() => parseBuyDecorBody({ type: 'plant', x: 1.5, y: 4 })).toThrow()
         expect(parsePlaceBody({ item: 'game', id: 'limbo', x: 1, y: 2 })).toEqual({ item: 'game', id: 'limbo', x: 1, y: 2 })
         expect(parsePlaceBody({ item: 'decor', id: 3, store: true })).toEqual({ item: 'decor', id: 3, store: true })
+        expect(parsePlaceBody({ item: 'game', id: 'limbo', store: true })).toEqual({ item: 'game', id: 'limbo', store: true })
+        expect(() => parsePlaceBody({ item: 'game', id: 'limbo', store: true, x: 1, y: 2 })).toThrow()
+        expect(() => parsePlaceBody({ item: 'game', id: 'limbo', store: 'yes' })).toThrow()
         expect(parsePlaceBody({ item: 'decor', id: 3, x: 1, y: 2 })).toEqual({ item: 'decor', id: 3, x: 1, y: 2 })
         expect(() => parsePlaceBody({ item: 'decor', id: '3', x: 1, y: 2 })).toThrow()
         expect(() => parsePlaceBody({ item: 'decor', id: 3, store: true, x: 1, y: 2 })).toThrow()
@@ -532,7 +543,7 @@ describe('decorations on the server', () => {
         // Moving it while the builders work is fine: the construction keeps running where it now stands.
         const during = findSpot(started.state.placements ? layoutOf(layoutStateOf(started.state)) : layout(['backroom'], STARTERS), { kind: 'game', id: 'limbo' }, { x: 16, y: 19 })!
         expect(placeItem(id, { item: 'game', id: 'limbo', ...during }, t0).state.placements!.limbo).toEqual(during)
-        expect(() => parsePlaceBody({ item: 'game', id: 'limbo', store: true })).toThrow(expect.objectContaining({ statusCode: 400 }))
+        expect(() => placeItem(id, { item: 'game', id: 'limbo', store: true }, t0)).toThrow(expect.objectContaining({ statusCode: 400, statusMessage: 'A game under construction can\'t be put away' }))
         expect(() => placeItem(id, { item: 'game', id: 'wheel', x: 19, y: 16 }, t0)).toThrow(expect.objectContaining({ statusCode: 404 }))
         const done = getTycoonState(id, t0 + HOUR)
         expect(done.games.limbo).toBe(1)
@@ -566,5 +577,149 @@ describe('decorations on the server', () => {
         }
         expect(getTycoonState(id).decor!.length).toBe(n + PROPS.filter(p => p.zone === 'backroom').length)
         await expect(startBuild(id, { kind: 'game', id: 'limbo' })).rejects.toMatchObject({ statusCode: 400, statusMessage: 'No room for it: open a room or move things' })
+    })
+})
+
+describe('putting games away', () => {
+    const top = { zones: ALL_ZONES, games: Object.fromEntries(TYCOON_GAMES.map(g => [g.slug, 5])), upgrades: { cage: 5, marketing: 5, hospitality: 8, crew: 1 } }
+    const cageAt = (id: string) => db.select({ at: casinoProfiles.cageAt }).from(casinoProfiles).where(eq(casinoProfiles.playerId, id)).get()!.at.getTime()
+
+    it('takes a put-away game off the visitor model: no seats, no prestige, the rooms stay', () => {
+        const away = ['limbo', 'roulette', 'baccarat']
+        const state = { ...top, rushUntil: null, campaign: null }
+        const view = floorView({ ...state, storedGames: away })
+        for (const slug of away) expect(view.games[slug]).toBeUndefined()
+        expect(T.floorSeats({ ...state, storedGames: away })).toBe(T.floorSeats(state) - away.reduce((n, slug) => n + T.seatsOf(slug, 5), 0))
+        expect(expectedFloor(view).seats).toBe(T.floorSeats({ ...state, storedGames: away }))
+        expect(expectedPerHour(view)).toBeLessThan(expectedPerHour(floorView(state)))
+        // A top machine's prestige leaves with it.
+        expect(tierOdds(view).whale).toBeLessThan(tierOdds(floorView(state)).whale)
+        // Without zones they are read from every built game: putting the only game of a room away keeps the room.
+        const noZones = { games: { plinko: 1, spinata: 1, limbo: 1, roulette: 1 }, upgrades: { cage: 0, marketing: 0, hospitality: 0, crew: 0 }, rushUntil: null, campaign: null }
+        expect(floorView({ ...noZones, storedGames: ['roulette'] }).zones).toEqual(expect.arrayContaining([T.findTycoonGame('roulette')!.zone]))
+    })
+
+    it('prices campaigns, rushes and mission rewards as if every built game stood on the floor', () => {
+        const state = { zones: ALL_ZONES, games: Object.fromEntries(TYCOON_GAMES.map(g => [g.slug, 3])), upgrades: { cage: 3, marketing: 5, hospitality: 2, crew: 0 }, rushUntil: null, campaign: null }
+        const away = { ...state, storedGames: TYCOON_GAMES.map(g => g.slug).filter(slug => slug !== 'plinko') }
+        // Income does drop, so the prices must not.
+        expect(expectedPerHour(floorView(away))).toBeLessThan(expectedPerHour(floorView(state)) / 2)
+        expect(fullIncomePerHour(away)).toBe(fullIncomePerHour(state))
+        expect(rushGems(away)).toBe(rushGems(state))
+        expect(missionReward(away, 1)).toBe(missionReward(state, 1))
+        for (const c of CAMPAIGNS) expect(campaignCost(away, c.id, 0), c.id).toBe(campaignCost(state, c.id, 0))
+    })
+
+    it('puts a built game away: the cage runs at the old rate up to then, then seats and income drop', () => {
+        const changed: string[] = []
+        const stop = onFloorChange(casinoId => changed.push(casinoId))
+        const id = seedPlayer(0, 0, { origin: 'dev', chips: 1_000_000 })
+        const t0 = Date.now()
+        getTycoonState(id, t0)
+        const t1 = t0 + 2 * HOUR
+        const before = getTycoonState(id, t1)
+        changed.length = 0
+        const after = placeItem(id, { item: 'game', id: 'limbo', store: true }, t1).state
+        expect(changed).toEqual([id])
+        expect(cageAt(id)).toBe(t1)
+        expect(after.cage.stored).toBe(before.cage.stored)
+        expect(after.storedGames).toEqual(['limbo'])
+        expect(after.placements!.limbo).toBeUndefined()
+        expect(after.floor.seats).toBe(before.floor.seats - T.seatsOf('limbo', 1))
+        expect(after.floor.expectedPerHour).toBeLessThan(before.floor.expectedPerHour)
+        // Still owned: level, progress, casino level, value; its spot is free floor now.
+        expect(after.games.limbo).toBe(1)
+        expect(after.progress).toBe(before.progress)
+        expect(casinoLevel(after)).toEqual(casinoLevel(before))
+        expect(hasBuiltGame(id, 'limbo')).toBe(true)
+        const home = before.placements!.limbo!
+        expect(dbPresenceSource.walkable(id)(home.x, home.y)).toBe(true)
+        expect(placementProblem(layoutOf(layoutStateOf(after)), { kind: 'decor', type: 'plant' }, home)).toBeNull()
+        // Again: nothing changes.
+        expect(placeItem(id, { item: 'game', id: 'limbo', store: true }, t1 + HOUR).state.storedGames).toEqual(['limbo'])
+        expect(cageAt(id)).toBe(t1)
+        stop()
+    })
+
+    it('refuses an upgrade while it is away, and puts it back on a free spot only', async () => {
+        const id = seedPlayer(0, 0, { origin: 'dev', chips: 1_000_000 })
+        const t0 = Date.now()
+        const before = getTycoonState(id, t0)
+        placeItem(id, { item: 'game', id: 'limbo', store: true }, t0)
+        expect(T.buildBlocker(getTycoonState(id, t0), 'game', 'limbo')).toBe(T.STORED_BLOCKER)
+        await expect(startBuild(id, { kind: 'game', id: 'limbo' }, t0)).rejects.toMatchObject({ statusCode: 400, statusMessage: 'Place it on the floor first' })
+        expect(chipsOf(id)).toBe(1_000_000)
+        // Nowhere it can't stand.
+        const plinko = before.placements!.plinko!
+        expect(() => placeItem(id, { item: 'game', id: 'limbo', ...plinko }, t0)).toThrow(expect.objectContaining({ statusCode: 400, statusMessage: 'Something is in the way' }))
+        expect(() => placeItem(id, { item: 'game', id: 'limbo', x: -5, y: 3 }, t0)).toThrow(expect.objectContaining({ statusCode: 400, statusMessage: 'Not in a room you own' }))
+        expect(getTycoonState(id, t0).storedGames).toEqual(['limbo'])
+        // Back on a free spot: the rate comes back, the cage first ran at the lower one.
+        const t1 = t0 + HOUR
+        const away = getTycoonState(id, t1)
+        const spot = findSpot(layoutOf(layoutStateOf(away)), { kind: 'game', id: 'limbo' }, before.placements!.limbo!)!
+        const back = placeItem(id, { item: 'game', id: 'limbo', ...spot }, t1).state
+        expect(cageAt(id)).toBe(t1)
+        expect(back.cage.stored).toBe(away.cage.stored)
+        expect(back.storedGames).toEqual([])
+        expect(back.placements!.limbo).toEqual(spot)
+        expect(back.floor.seats).toBe(before.floor.seats)
+        expect(back.floor.expectedPerHour).toBe(before.floor.expectedPerHour)
+        await expect(startBuild(id, { kind: 'game', id: 'limbo' }, t1)).resolves.toBeTruthy()
+    })
+
+    it('can\'t put away a game under construction, first build or upgrade', async () => {
+        const id = seedPlayer(0, 0, { casino: 'none', origin: 'dev' })
+        const t0 = Date.now()
+        getTycoonState(id, t0)
+        giveChips(id, 100_000)
+        await startBuild(id, { kind: 'game', id: 'spinata' }, t0)
+        expect(() => placeItem(id, { item: 'game', id: 'spinata', store: true }, t0)).toThrow(expect.objectContaining({ statusCode: 400, statusMessage: 'A game under construction can\'t be put away' }))
+        expect(() => placeItem(id, { item: 'game', id: 'wheel', store: true }, t0)).toThrow(expect.objectContaining({ statusCode: 404 }))
+        const t1 = t0 + 24 * HOUR
+        expect(getTycoonState(id, t1).games.spinata).toBe(2)
+        await startBuild(id, { kind: 'game', id: 'limbo' }, t1)
+        expect(() => placeItem(id, { item: 'game', id: 'limbo', store: true }, t1)).toThrow(expect.objectContaining({ statusCode: 400, statusMessage: 'A game under construction can\'t be put away' }))
+        expect(getTycoonState(id, t1).storedGames).toEqual([])
+    })
+
+    it('keeps a put-away game playable at home, but not for visitors of that casino', async () => {
+        const host = seedPlayer(10_000, 10_000, { origin: 'dev' })
+        const t0 = Date.now()
+        const visitor = seedPlayer(10_000, 10_000, { origin: 'dev' })
+        db.update(casinoProfiles).set({ zones: ['backroom'], games: { plinko: 1, spinata: 1 } }).where(eq(casinoProfiles.playerId, visitor)).run()
+        const before = getCasinoVisit(visitor, host, t0)
+        placeItem(host, { item: 'game', id: 'limbo', store: true }, t0)
+        expect(hostHasGame(host, 'limbo')).toBe(false)
+        expect(hostHasGame(host, 'plinko')).toBe(true)
+        await expect(playRound(visitor, 'limbo', { bet: 100, options: { target: 2 }, host })).rejects.toThrow(/Build Limbo/)
+        await expect(playRound(host, 'limbo', { bet: 100, options: { target: 2 } })).resolves.toBeTruthy()
+        expect(coinsOf(visitor).coins).toBe(10_000)
+        // The visit doesn't draw it; the casino is worth the same.
+        const visit = getCasinoVisit(visitor, host, t0)
+        expect(visit.games.limbo).toBeUndefined()
+        expect(visit.placements!.limbo).toBeUndefined()
+        expect(visit.value).toBe(before.value)
+        expect(visit.level).toBe(before.level)
+        expect(visit.floor!.seats).toBe(before.floor!.seats - T.seatsOf('limbo', 1))
+    })
+
+    it('handles a burst: many put-aways of one game, and two games put back onto one spot', async () => {
+        const id = seedPlayer(0, 0, { origin: 'dev' })
+        const t0 = Date.now()
+        const before = getTycoonState(id, t0)
+        const burst = await Promise.allSettled(Array.from({ length: 6 }, (_, i) => Promise.resolve().then(() => placeItem(id, { item: 'game', id: 'limbo', store: true }, t0 + i))))
+        expect(burst.every(r => r.status === 'fulfilled')).toBe(true)
+        expect(cageAt(id)).toBe(t0)
+        placeItem(id, { item: 'game', id: 'dice', store: true }, t0 + 10)
+        const away = getTycoonState(id, t0 + 10)
+        expect(away.storedGames).toEqual(['dice', 'limbo'])
+        const spot = before.placements!.limbo!
+        const moves = await Promise.allSettled(['limbo', 'dice'].map(slug => Promise.resolve().then(() => placeItem(id, { item: 'game', id: slug, ...spot }, t0 + 20))))
+        expect(moves.filter(r => r.status === 'fulfilled')).toHaveLength(1)
+        const after = getTycoonState(id, t0 + 20)
+        expect(after.storedGames).toHaveLength(1)
+        const placed = ['limbo', 'dice'].find(slug => !after.storedGames!.includes(slug))!
+        expect(after.placements![placed]).toEqual(spot)
     })
 })

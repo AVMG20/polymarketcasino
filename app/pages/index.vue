@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { HardHat, ListChecks, Megaphone, RotateCcw, ScrollText } from 'lucide-vue-next'
+import { HardHat, ListChecks, Megaphone, RotateCcw, ScrollText, Star } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import type { MissionId } from '#shared/missions'
 import { homeSpot, type Tile } from '#shared/floor/layout'
@@ -35,6 +35,7 @@ const gamesOpen = ref(false)
 const campaignsOpen = ref(false)
 const buildersOpen = ref(false)
 const missionsOpen = ref(false)
+const starsOpen = ref(false)
 const card = ref<{ kind: BuildKind, id: string } | null>(null)
 const arrange = useArrange()
 
@@ -156,7 +157,7 @@ function openMenu(tab = 'games') {
 }
 
 /** The small cards over the floor: the ad campaigns, the builders list and the daily missions. */
-function openPanel(panel: 'campaigns' | 'builders' | 'missions') {
+function openPanel(panel: 'campaigns' | 'builders' | 'missions' | 'stars') {
     arrange.active.value = false
     cosmetics.hide()
     card.value = null
@@ -166,6 +167,7 @@ function openPanel(panel: 'campaigns' | 'builders' | 'missions') {
     campaignsOpen.value = panel === 'campaigns'
     buildersOpen.value = panel === 'builders'
     missionsOpen.value = panel === 'missions'
+    starsOpen.value = panel === 'stars'
 }
 
 /** A mission's Go: take the player to where it is done. */
@@ -233,6 +235,7 @@ function closePanels() {
     campaignsOpen.value = false
     buildersOpen.value = false
     missionsOpen.value = false
+    starsOpen.value = false
     arrange.levelOpen.value = false
 }
 
@@ -266,8 +269,9 @@ watch(() => arrange.active.value, (on) => {
     // After the HUD/overlay swap has rendered, so the floor is sure to be mounted.
     void nextTick(syncArrange)
 })
-// The shop hands over a decoration (new, or from storage) while arrange mode is already on.
-watch(() => arrange.pending.value, item => item && arrange.active.value && takePending())
+// The shop hands over a decoration (new, or from storage) while arrange mode is already on. After a tick:
+// a carry that also turns arrange mode on (a build card's "place it") must land after the mode's reset above.
+watch(() => arrange.pending.value, item => item && arrange.active.value && void nextTick(takePending))
 
 function takePending() {
     const item = arrange.pending.value
@@ -278,7 +282,7 @@ function takePending() {
 
 /** Where an item stands now (the ghost starts there); null: the middle of the screen. */
 function originOf(item: ArrangeItem): Tile | null {
-    if (item.kind === 'game') return tycoon.placements.value[item.id] ?? homeSpot(item.id)
+    if (item.kind === 'game') return tycoon.storedGames.value.includes(item.id) ? null : tycoon.placements.value[item.id] ?? homeSpot(item.id)
     if (item.kind === 'decor') {
         const owned = tycoon.decor.value.find(d => d.id === item.id)
         return owned && owned.x !== null && owned.y !== null ? { x: owned.x, y: owned.y } : null
@@ -322,12 +326,12 @@ async function onArrangeDrop(item: ArrangeItem, at: Tile) {
     sound.play(item.kind === 'new' ? 'kaching' : 'hammer')
 }
 
-/** Put the decoration in hand back into storage. */
+/** Put the game or decoration in hand away into storage. */
 async function storeCarried() {
     const item = carrying.value
-    if (!item || item.kind !== 'decor') return
+    if (!item || item.kind === 'new') return
     arranging.value = true
-    const response = await tycoon.place({ item: 'decor', id: item.id, store: true })
+    const response = await tycoon.place(item.kind === 'game' ? { item: 'game', id: item.id, store: true } : { item: 'decor', id: item.id, store: true })
     arranging.value = false
     // Stored: the new scene no longer has it, so nothing flies back.
     await nextTick()
@@ -407,6 +411,7 @@ watch(() => houseRules.open.value, (open) => {
     campaignsOpen.value = false
     buildersOpen.value = false
     missionsOpen.value = false
+    starsOpen.value = false
 })
 // A skin picker shows a zone: frame it beside the panel.
 watch(() => cosmetics.preview.value?.zone, (zone) => {
@@ -457,7 +462,7 @@ function retry() {
 }
 
 const hudPopover = ref(false)
-const overlayOpen = computed(() => !floorReady.value || arrange.active.value || arrange.levelOpen.value || buildOpen.value || gamesOpen.value || campaignsOpen.value || buildersOpen.value || !!card.value || !!playSlug.value || hudPopover.value || cosmetics.wardrobe.value.open || missionsOpen.value || houseRules.open.value || leaderboard.open.value || !!tycoon.welcome.value)
+const overlayOpen = computed(() => !floorReady.value || arrange.active.value || arrange.levelOpen.value || buildOpen.value || gamesOpen.value || campaignsOpen.value || buildersOpen.value || !!card.value || !!playSlug.value || hudPopover.value || cosmetics.wardrobe.value.open || missionsOpen.value || starsOpen.value || houseRules.open.value || leaderboard.open.value || !!tycoon.welcome.value)
 
 onMounted(() => {
     void tycoon.refresh({ welcome: true })
@@ -502,8 +507,8 @@ useHead({ title: 'My Casino' })
 
     <template v-if="scene">
       <TycoonArrangeBar v-if="arrange.active.value" :carrying="carrying" :problem="problem" :busy="arranging" @done="arrange.active.value = false" @cancel="cancelCarry" @store="storeCarried" @shop="openDecorShop" @take="carry" />
-      <TycoonHud v-else @build="openMenu()" @games="gamesOpen = true" @cage="walkFloor({ kind: 'cage' })" @shop="openMenu('gems')" @zone="id => openCard('zone', id)" @popover="open => (hudPopover = open)" @campaigns="openPanel('campaigns')" @missions="openPanel('missions')" @level="arrange.levelOpen.value = true" @decor="arrange.start()" />
-      <TycoonOnboarding ref="onboarding" :paused="overlayOpen" @cage="walkFloor({ kind: 'cage' })" @games="gamesOpen = true" @limbo="openCard('game', 'limbo')" @build="(kind, id) => openCard(kind, id)" />
+      <TycoonHud v-else @build="openMenu()" @games="gamesOpen = true" @cage="walkFloor({ kind: 'cage' })" @shop="openMenu('gems')" @zone="id => openCard('zone', id)" @popover="open => (hudPopover = open)" @campaigns="openPanel('campaigns')" @missions="openPanel('missions')" @level="arrange.levelOpen.value = true" @decor="arrange.start()" @stars="openPanel('stars')" />
+      <TycoonOnboarding ref="onboarding" :paused="overlayOpen || arrange.active.value" @cage="walkFloor({ kind: 'cage' })" @games="gamesOpen = true" @limbo="openCard('game', 'limbo')" @build="(kind, id) => openCard(kind, id)" />
     </template>
 
     <TycoonBuildMenu :open="buildOpen" :tab="buildTab" @close="buildOpen = false" @play="openGame" />
@@ -521,6 +526,9 @@ useHead({ title: 'My Casino' })
     <TycoonWardrobe />
     <TycoonDrawer :open="missionsOpen" card dismissable title="Missions" :icon="ListChecks" color="#ff9a2e" height="80dvh" @close="missionsOpen = false">
       <TycoonMissions @go="goMission" />
+    </TycoonDrawer>
+    <TycoonDrawer :open="starsOpen" card dismissable title="Stars" :icon="Star" color="#ffc93a" height="80dvh" @close="starsOpen = false">
+      <TycoonStars :open="starsOpen" />
     </TycoonDrawer>
     <TycoonDecorShop :open="arrange.shopOpen.value" @close="arrange.shopOpen.value = false" />
     <TycoonLevelSheet />

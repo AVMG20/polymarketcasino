@@ -51,7 +51,7 @@ const { HubError } = await import('../server/utils/hub')
 const { eq } = await import('drizzle-orm')
 const { db } = await import('../server/database')
 const { casinoConstructions, casinoProfiles, chipTransactions, gameRounds, gemPurchases, players } = await import('../server/database/schema')
-const { collectCage, getTycoonState, luckSeed, parseBuildBody, parseCampaignBody, startBuild, startCampaign } = await import('../server/utils/tycoon')
+const { collectCage, getTycoonState, luckSeed, parseBuildBody, parseCampaignBody, readTycoonState, startBuild, startCampaign } = await import('../server/utils/tycoon')
 const { buyWithGems, parseGemBody, retryStalePurchases } = await import('../server/utils/tycoon-gems')
 const { playRound } = await import('../server/utils/rounds')
 const { playerStats } = await import('../server/utils/stats')
@@ -61,7 +61,8 @@ const { GAMES } = await import('../shared/games/registry')
 const { normalizeCoins, sumCoins } = await import('../shared/money')
 const T = await import('../shared/tycoon')
 const V = await import('../shared/visitors')
-const { CASINO_STARS } = await import('../shared/stars')
+const { goalLevel } = await import('../shared/stars')
+const { starView } = await import('../server/utils/stars')
 const { gameUnlockLevel } = await import('../shared/casino-level')
 const { chipLedgerSum, chipsOf, coinsOf, giveChips, ledgerSum, seedPlayer } = await import('./setup/players')
 const { coinTransactions } = await import('../server/database/schema')
@@ -286,7 +287,7 @@ describe('casino profile', () => {
         const id = newPlayer()
         const t0 = Date.now()
         getTycoonState(id, t0)
-        // Under the first star, before and after: no star report.
+        // No goal reached, before or after: no star report.
         giveChips(id, 900)
         const limbo = T.findTycoonGame('limbo')!.levels[0]!
         const started = await startBuild(id, { kind: 'game', id: 'limbo' }, t0)
@@ -325,15 +326,25 @@ describe('casino profile', () => {
         expect(getTycoonState(id, t0 + HOUR).constructions).toHaveLength(1)
     })
 
-    it("reports the star level a build's chip spend drops", async () => {
+    it('reports the star a build earns once it finishes, on the next casino read', async () => {
         const id = newPlayer(0)
-        getTycoonState(id)
-        // Just over the first star threshold, so the build drops below it.
-        giveChips(id, CASINO_STARS[0]!.threshold + T.findTycoonGame('limbo')!.levels[0]!.chips / 2)
-        db.update(players).set({ starsReported: 1 }).where(eq(players.id, id)).run()
-        const result = await startBuild(id, { kind: 'game', id: 'limbo' })
-        expect(result.stars).toMatchObject({ playerId: id, level: 0, previous: 1 })
-        expect(setStars).toHaveBeenCalledWith(expect.objectContaining({ stars: 0 }))
+        const t0 = Date.now()
+        getTycoonState(id, t0)
+        // Main Floor and Limbo built: casino level 4, the Wheel takes it to 5 (the first goal).
+        db.update(casinoProfiles).set({ zones: ['backroom', 'main'], games: { plinko: 1, spinata: 1, limbo: 1 } }).where(eq(casinoProfiles.playerId, id)).run()
+        expect(getTycoonState(id, t0).starGoals).toMatchObject({ level: 0, reported: 0 })
+        giveChips(id, 5_000)
+        const started = await startBuild(id, { kind: 'game', id: 'wheel' }, t0)
+        expect(started.stars).toBeNull()
+        expect(setStars).not.toHaveBeenCalled()
+        const read = await readTycoonState(id, t0 + T.findTycoonGame('wheel')!.levels[0]!.buildMs)
+        expect(read.stars).toMatchObject({ playerId: id, level: 1, previous: 0, goals: ['level-5'] })
+        expect(read.starGoals!.goals.find(goal => goal.key === 'level-5')).toMatchObject({ done: true, have: 5, need: 5 })
+        expect(setStars).toHaveBeenCalledTimes(1)
+        expect(setStars).toHaveBeenCalledWith(expect.objectContaining({ stars: 1 }))
+        // Reported: the next read finds nothing due.
+        expect((await readTycoonState(id, t0 + HOUR)).stars).toBeNull()
+        expect(setStars).toHaveBeenCalledTimes(1)
     })
 
     it('starts one construction out of a burst, and never spends more chips than the balance', async () => {
@@ -551,15 +562,17 @@ describe('rounds and My Casino', () => {
         let chips = 0
         for (let i = 0; i < 10; i++) {
             const round = await playRound(id, 'dice', { bet: 1_000, options: { chance: 50 } })
-            chips = normalizeCoins(chips + round.payout)
+            chips = normalizeCoins(chips + round.payout + round.rakeback)
             expect(round.balance).toBe(10_000 - 1_000 * (i + 1))
             expect(round.chips).toBe(chips)
             expect(round.chipsEarned).toBe(round.payout)
+            expect(round.rakeback).toBe(10)
         }
         expect(coinsOf(id).coins).toBe(0)
         expect(chipsOf(id)).toBe(chips)
         expect(chipLedgerSum(id)).toBe(chips)
-        expect(chipRows(id).every(row => row.type === 'credit' && row.reason === 'win:dice')).toBe(true)
+        expect(chipRows(id).every(row => row.type === 'credit' && (row.reason === 'win:dice' || row.reason === 'rakeback:dice'))).toBe(true)
+        expect(chipRows(id).filter(row => row.reason === 'rakeback:dice')).toHaveLength(10)
         const rows = db.select().from(gameRounds).where(eq(gameRounds.playerId, id)).all()
         expect(rows.every(row => row.funding === 'coins' && row.stake === 1_000)).toBe(true)
     })
@@ -572,8 +585,8 @@ describe('rounds and My Casino', () => {
         for (let i = 0; i < 20; i++) {
             // An older client's `funding` is ignored.
             const round = await playRound(id, 'dice', { bet: 100, options: { chance: 90 }, funding: 'coins' })
-            chips = normalizeCoins(chips - 100 + round.payout)
-            expect(round).toMatchObject({ stakeCoins: 0, stakeChips: 100, chips, balance: 0 })
+            chips = normalizeCoins(chips - 100 + round.payout + 1)
+            expect(round).toMatchObject({ stakeCoins: 0, stakeChips: 100, chips, balance: 0, rakeback: 1 })
         }
         expect(chipsOf(id)).toBe(chips)
         expect(chipLedgerSum(id)).toBe(normalizeCoins(chips - 5_000))
@@ -589,7 +602,7 @@ describe('rounds and My Casino', () => {
         getTycoonState(id)
         giveChips(id, 1_000)
         const mixed = await playRound(id, 'dice', { bet: 100, options: { chance: 50 } })
-        expect(mixed).toMatchObject({ stake: 100, stakeCoins: 60, stakeChips: 40, balance: 0, chips: normalizeCoins(960 + mixed.payout) })
+        expect(mixed).toMatchObject({ stake: 100, stakeCoins: 60, stakeChips: 40, balance: 0, chips: normalizeCoins(960 + mixed.payout + 1) })
         expect(db.select().from(gameRounds).where(eq(gameRounds.playerId, id)).get()).toMatchObject({ stake: 100, stakeChips: 40, funding: 'coins' })
         expect(chipRows(id)[0]).toMatchObject({ type: 'debit', amount: 40, reason: 'bet:dice' })
 
@@ -602,20 +615,17 @@ describe('rounds and My Casino', () => {
         expect(chipRows(exact).filter(row => row.type === 'debit')).toEqual([])
     })
 
-    it('reports the stars a winning round lifts (stars follow chips, not coins)', async () => {
-        const id = diceBettor(1_000_000)
-        for (let i = 0; i < 100; i++) {
-            const round = await playRound(id, 'dice', { bet: 1_000, options: { chance: 95 } })
-            if (round.chips >= CASINO_STARS[0]!.threshold) {
-                expect(round.stars).toMatchObject({ playerId: id, level: 1, previous: 0 })
-                break
-            }
-            expect(round.stars).toBeNull()
-        }
-        const level = db.select({ stars: players.starsReported }).from(players).where(eq(players.id, id)).get()!.stars
-        expect(level).toBe(1)
-        // Nearly a million coins left: they never count.
-        for (const call of setStars.mock.calls) expect((call[0] as { stars: number }).stars).toBe(1)
+    it('reports the goal level on a round, never the coin or chip balance', async () => {
+        // A built-up casino (every room, every game): a few goals are done, none reported yet.
+        const id = seedPlayer(1_000_000)
+        const level = goalLevel(starView(id))
+        expect(level).toBeGreaterThan(0)
+        const first = await playRound(id, 'dice', { bet: 1_000, options: { chance: 95 } })
+        expect(first.stars).toMatchObject({ playerId: id, level, previous: 0 })
+        // More rounds move coins and chips, never the level: no more reports.
+        for (let i = 0; i < 5; i++) expect((await playRound(id, 'dice', { bet: 1_000, options: { chance: 95 } })).stars).toBeNull()
+        expect(setStars).toHaveBeenCalledTimes(1)
+        expect(db.select({ stars: players.starsReported }).from(players).where(eq(players.id, id)).get()!.stars).toBe(level)
     })
 
     it('refuses a stake coins and chips together cannot cover, without charging', async () => {
@@ -638,7 +648,7 @@ describe('rounds and My Casino', () => {
         giveChips(id, 550)
         const burst = await Promise.allSettled(Array.from({ length: 30 }, () => playRound(id, 'dice', { bet: 100, options: { chance: 1 } })))
         const played = burst.flatMap(r => r.status === 'fulfilled' ? [r.value] : [])
-        const paid = sumCoins(played.map(round => round.payout))
+        const paid = sumCoins(played.map(round => round.payout + round.rakeback))
         expect(sumCoins(played.map(round => round.stakeCoins))).toBe(450)
         expect(coinsOf(id).coins).toBe(0)
         expect(ledgerSum(id)).toBe(-450)

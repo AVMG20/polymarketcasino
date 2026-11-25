@@ -36,6 +36,8 @@ export interface BuildView {
     lockLevel: number | null
     /** A new game with no free spot in any room you own. */
     noRoom: boolean
+    /** A built game put away (arrange mode's storage): place it to upgrade it or let guests play it. */
+    stored: boolean
     /** Every builder is busy (and this item is not one of them). */
     buildersFull: boolean
     maxed: boolean
@@ -145,6 +147,8 @@ export function useTycoon() {
     const decor = computed<OwnedDecor[]>(() => state.value?.decor ?? [])
     /** Where every game on the floor stands (origin tiles). */
     const placements = computed<Record<string, { x: number, y: number }>>(() => state.value?.placements ?? {})
+    /** Built games put away (not on the floor). */
+    const storedGames = computed<string[]>(() => state.value?.storedGames ?? [])
     /** Games not on the floor yet that no owned room has a free spot for (read once per state, not per tick). */
     const roomless = computed(() => {
         const s = state.value
@@ -231,6 +235,7 @@ export function useTycoon() {
         clock.value = Date.now()
         state.value = next
         wallet.followChips(next.chips)
+        wallet.followStars(next.starGoals)
         if (next.welcome) welcome.value = next.welcome
         if (next.decorRefund && next.decorRefund > 0) decorRefund.value = next.decorRefund
         if (previous) {
@@ -296,7 +301,7 @@ export function useTycoon() {
             try {
                 const next = await $fetch<TycoonState>('/api/tycoon', { query })
                 apply(next)
-                // A read can confirm a star change too (chips moved without an action: a refund).
+                // A read can confirm a star change too (a build that finished reached a goal).
                 wallet.applyStars(next.stars)
                 loadFailed.value = false
             } catch (error) {
@@ -320,7 +325,7 @@ export function useTycoon() {
                 apply(response.state)
                 if (response.coins !== null) session.setCoins(response.coins)
                 if (response.gems !== null) wallet.setGems(response.gems)
-                // Stars follow chips: a build or campaign can drop a level.
+                // A build, a special or a cosmetic can reach a casino goal.
                 wallet.applyStars(response.stars)
                 return response
             } catch (error) {
@@ -446,11 +451,12 @@ export function useTycoon() {
         const needs = kind === 'game' && level === 0 && !running ? gameUnlockLevel(id) : 0
         const lockLevel = s && needs > casino.value.level ? needs : null
         const noRoom = kind === 'game' && level === 0 && !running && !lockLevel && roomless.value.has(id)
+        const stored = kind === 'game' && level >= 1 && !running && storedGames.value.includes(id)
         const buildersFull = !!s && !running && s.constructions.length >= s.builders
         const missingChips = cost ? Math.max(0, cost.chips - chips.value) : 0
         const affordable = missingChips === 0
         return {
-            kind, id, name: buildName(kind, id), level, maxLevel, cost, running, lockZone, lockZoneId, lockLevel, noRoom, buildersFull,
+            kind, id, name: buildName(kind, id), level, maxLevel, cost, running, lockZone, lockZoneId, lockLevel, noRoom, stored, buildersFull,
             maxed: !cost && !running,
             missingChips, affordable,
             canStart: !!s && !!cost && affordable && !running && !buildBlocker(s, kind, id)
@@ -507,7 +513,7 @@ export function useTycoon() {
 
     return {
         state, ready, loadFailed, chips, gems, busy, lastBuilt, serverTime, offset, welcome, missions, claimable, missionDone, levelUp, decorRefund,
-        level: casino, decor, placements, specials,
+        level: casino, decor, placements, storedGames, specials,
         cageStored, cageFill, rushActive, rushLeftMs, rushPrice, queue,
         seats, visitors, visitorTiers, waiting, occupied, perHour, expectedPerHour, floorNow, house, campaign, runningCampaigns, campaigns,
         startable, suggestion,

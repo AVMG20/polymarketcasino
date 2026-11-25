@@ -1,6 +1,6 @@
 import { and, eq, lt, sql } from 'drizzle-orm'
 import { db } from '../database'
-import { gemConversions, gemPurchases, players } from '../database/schema'
+import { gemConversions, gemPurchases } from '../database/schema'
 import {
     COINS_PER_GEM,
     CONVERT_MAX_GEMS,
@@ -9,9 +9,9 @@ import {
 import { formatCoins } from '../../shared/money'
 import { coinTransaction, getCoins } from './ledger'
 import { hub, HubError, type HubSpendInput } from './hub'
-import { syncStars, type StarChange } from './stars'
+import { ownStarChange, starSummaryOf, syncStars, type StarChange } from './stars'
 import { chipBalance } from './tycoon'
-import { CASINO_GAME_SLUG, starSummary, type StarSummary } from '../../shared/stars'
+import { CASINO_GAME_SLUG, type StarSummary } from '../../shared/stars'
 
 type Conversion = typeof gemConversions.$inferSelect
 
@@ -84,11 +84,13 @@ export async function spendForRow(input: { table: SpendTable, id: string, spend:
  *   2. in one immediate transaction, flip the row `pending → done` and credit
  *      the coins. The conditional update is the guard: settling the same row
  *      twice at once credits once, the loser gets no row back;
- *   3. report any star the credit earned.
+ *   3. report a star level still due (every coin unit checks it). `deliver`:
+ *      the player's own request (convert), whose response hands them their
+ *      star rise; a retry leaves it for their next read.
  * A refusal that proves nothing was spent marks the row failed; anything
  * else (hub down, 5xx, a refusal on a retry) leaves it pending for a retry.
  */
-export async function settleConversion(row: Conversion): Promise<ConvertResult> {
+export async function settleConversion(row: Conversion, deliver = false): Promise<ConvertResult> {
     const spend = await spendForRow({
         table: gemConversions,
         id: row.id,
@@ -110,10 +112,10 @@ export async function settleConversion(row: Conversion): Promise<ConvertResult> 
             .get()
         if (!claimed) return null
         return coins.credit({ playerId: row.playerId, amount: row.coins, category: 'convert' })
-    })
+    }, row.playerId)
     if (!balance) throw createError({ statusCode: 409, statusMessage: 'Conversion already settled' })
 
-    return { conversionId: row.id, gems: row.gems, coins: row.coins, balance: balance.coins, gemsLeft: spend.gems, stars: stars[0] ?? null }
+    return { conversionId: row.id, gems: row.gems, coins: row.coins, balance: balance.coins, gemsLeft: spend.gems, stars: deliver ? ownStarChange(row.playerId, stars) : null }
 }
 
 function stalePending(playerId?: string) {
@@ -162,13 +164,13 @@ export async function convertGems(playerId: string, gems: number): Promise<Conve
         coins: gems * COINS_PER_GEM,
         idempotencyKey: crypto.randomUUID()
     }).returning().get()
-    return settleConversion(row)
+    return settleConversion(row, true)
 }
 
 export interface WalletState {
     coins: number
     peakCoins: number
-    /** My Casino chips: what wins pay and what the stars follow. */
+    /** My Casino chips: what wins pay. */
     chips: number
     /** Gems at the hub, or null when the hub could not be reached or the player has no hub account. */
     gems: number | null
@@ -176,16 +178,17 @@ export interface WalletState {
     hubAccount: boolean
     coinsPerGem: number
     convert: { min: number, max: number }
-    /** The star level, from the chip balance. */
+    /** The star level: the casino goals, each done or with its progress. */
     stars: StarSummary
-    /** A level change this read confirmed with the hub (a retried report). */
+    /** A star rise the player has not been shown yet (this read's retried report, or one reported in the background), else null. */
     starChange: StarChange | null
 }
 
 /** Everything the wallet UI shows. Also retries stale conversions and star reports. */
 export async function getWallet(playerId: string): Promise<WalletState> {
     await retryStaleConversions(playerId)
-    const starChange = await syncStars(playerId)
+    const reported = await syncStars(playerId)
+    const starChange = ownStarChange(playerId, reported ? [reported] : [])
     const balance = getCoins(playerId)
     if (!balance) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
 
@@ -208,11 +211,7 @@ export async function getWallet(playerId: string): Promise<WalletState> {
         hubAccount,
         coinsPerGem: COINS_PER_GEM,
         convert: { min: CONVERT_MIN_GEMS, max: CONVERT_MAX_GEMS },
-        stars: starSummary(chips, starChange?.level ?? reportedLevel(playerId)),
+        stars: starSummaryOf(playerId),
         starChange
     }
-}
-
-function reportedLevel(playerId: string) {
-    return db.select({ level: players.starsReported }).from(players).where(eq(players.id, playerId)).get()?.level ?? 0
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowBigUp, ArrowRight, ChevronLeft, Clock, Crown, Eye, Footprints, Gem, HardHat, Lock, Move } from 'lucide-vue-next'
+import { ArrowBigUp, ArrowRight, ChevronLeft, Clock, Crown, Eye, Footprints, Gem, HardHat, Lock, Move, Package } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import { formatCoins } from '#shared/money'
 import { findUpgrade, type BuildKind, type ZoneId } from '#shared/tycoon'
@@ -27,7 +27,7 @@ const headline = computed(() => {
 /** A maxed game still shows its one income number (the same as its tile badge). */
 const maxedEarns = computed(() => {
     const s = tycoon.state.value
-    if (props.kind !== 'game' || !v.value.maxed || !s) return null
+    if (props.kind !== 'game' || !v.value.maxed || v.value.stored || !s) return null
     return gameIncomePerHour(s, props.id, v.value.level, s.serverNow)
 })
 const blurb = computed(() => buildLine(props.kind, props.id, v.value.level) ?? (props.kind === 'upgrade' ? findUpgrade(props.id)?.description : null) ?? null)
@@ -100,6 +100,20 @@ async function start() {
       <TycoonBuildBar class="min-w-0 flex-1" :progress="1 - v.running.leftMs / v.running.total" :left-ms="v.running.leftMs" size="lg" />
       <TycoonSkipButton class="h-12 shrink-0 rounded-xl px-3.5 text-lg" :left-ms="v.running.leftMs" :target="`${v.running.kind}:${v.running.id}`" />
     </div>
+    <button
+      v-else-if="v.stored"
+      type="button"
+      class="g-btn g-dark h-14 w-full rounded-2xl px-4 text-lg"
+      title="Put away in storage: its seats take no guests until you place it (you can still play it)"
+      @click="arrange.carry({ kind: 'game', id })"
+    >
+      <Package class="size-5 shrink-0 text-[#ffb35c]" :stroke-width="3" />
+      <span class="flex min-w-0 flex-col items-start leading-tight">
+        <span class="truncate">In storage: place it</span>
+        <span class="truncate text-[12px] font-semibold opacity-75 [text-shadow:none]">{{ v.maxed ? 'Its seats take guests again' : 'Place it on the floor to upgrade it' }}</span>
+      </span>
+      <ArrowRight class="ml-auto size-5 shrink-0" :stroke-width="3" />
+    </button>
     <div v-else-if="v.maxed" class="g-btn g-gold h-14 w-full rounded-2xl text-xl" aria-disabled="true"><Crown class="size-6" :stroke-width="3" /> MAX</div>
     <button
       v-else-if="v.lockLevel"

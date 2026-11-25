@@ -1,0 +1,1 @@
+ALTER TABLE `step_rounds` ADD `host` text;

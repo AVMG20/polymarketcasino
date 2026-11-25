@@ -8,7 +8,7 @@ import {
     cageCapacity, CAMPAIGNS, HOSPITALITY_LEVELS, campaignEffect, seatsOf, findTycoonGame, findUpgrade, findZone, floorSeats, floorView, fullIncomePerHour, guestsPerHour, visitorCount,
     type BuildKind, type CampaignId, type TycoonState, type UpgradeId, type VisitorView, type ZoneId
 } from '#shared/tycoon'
-import { expectedFloor, richerLevel, RULE_UNLOCKS, seatedTotal, tierOdds, tierShift, VISITOR_MODEL, VISITOR_TIERS, type VisitorTierDef } from '#shared/visitors'
+import { expectedFloor, richerLevel, RULE_UNLOCKS, seatedTotal, tierOdds, VISITOR_MODEL, VISITOR_TIERS, type VisitorTierDef } from '#shared/visitors'
 import { formatFixed } from '~/utils/format-decimal'
 import { tierPlural } from '~/utils/visitor-tiers'
 import CasinoCoinIcon from '~/components/casino/CoinIcon.vue'
@@ -81,6 +81,8 @@ const ODDS = new Intl.NumberFormat('nl-NL', { style: 'percent', maximumSignifica
 export function formatShare(share: number): string {
     return share > 0 && share < 0.001 ? '<0,1%' : ODDS.format(share)
 }
+/** The colour of the richer-guests stat (the specials' gem). */
+export const GEM_COLOR = '#5fe3c0'
 /** A share as a whole percentage: "45%". */
 const fillPct = (share: number) => `${Math.round(share * 100)}%`
 /** The campaign the next Marketing level unlocks, if any. */
@@ -88,14 +90,11 @@ const unlockedAt = (level: number) => CAMPAIGNS.find(c => c.requiresMarketing > 
 const RULE_NAMES: Record<string, string> = { door: 'Door policy', vip: 'VIP room' }
 /** What each Hospitality level adds. */
 
-/** The tile badge of a wealth step: the richest open tier's share after it (▲), the title says now → next. */
+/** The tile badge of a wealth step: the share of richer guests (above Tourists) after it (▲), the title says now → next. */
 function richBadge(before: StatState, after: StatState, what: string): BuildEffect {
-    const tier = richTier(before)
-    const odds = (s: StatState) => tierShift(floorView(before), floorView(s)).find(t => t.id === tier.id)
-    const shift = odds(after)
-    const a = formatShare(shift?.now ?? 0)
-    const b = formatShare(shift?.next ?? 0)
-    return { icon: Gem, text: `${b}▲`, title: `${what}: ${tier.name}s ${a} → ${b} of the guests who come`, color: tier.color }
+    const a = formatShare(richerShare(before))
+    const b = formatShare(richerShare(after))
+    return { icon: Gem, text: `${b}▲`, title: `${what}: richer guests (Regulars, High Rollers, Whales) ${a} → ${b} of the guests who come`, color: GEM_COLOR }
 }
 
 /** One effect of the next step, as an icon badge: `text` is short, `title` explains. */
@@ -141,10 +140,11 @@ export interface TierRise {
  * High Rollers, Whales) at once: `rises` holds the tiers that come already, in
  * tier order, against the floor without it; `locked` the richer tiers whose
  * room isn't open yet (they'll come more too once it is), and `room` the room
- * that opens the first of those. Or the spend lift.
+ * that opens the first of those; `bonus` the prestige share the specials add
+ * (the same for every casino: "+12% richer guests"). Or the spend lift.
  */
 export type SpecialLift =
-    | { kind: 'rarity', rises: TierRise[], locked: VisitorTierDef[], room: string | null }
+    | { kind: 'rarity', bonus: number, rises: TierRise[], locked: VisitorTierDef[], room: string | null }
     | { kind: 'spend', share: number }
 
 /** The rarity lift of going from the `without` specials to the `with` ones, for every tier above Tourists. */
@@ -159,7 +159,8 @@ function rarityLift(state: StatState, without: readonly string[], withThem: read
         else locked.push(tier)
     }
     const room = locked[0]?.unlockZone ? findZone(locked[0].unlockZone)?.name ?? null : null
-    return { kind: 'rarity', rises, locked, room }
+    const bonus = specialBonus(withThem).prestige - specialBonus(without).prestige
+    return { kind: 'rarity', bonus, rises, locked, room }
 }
 
 /** One special's stat, against the casino as it is (a placed one counts what it does now). */
@@ -220,22 +221,12 @@ function withUpgrade(state: StatState, id: UpgradeId, level: number): StatState 
     return { ...state, upgrades: { ...state.upgrades, [id]: level } }
 }
 
-/** A state with a game at `level` (0 = not built). */
+/** A state with a game at `level` (0 = not built), standing on the floor (a put-away one as if placed). */
 function withGame(state: StatState, id: string, level: number): StatState {
     const games = { ...state.games }
     if (level > 0) games[id] = level
     else delete games[id]
-    return { ...state, games }
-}
-
-/**
- * The tier a wealth step's badge shows: the richest one open apart from
- * Whales (a fraction of a percent reads as nothing), else the next one to
- * open (its share as it will be).
- */
-function richTier(state: StatState): VisitorTierDef {
-    const odds = tierOdds(floorView(state))
-    return [...VISITOR_TIERS].reverse().find(t => t.id !== 'tourist' && t.id !== 'whale' && odds[t.id] > 0) ?? VISITOR_TIERS[1]!
+    return { ...state, games, storedGames: state.storedGames?.filter(slug => slug !== id) }
 }
 
 /** A state with a zone open. */
@@ -245,31 +236,44 @@ function withZone(state: StatState, id: string): StatState {
     return { ...state, zones }
 }
 
+/** The share of the guests above Tourists (Regulars, High Rollers, Whales together). */
+function richerShare(state: StatState, now?: number): number {
+    return 1 - tierOdds(floorView(state), now).tourist
+}
+
 /**
- * Every open tier (and the next one to open) as a row: its share of the
- * guests now → after the step, ▲ or ▼. A richer mix reads as the cheap
- * tiers going down and the rich ones up.
+ * What a step does to the guest mix, as rows: one "Richer guests" row (the
+ * share of the guests above Tourists, now → after: every richer tier rises
+ * together, so naming one would read as if only that one did), plus a row for
+ * a tier that starts coming with this step (a new room's).
  */
 export function tierRows(before: StatState, after: StatState, now?: number): BuildStat[] {
-    // A tier that has not opened yet and only loses share (a new room's guests dilute it) reads as a loss: leave it out.
-    return tierShift(floorView(before), floorView(after), now).filter(t => !(t.from && formatShare(t.next) !== formatShare(t.now) && t.next < t.now)).map((t) => {
+    const was = tierOdds(floorView(before), now)
+    const will = tierOdds(floorView(after), now)
+    const rich = VISITOR_TIERS.filter(t => t.id !== 'tourist')
+    const open = rich.filter(t => will[t.id] > 0)
+    const locked = rich.filter(t => will[t.id] <= 0)
+    const a = formatShare(richerShare(before, now))
+    const b = formatShare(richerShare(after, now))
+    const detail = open.map(t => `${tierPlural(t.id, 2)} ${formatShare(was[t.id])} → ${formatShare(will[t.id])}`).join(', ')
+    const rows: BuildStat[] = open.length
+        ? [{
+                icon: Gem,
+                label: 'Richer guests',
+                now: a,
+                next: b,
+                trend: a === b ? 0 : Math.sign(richerShare(after, now) - richerShare(before, now)),
+                arrow: true,
+                color: GEM_COLOR,
+                title: `Guests richer than Tourists, as a share of everyone who comes (they spend more): ${detail}${locked.length ? `. ${tierList(locked)} come once their room opens` : ''}`
+            }]
+        : []
+    for (const t of open) {
+        if (was[t.id] > 0) continue
         const def = VISITOR_TIERS.find(d => d.id === t.id)!
-        const zone = t.from ? findZone(t.from)?.name ?? t.from : null
-        const a = formatShare(t.now)
-        const b = formatShare(t.next)
-        return {
-            icon: Users,
-            label: `${def.name}s${zone ? ` (from ${zone})` : ''}`,
-            now: a,
-            next: b,
-            trend: a === b ? 0 : Math.sign(t.next - t.now),
-            arrow: true,
-            color: def.color,
-            title: zone
-                ? `${def.name}s come once the ${zone} opens: their share of the guests then, now and after this step`
-                : `${def.name}s' share of the guests who come (${formatCoins(def.spend)} coins an hour each), now and after this step`
-        }
-    })
+        rows.push({ icon: Users, label: `${def.name}s`, now: null, next: formatShare(will[t.id]), trend: 1, arrow: true, color: def.color, title: `${def.name}s start coming (${formatCoins(def.spend)} coins an hour each): their share of the guests` })
+    }
+    return rows
 }
 
 /** Guests on the floor on average now → after a step (Marketing, Hospitality, ads). */
@@ -418,14 +422,16 @@ export function buildStats(kind: BuildKind, id: string, level: number, state: St
         // What the player cares about: what this game brings in, now and after.
         // Each level adds a seat and makes guests there spend a little more; the best seats fill first.
         const after = withGame(state, id, next)
+        // A put-away game reads as placed: the step is what it changes on the floor.
+        const before = level > 0 ? withGame(state, id, level) : state
         const gameNow = level > 0 ? gameIncomePerHour(state, id, level, now) : 0
         const gameNext = Math.max(gameNow, gameIncomePerHour(after, id, next, now))
         return [
             // One income number, the same one the tile's badge shows; the casino total lives in the HUD.
             { icon: CasinoCoinIcon, label: 'This game earns', now: level > 0 ? `${formatCoins(gameNow)}/h` : null, next: `${formatCoins(gameNext)}/h`, trend: Math.sign(Math.round(gameNext - gameNow)), color: '#ffc93a', title: `Coins an hour this game brings into your cage on average, now and after this step: it earns by its seats (${seatsOf(id, Math.max(1, level))} now)` },
-            { icon: Users, label: 'Guests / seats', now: `${visitorCount(state, now)}/${floorSeats(state)}`, next: `${visitorCount(after, now)}/${floorSeats(after)}`, color: '#7dd3fc', title: 'Guests on your floor on average / seats. Every level adds a seat and makes guests there spend more. Marketing and ads bring more guests; Hospitality, specials and wealth ads richer ones.' },
+            { icon: Users, label: 'Guests / seats', now: `${visitorCount(before, now)}/${floorSeats(before)}`, next: `${visitorCount(after, now)}/${floorSeats(after)}`, color: '#7dd3fc', title: 'Guests on your floor on average / seats. Every level adds a seat and makes guests there spend more. Marketing and ads bring more guests; Hospitality, specials and wealth ads richer ones.' },
             // The top levels draw richer guests: the whole mix, up and down.
-            ...(richerStep(kind, level) ? tierRows(state, after, now) : [])
+            ...(richerStep(kind, level) ? tierRows(before, after, now) : [])
         ]
     }
     switch (id as UpgradeId) {

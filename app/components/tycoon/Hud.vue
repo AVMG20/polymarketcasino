@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChartArea, ChartNoAxesColumn, Hammer, LayoutGrid, ListChecks, Megaphone, ScrollText, Shirt, Sofa, Sparkles, Timer, Trophy, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
+import { ChartArea, ChartNoAxesColumn, Hammer, LayoutGrid, ListChecks, Megaphone, ScrollText, Shirt, Sofa, Sparkles, Star, Timer, Trophy, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import { findZone, type ZoneId } from '#shared/tycoon'
 
@@ -7,13 +7,19 @@ import { findZone, type ZoneId } from '#shared/tycoon'
  * Everything laid over the floor: the resource bar and the cage jar up top,
  * the construction rings on the right and the round action buttons below.
  */
-const emit = defineEmits<{ build: [], games: [], cage: [], shop: [], zone: [id: ZoneId], popover: [open: boolean], campaigns: [], missions: [], level: [], decor: [] }>()
+const emit = defineEmits<{ build: [], games: [], cage: [], shop: [], zone: [id: ZoneId], popover: [open: boolean], campaigns: [], missions: [], level: [], decor: [], stars: [] }>()
 const tycoon = useTycoon()
 const casinoStats = useCasinoStats()
 const { coins } = useCasinoSession()
 const sound = useTycoonSound()
 const leaderboard = useLeaderboard()
 const cosmetics = useCosmetics()
+const wallet = useWallet()
+
+// Stars: the casino goals reached (the wallet's copy follows every casino read and star change).
+const stars = computed(() => wallet.stars.value ?? tycoon.state.value?.starGoals ?? null)
+const starPop = ref(0)
+watch(() => stars.value?.level ?? 0, (to, from) => to > from && starPop.value++)
 
 // Daily missions: a ring of the ones cleared, a badge when one is ready to claim.
 const missions = computed(() => tycoon.missions.value)
@@ -343,8 +349,24 @@ useEventListener('keydown', (event: KeyboardEvent) => {
         </div>
       </div>
 
-      <!-- Top right: the leaderboard, your game stats and the sound. A column on narrow phones, so the coins and chips keep their row. -->
-      <div class="pointer-events-auto flex shrink-0 items-center gap-2 max-[379px]:flex-col sm:gap-2.5" :class="fold">
+      <!-- Top right: your stars, the leaderboard, your game stats and the sound. A 2 × 2 block on phones up to 449 px, so the coins and chips keep their row and the cage stays close. -->
+      <div class="pointer-events-auto flex shrink-0 items-center gap-2 max-[449px]:grid max-[449px]:grid-cols-2 sm:gap-2.5" :class="fold">
+        <!-- Stars: one per casino goal reached. Tap for the goals. -->
+        <button
+          v-if="stars"
+          type="button"
+          class="hud-hit relative"
+          :title="`Stars: ${stars.level} of ${stars.max} casino goals reached`"
+          :aria-label="`Stars, ${stars.level} of ${stars.max}`"
+          @click="emit('stars')"
+        >
+          <!-- Phones: a round button with the count as a badge (the row is tight); wider screens: a "★ 3" pill. -->
+          <span class="g-btn g-dark size-9 gap-1 rounded-full sm:h-[2.6rem] sm:w-auto sm:pr-3 sm:pl-2">
+            <Star :key="starPop" class="size-5 fill-[#ffc93a] text-[#ffc93a] sm:size-4.5" :class="starPop ? 'g-pop' : ''" :stroke-width="2.5" />
+            <span class="g-num hidden text-base leading-none sm:inline">{{ stars.level }}</span>
+          </span>
+          <span class="g-num absolute -top-1 -right-1 grid h-5 min-w-5 place-items-center rounded-full border-2 border-[#7a4a00] bg-[#ffc93a] px-1 text-[11px] leading-none text-[#5a3200] sm:hidden">{{ stars.level }}</span>
+        </button>
         <button
           type="button"
           class="hud-hit relative"
@@ -475,7 +497,7 @@ useEventListener('keydown', (event: KeyboardEvent) => {
     </div>
 
     <!-- Construction rings (on narrow phones under the column of top-right buttons) -->
-    <ul v-if="tycoon.queue.value.length" :class="fold" class="pointer-events-auto absolute top-14 right-2 flex flex-col items-end gap-3 max-[379px]:top-36 sm:top-16 sm:right-3">
+    <ul v-if="tycoon.queue.value.length" :class="fold" class="pointer-events-auto absolute top-14 right-2 flex flex-col items-end gap-3 max-[449px]:top-24 sm:top-16 sm:right-3">
       <li v-for="item in tycoon.queue.value" :key="`${item.kind}:${item.id}`" class="relative">
         <button
           type="button"

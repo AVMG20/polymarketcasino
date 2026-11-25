@@ -206,6 +206,8 @@ export interface WelcomeBack {
     notable: NotableGuest[]
     /** How many Whale visits there were in all (`notable` lists the biggest few). */
     whales: number
+    /** Chips other players' bets paid this casino while away (their rakeback, `host:<slug>`). */
+    visitorChips?: number
 }
 
 /** Away this long (or more) and the next read says what happened. */

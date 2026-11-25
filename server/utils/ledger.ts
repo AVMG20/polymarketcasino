@@ -2,20 +2,20 @@ import { and, desc, eq, sql } from 'drizzle-orm'
 import { db, type DbExecutor, type Tx, writeTx } from '../database'
 import { casinoProfiles, coinTransactions, players } from '../database/schema'
 import { isCoinAmount, toUnits } from '../../shared/money'
-import { starLevel } from '../../shared/stars'
 import { splitStake, type StakeSplit } from '../../shared/tycoon'
 import { creditChips, debitChips, watchChips, type ChipChange } from './chips'
-import { syncStars, type StarChange } from './stars'
+import { dueStarLevel, syncStars, type StarChange } from './stars'
 
 /**
  * The coin ledger, and the only way coins change; also the unit every chip
  * move runs in. Work runs inside `coinTransaction`: one immediate SQLite
- * transaction (synchronous, so it never spans an await). Stars follow the
- * **chip** balance (economy v2): the unit watches every chip move
- * (server/utils/chips.ts), and after it commits, the star level of every
- * player whose chips crossed a threshold is reported to the hub (a level
- * still due from a failed report is retried in the background, on any coin or
- * chip change). Nothing can move chips without the stars following.
+ * transaction (synchronous, so it never spans an await). After it commits,
+ * every player the unit touched (a coin or chip move, a stake, or
+ * `checkStars`) has their star level worked out from the casino goals
+ * (server/utils/stars.ts); a level that differs from what the hub holds is
+ * reported (a level whose report failed before is retried in the
+ * background instead, so a hub that is down never holds up a round; with
+ * `own`, other players' levels always go in the background).
  *
  * Amounts are positive coins with at most four decimals; the database holds
  * them as units of 1/10,000 coin (schema.ts converts its columns, the raw SQL
@@ -53,6 +53,12 @@ export interface CoinWork {
      * or chips' when both together can't cover it.
      */
     stake(change: StakeChange): StakeResult
+    /**
+     * Check this player's star level after commit: for a unit that can
+     * complete a casino goal without moving their coins or chips (a casino
+     * read that applies finished builds).
+     */
+    checkStars(playerId: string): void
 }
 
 export interface StakeChange {
@@ -126,16 +132,24 @@ function applyDebit(tx: Tx, change: Omit<CoinChange, 'refund'>): CoinBalance {
 
 export interface CoinTransactionResult<T> {
     value: T
-    /** Star levels the hub confirmed after commit, one per player whose level moved. */
+    /**
+     * Star levels the hub confirmed after commit, one per touched player whose
+     * level moved (with `own`: that player's only). Reported, not yet handed
+     * over: a response gives its player `ownStarChange(playerId, stars)`.
+     */
     stars: StarChange[]
 }
 
 /**
  * Run coin work atomically, then report star levels that moved. `work` must be
- * synchronous; a thrown error rolls back every change in it.
+ * synchronous; a thrown error rolls back every change in it. `own`: the
+ * request's player. Only their level is reported before the response; other
+ * players the unit touched (a visit's host) are reported in the background,
+ * so another player's hub call never holds up this response (they see the
+ * change on their next read).
  */
-export async function coinTransaction<T>(work: (coins: CoinWork) => T): Promise<CoinTransactionResult<T>> {
-    const { value, stars } = commitCoins(work)
+export async function coinTransaction<T>(work: (coins: CoinWork) => T, own?: string): Promise<CoinTransactionResult<T>> {
+    const { value, stars } = commitCoins(work, own)
     return { value, stars: await stars }
 }
 
@@ -151,15 +165,9 @@ export interface CommittedCoins<T> {
  * promise instead of waiting for it. The live tables use this so a slow hub
  * never holds up a table's queue; the report itself is identical.
  */
-export function commitCoins<T>(work: (coins: CoinWork) => T): CommittedCoins<T> {
-    // Chip balance before (first move) and after (last move), per player.
-    const chips = new Map<string, { before: number, after: number }>()
+export function commitCoins<T>(work: (coins: CoinWork) => T, own?: string): CommittedCoins<T> {
     const touched = new Set<string>()
-    const value = writeTx(tx => watchChips((playerId, before, after) => {
-        const seen = chips.get(playerId)
-        chips.set(playerId, { before: seen?.before ?? before, after })
-        touched.add(playerId)
-    }, () => work({
+    const value = writeTx(tx => watchChips(playerId => touched.add(playerId), () => work({
         tx,
         credit: (change) => {
             touched.add(change.playerId)
@@ -174,47 +182,57 @@ export function commitCoins<T>(work: (coins: CoinWork) => T): CommittedCoins<T> 
         stake: (change) => {
             touched.add(change.playerId)
             return takeStake(tx, change)
-        }
+        },
+        checkStars: playerId => touched.add(playerId)
     })))
-    return { value, stars: reportStars(touched, chips) }
+    return { value, stars: reportStars(touched, own) }
 }
 
-async function reportStars(touched: Set<string>, chips: Map<string, { before: number, after: number }>): Promise<StarChange[]> {
+/**
+ * The level each player was last reported at from here (inline), while it
+ * stays due: a level the hub has not confirmed yet is retried in the
+ * background on later units, never inline again.
+ */
+const tried = new Map<string, number>()
+const retrying = new Set<string>()
+
+async function reportStars(touched: Set<string>, own?: string): Promise<StarChange[]> {
     const stars: StarChange[] = []
     for (const playerId of touched) {
-        const moved = chips.get(playerId)
-        if (moved && starLevel(moved.after) !== starLevel(moved.before)) {
-            // The level moved: report it now, so the response can celebrate it.
-            const change = await syncStars(playerId).catch(() => null)
+        const due = dueLevel(playerId)
+        if (own !== undefined && playerId !== own) {
+            // Not the request's player: report without holding up the response.
+            if (due !== null) background(playerId)
+        } else if (due === null) {
+            tried.delete(playerId)
+        } else if (tried.get(playerId) !== due) {
+            // A new level: report it now, so the response can celebrate it.
+            tried.set(playerId, due)
+            const change = await syncStars(playerId)
             if (change) stars.push(change)
-        } else if (!retrying.has(playerId) && starsDue(playerId)) {
-            // Still due from a report that failed earlier: retry without
-            // holding up this response, one retry per player at a time.
-            retrying.add(playerId)
-            void syncStars(playerId).catch(() => null).finally(() => retrying.delete(playerId))
+        } else {
+            // Still due from a report that failed: retry without holding up
+            // this response.
+            background(playerId)
         }
     }
     return stars
 }
 
-const retrying = new Set<string>()
-
-/** Whether the hub holds another level than the chips say (a report is due). */
-function starsDue(playerId: string): boolean {
-    try {
-        return dueRow(playerId)
-    } catch {
-        return false
-    }
+/** Report a player's level in the background, one report per player at a time. */
+function background(playerId: string) {
+    if (retrying.has(playerId)) return
+    retrying.add(playerId)
+    void syncStars(playerId).finally(() => retrying.delete(playerId))
 }
 
-function dueRow(playerId: string): boolean {
-    const row = db.select({ reported: players.starsReported, origin: players.origin, chips: casinoProfiles.chips })
-        .from(players)
-        .leftJoin(casinoProfiles, eq(casinoProfiles.playerId, players.id))
-        .where(eq(players.id, playerId))
-        .get()
-    return !!row && row.origin === 'hub' && starLevel(row.chips ?? 0) !== row.reported
+/** The level a report is due at, or null (none due, or the goals could not be read). */
+function dueLevel(playerId: string): number | null {
+    try {
+        return dueStarLevel(playerId)
+    } catch {
+        return null
+    }
 }
 
 /**

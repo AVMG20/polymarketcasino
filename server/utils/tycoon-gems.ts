@@ -19,7 +19,8 @@ import {
 import { findCosmetic } from '../../shared/cosmetics'
 import { cosmeticGemPrice, grantCosmetic } from './cosmetics'
 import { hub, HubError } from './hub'
-import { accrueCage, advanceCasino, finishConstruction, getTycoonState, isHubPlayer, saveCasino } from './tycoon'
+import { syncStars } from './stars'
+import { accrueCage, advanceCasino, finishConstruction, isHubPlayer, readTycoonState, saveCasino } from './tycoon'
 import { spendForRow, STALE_CONVERSION_MS } from './wallet'
 
 /**
@@ -225,6 +226,8 @@ export async function retryStalePurchases(playerId?: string): Promise<number> {
         try {
             await settlePurchase(row)
             settled++
+            // Delivered outside a coin unit (a skip, a cosmetic): report a goal it reached.
+            void syncStars(row.playerId)
         } catch {
             // Hub still down, the hub refused, or a parallel retry won.
         }
@@ -270,5 +273,7 @@ export async function buyWithGems(playerId: string, body: GemBody): Promise<Tyco
         return inserted
     })
     const gems = await settlePurchase(row)
-    return { state: getTycoonState(playerId), coins: null, gems, collected: 0 }
+    // A skip can finish a build and a cosmetic complete the wardrobe: the read reports the star level.
+    const { stars, ...state } = await readTycoonState(playerId)
+    return { state, coins: null, gems, collected: 0, stars: stars ?? null }
 }

@@ -19,6 +19,7 @@ import {
 import { cryptoRng, type Rng } from '../../shared/rng'
 import { CAMPAIGNS, campaignBlocker, progressOf, type TycoonActionResponse } from '../../shared/tycoon'
 import { coinTransaction } from './ledger'
+import { ownStarChange } from './stars'
 import { getTycoonState, peekCasino, type Casino } from './tycoon'
 
 /**
@@ -124,7 +125,7 @@ export function parseMissionBody(body: unknown): MissionKey {
  * of claims pays once.
  */
 export async function claimMission(playerId: string, id: MissionKey, now = Date.now()): Promise<TycoonActionResponse> {
-    const { value } = await coinTransaction((coins) => {
+    const { value, stars } = await coinTransaction((coins) => {
         const day = ensureMissions(coins.tx, playerId, now)
         const mine = and(eq(dailyMissions.playerId, playerId), eq(dailyMissions.day, day))
         const claimed = coins.tx.update(dailyMissions)
@@ -146,6 +147,6 @@ export async function claimMission(playerId: string, id: MissionKey, now = Date.
         }
         const balance = coins.credit({ playerId, amount: claimed.reward, category: 'mission' }).coins
         return { reward: claimed.reward, balance }
-    })
-    return { state: getTycoonState(playerId, now), coins: value.balance, gems: null, collected: 0, reward: value.reward, stars: null }
+    }, playerId)
+    return { state: getTycoonState(playerId, now), coins: value.balance, gems: null, collected: 0, reward: value.reward, stars: ownStarChange(playerId, stars) }
 }

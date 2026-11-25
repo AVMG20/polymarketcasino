@@ -95,7 +95,7 @@ export interface CasinoVisit {
     value: number
     tier: ZoneId
     zones: ZoneId[]
-    /** Built games and their level (1..5). */
+    /** Built games standing on the floor and their level (1..5); put-away ones are private. */
     games: Record<string, number>
     /** Games with the golden skin. */
     golden: string[]

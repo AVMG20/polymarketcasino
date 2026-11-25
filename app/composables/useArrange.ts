@@ -2,7 +2,7 @@ import type { DecorType } from '#shared/decor'
 import type { ArrangeItem } from '~/utils/floor/types'
 
 /**
- * Arrange mode on My Casino's floor (move games, place decorations), the
+ * Arrange mode on My Casino's floor (move and put away games and decorations), the
  * decor shop and the casino level sheet: page-wide switches any panel can
  * flip (a build card with no room for its game offers "Move things", the
  * shop hands over the decoration to place). The page (index.vue) owns what
@@ -21,7 +21,7 @@ export function useArrange() {
     function start() {
         active.value = true
     }
-    /** Carry a decoration to the floor: a new one (dropping it buys it) or one from storage. */
+    /** Carry something to the floor: a new decoration (dropping it buys it), or a game or decoration from storage. */
     function carry(item: ArrangeItem) {
         shopOpen.value = false
         pending.value = item

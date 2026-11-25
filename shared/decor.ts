@@ -156,10 +156,12 @@ export interface BuyDecorBody {
 }
 
 /**
- * POST /api/tycoon/place: move a built game, or place, move or put away a
- * decoration. `store: true` (decorations only) puts it away.
+ * POST /api/tycoon/place: place, move or put away a game or a decoration.
+ * `store: true` puts it away (a game only when built and not under
+ * construction); x and y place it, from the floor or from storage.
  */
 export type PlaceBody =
     | { item: 'game', id: string, x: number, y: number }
+    | { item: 'game', id: string, store: true }
     | { item: 'decor', id: number, x: number, y: number }
     | { item: 'decor', id: number, store: true }

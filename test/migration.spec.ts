@@ -187,3 +187,18 @@ describe('0012_decorations', () => {
         expect(sqlite.query(`select count(*) as n from casino_decor`).get()).toEqual({ n: 4 })
     })
 })
+
+describe('0014_stars_seen', () => {
+    it('counts every level reported before it as seen, so nobody gets a stale celebration', () => {
+        const sqlite = new Database(join(scratch, `${crypto.randomUUID()}.sqlite`), { create: true, strict: true })
+        sqlite.exec('PRAGMA foreign_keys = ON')
+        const db = drizzle({ client: sqlite, schema })
+        migrate(db, { migrationsFolder: before('0014_stars_seen') })
+        sqlite.run(`insert into players (id, name, coins, peak_coins, stars_reported, stars_seq) values ('s0', 'New', 0, 0, 0, 0), ('s4', 'Starred', 0, 0, 4, 1795600000000)`)
+        migrate(db, { migrationsFolder: DRIZZLE })
+        expect(sqlite.query(`select id, stars_seen as seen, stars_unseen_bounty as bounty, stars_pending_seq as pending from players order by id`).all()).toEqual([
+            { id: 's0', seen: 0, bounty: 0, pending: 0 },
+            { id: 's4', seen: 4, bounty: 0, pending: 0 }
+        ])
+    })
+})

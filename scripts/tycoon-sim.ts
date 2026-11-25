@@ -14,7 +14,8 @@
 // sessions constructions finish and the cage fills up to its capacity.
 //
 // After the last build the players keep playing for POST_MAX_DAYS (third
-// argument), so the star table shows when the top stars come. A shadow cage
+// argument), for the chips and campaigns after max. The star tables show the
+// day each casino goal (shared/stars.ts) and each star level came. A shadow cage
 // that never sees a campaign runs next to the real one: the difference at
 // each collect is what the campaigns brought.
 //
@@ -44,8 +45,9 @@
 // Targets (docs/casino-economy.md): the first builds land in seconds in the
 // first session; casual (no gems) maxes in ~4 weeks, regular (converts its
 // gems, buys the builder) in 2-3, whale (buys gems, skips, rushes) in 1-2.
-// Stars: the first in the first days, the middle ones while building, 8-9
-// around max and 10 one to two weeks of play after it.
+// Stars: one per casino goal, in any order: the level goals spread over the
+// climb, the "every game" ones and the specials towards max; the cosmetics
+// goal is the player's own (the sim buys none).
 // The starting 50 gems converted stay under ~10-15% of the catalog, a day's
 // 10 gems ~10-20% of a regular's mid-game daily chips, and a full floor's
 // guest income stays capped.
@@ -54,7 +56,7 @@ import { DECOR, placedSpecials, specialBonus, type DecorType } from '../shared/d
 import { findSpot, furnitureGrants, layoutOf, layoutStateOf, roomCentre } from '../shared/floor/placement'
 import { seededRng, type Rng } from '../shared/rng'
 import { COINS_PER_GEM } from '../shared/economy'
-import { CASINO_STARS, starLevel } from '../shared/stars'
+import { STAR_GOALS, starGoals, type StarGoalKey } from '../shared/stars'
 import { BONUS_HOURS, findMission, MISSIONS, missionReward, pickMissions } from '../shared/missions'
 import {
     activeCampaigns,
@@ -232,8 +234,10 @@ interface Tally {
     chipsByDay: number[]
     /** Per campaign: runs, chips paid, extra coins it brought to the cage. */
     campaignRuns: Record<CampaignId, { runs: number, chips: number, coins: number }>
-    /** First day (fraction) each star level was held at, index = level - 1. */
+    /** First day (fraction) each star level was reached, index = level - 1. */
     starDays: (number | null)[]
+    /** First day (fraction) each casino goal was reached. */
+    goalDays: Partial<Record<StarGoalKey, number>>
     /** Chip balance at the end of each day. */
     chipsEndOfDay: number[]
     /** Guest income (before the cage cap) by hour start and by day. */
@@ -438,7 +442,8 @@ function simulate(profile: Profile): Result {
         buildLog: [],
         chipsByDay: [],
         campaignRuns: Object.fromEntries(CAMPAIGNS.map(c => [c.id, { runs: 0, chips: 0, coins: 0 }])) as Tally['campaignRuns'],
-        starDays: CASINO_STARS.map(() => null),
+        starDays: STAR_GOALS.map(() => null),
+        goalDays: {},
         chipsEndOfDay: [],
         incomeByHour: new Map(),
         incomeByDay: [],
@@ -467,11 +472,16 @@ function simulate(profile: Profile): Result {
         gems -= n
         tally.gemsSpeed += n
     }
-    // The sim's clock, for the day a star was first held.
+    // The sim's clock, for the day a goal was first reached.
     let clock = 0
+    // The goals as the server reads them. The players bet across their games, so a built game
+    // counts as played; they buy no cosmetics, so that goal never comes here.
     const noteStars = () => {
-        const level = starLevel(state.chips)
-        for (let i = 0; i < level; i++) tally.starDays[i] ??= Math.round(clock / DAY * 10) / 10
+        const day = Math.round(clock / DAY * 10) / 10
+        const played = Object.keys(state.games).filter(slug => (state.games[slug] ?? 0) >= 1)
+        const done = starGoals({ casino: state, decor: state.decor ?? [], played, cosmetics: [] }).filter(goal => goal.done)
+        for (const goal of done) tally.goalDays[goal.key] ??= day
+        for (let i = 0; i < done.length; i++) tally.starDays[i] ??= day
     }
     const collect = (day: number) => {
         accrue(state, clock, tally)
@@ -709,18 +719,12 @@ for (const game of TYCOON_GAMES.filter(g => !g.starter)) {
 console.log('Specials bought (day, chips, expected coins/h added):')
 for (const r of results) console.log(`${r.profile.padEnd(9)}${r.tally.specials.map(b => `${b.type} d${b.day} ${fmtShort(b.chips)} +${fmt(b.gain)}/h`).join(' | ') || '-'}`)
 
-console.log(`\nStars (day each level was first held; play goes on ${POST_MAX_DAYS} days after max):`)
-console.log(`${'profile'.padEnd(9)}${CASINO_STARS.map((star, i) => pad(`${i + 1}:${fmtShort(star.threshold)}`, 9)).join('')}${pad('at max', 8)}${pad('max+7', 8)}${pad('max+14', 8)}${pad('max+21', 8)}`)
-for (const r of results) {
-    const t = r.tally
-    const at = (offset: number) => {
-        const max = r.milestones.max
-        const day = max === null || max === undefined ? null : Math.floor(max) + offset
-        const chips = day === null ? undefined : t.chipsEndOfDay[day]
-        return chips === undefined ? '-' : `${starLevel(chips)}`
-    }
-    console.log(`${r.profile.padEnd(9)}${t.starDays.map(d => pad(d ?? '-', 9)).join('')}${pad(at(0), 8)}${pad(at(7), 8)}${pad(at(14), 8)}${pad(at(21), 8)}`)
-}
+console.log(`\nStars: day each casino goal was first reached (a built game counts as played; the sim buys no cosmetics):`)
+console.log(`${'profile'.padEnd(9)}${STAR_GOALS.map(goal => pad(goal.key, 14)).join('')}`)
+for (const r of results) console.log(`${r.profile.padEnd(9)}${STAR_GOALS.map(goal => pad(r.tally.goalDays[goal.key] ?? '-', 14)).join('')}`)
+console.log('Star level (day each level was first reached):')
+console.log(`${'profile'.padEnd(9)}${STAR_GOALS.map((_, i) => pad(i + 1, 6)).join('')}`)
+for (const r of results) console.log(`${r.profile.padEnd(9)}${r.tally.starDays.map(d => pad(d ?? '-', 6)).join('')}`)
 console.log('End-of-day chips (every 3rd day):')
 for (const r of results) {
     console.log(`${r.profile.padEnd(9)}${r.tally.chipsEndOfDay.filter((_, d) => d % 3 === 0).map(c => pad(fmtShort(c), 6)).join('')}`)

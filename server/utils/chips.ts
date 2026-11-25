@@ -11,10 +11,9 @@ import { isCoinAmount, normalizeCoins, toUnits } from '../../shared/money'
  * `players.coins`. The casino profile must exist (server/utils/tycoon.ts
  * creates it).
  *
- * Stars follow the chip balance, so chips move only inside a
- * `coinTransaction` / `commitCoins` unit (pass its `coins.tx`): the unit
- * watches every chip move and reports the star level after commit. A chip
- * move anywhere else throws.
+ * Chips move only inside a `coinTransaction` / `commitCoins` unit (pass its
+ * `coins.tx`): the unit watches every chip move and checks the star level of
+ * every player it touched after commit. A chip move anywhere else throws.
  */
 
 export interface ChipChange {
@@ -41,7 +40,7 @@ export function watchChips<T>(watch: ChipObserver, work: () => T): T {
 }
 
 function observe(playerId: string, after: number, delta: number) {
-    if (!observer) throw new Error('Chips move only inside coinTransaction or commitCoins (stars follow chips)')
+    if (!observer) throw new Error('Chips move only inside coinTransaction or commitCoins (the unit checks stars)')
     observer(playerId, normalizeCoins(after - delta), after)
 }
 

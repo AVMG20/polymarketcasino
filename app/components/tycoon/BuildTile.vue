@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowBigUp, Crown, Gem, HardHat, Lock, Clock, Move } from 'lucide-vue-next'
+import { ArrowBigUp, Crown, Gem, HardHat, Lock, Clock, Move, Package } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
 import type { BuildKind } from '#shared/tycoon'
 
@@ -8,6 +8,7 @@ const props = defineProps<{ kind: BuildKind, id: string, suggested?: boolean }>(
 const emit = defineEmits<{ open: [] }>()
 
 const tycoon = useTycoon()
+const arrange = useArrange()
 const v = computed(() => tycoon.view(props.kind, props.id))
 // The expected model only changes with a new state (a campaign or rush ending re-reads it): read it at the state's clock, not every tick.
 const at = computed(() => tycoon.state.value?.serverNow ?? 0)
@@ -107,6 +108,9 @@ async function tap() {
     </span>
     <button v-else-if="v.noRoom" type="button" class="state-pill mt-1 w-full text-[#ffb35c]" title="No room for it: open a room or move things" @click="emit('open')">
       <Move class="size-3.5 shrink-0" :stroke-width="3" /><span class="text-[12px] leading-none">No room</span>
+    </button>
+    <button v-else-if="v.stored" type="button" class="state-pill mt-1 w-full text-[#ffb35c]" title="In storage: place it on the floor (its seats take guests again, and it can be upgraded)" @click="arrange.carry({ kind: 'game', id })">
+      <Package class="size-3.5 shrink-0" :stroke-width="3" /><span class="text-[12px] leading-none">Place</span>
     </button>
     <TycoonSkipButton v-else-if="v.running" class="mt-1 h-11 w-full rounded-xl px-1 text-[15px]" :left-ms="v.running.leftMs" :target="`${kind}:${id}`" />
     <span v-else-if="v.maxed" class="state-pill mt-1 text-[#ffc93a]"><span class="g-num">MAX</span></span>

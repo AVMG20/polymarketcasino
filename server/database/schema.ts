@@ -56,11 +56,22 @@ export const players = sqliteTable('players', {
     // credit that beats it.
     peakCoins: coins('peak_coins').notNull().default(0),
     // The star level the hub last confirmed, and the `seq` it was reported
-    // with (STAR_SEQ_BASE + a chip ledger id, server/utils/stars.ts; coin
-    // ledger ids before economy v2). Stars follow the chip balance
-    // (casino_profiles.chips): when starLevel(chips) differs, a report is due.
+    // with (a ms timestamp above the one before, server/utils/stars.ts; older
+    // rows hold 1e9 + a chip ledger id, or a coin ledger id). The level is the
+    // casino goals reached (shared/stars.ts): when that differs, a report is due.
     starsReported: integer('stars_reported').notNull().default(0),
     starsSeq: integer('stars_seq').notNull().default(0),
+    // The level the player has been shown (a response handed them its
+    // StarChange). Above it, `stars_reported` is a rise nobody celebrated yet
+    // (the sweep, a visitor's round or a background retry reported it): the
+    // owner's next casino or wallet read delivers it, once. The gems the hub
+    // paid for those unseen levels wait in `stars_unseen_bounty`.
+    starsSeen: integer('stars_seen').notNull().default(0),
+    starsUnseenBounty: integer('stars_unseen_bounty').notNull().default(0),
+    // The report on its way (or lost on the way): a retry of the same level
+    // resends the same seq, as the hub contract asks.
+    starsPendingLevel: integer('stars_pending_level').notNull().default(0),
+    starsPendingSeq: integer('stars_pending_seq').notNull().default(0),
     createdAt: createdAt(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(sql`(unixepoch('subsec') * 1000)`)
 })
@@ -189,7 +200,7 @@ export const tableWagers = sqliteTable(
 /**
  * My Casino: one row per player, created on first use (shared/tycoon.ts).
  * `chips` only moves through server/utils/chips.ts, in the same transaction
- * as its chip_transactions row; the star level follows it. The cage holds
+ * as its chip_transactions row. The cage holds
  * `cage_stored` **coins** (guest income) at `cage_at`; guest income since
  * then is worked out on read. Finished
  * constructions are applied on every read and action (server/utils/tycoon.ts).
@@ -233,10 +244,11 @@ export const casinoProfiles = sqliteTable('casino_profiles', {
     /**
      * Where games were moved or first built: { slug: { x, y } } origin tiles
      * (shared/floor/placement.ts). A built game missing here stands at its
-     * home spot. Written only inside a BEGIN IMMEDIATE transaction that checked
-     * the spot against the rows it read.
+     * home spot; null: the built game is put away (off the floor). Written only
+     * inside a BEGIN IMMEDIATE transaction that checked the spot against the
+     * rows it read.
      */
-    placements: text('placements', { mode: 'json' }).$type<Record<string, { x: number, y: number }>>().notNull().default({}),
+    placements: text('placements', { mode: 'json' }).$type<Record<string, { x: number, y: number } | null>>().notNull().default({}),
     createdAt: createdAt()
 })
 
@@ -293,7 +305,7 @@ export const casinoConstructions = sqliteTable(
  * The chip ledger: one row per chip change. `reason` says what moved them:
  * 'bet:dice', 'win:dice', 'refund:blackjack', 'build:zone:main',
  * 'campaign:flyers' (and from before economy v2: 'housecut:dice', 'cage',
- * 'gems:chips'). Its id (plus an offset) is the `seq` star reports use.
+ * 'gems:chips').
  */
 export const chipTransactions = sqliteTable(
     'chip_transactions',
@@ -369,6 +381,8 @@ export const stepRounds = sqliteTable(
         // Moves made so far: each move bumps it, and its update is guarded by the old value.
         step: integer('step').notNull().default(0),
         payout: coins('payout').notNull().default(0),
+        // The casino the round was started in when visiting (its owner gets the rakeback at settle), else null.
+        host: text('host'),
         createdAt: createdAt(),
         updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull().default(sql`(unixepoch('subsec') * 1000)`),
         settledAt: integer('settled_at', { mode: 'timestamp_ms' })

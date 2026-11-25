@@ -9,9 +9,10 @@ slug `casino`, name "Polynux Casino", playPath `/`, visibility `public`. All slo
 income), daily mission rewards and gems converted at the hub. Coins can only be bet. **Every win pays chips**: a stake is paid from
 coins first, then chips for whatever coins don't cover, and the whole payout (stake included) comes back as
 chips; a loss is gone. Chips build the casino (My Casino, below) and can be bet again; they never turn back
-into coins. The star level follows the chip balance. Chips come only from round payouts and every game's
-RTP is below 1, so chips made ≤ coins claimed × RTP in expectation; coins come only from the
-capped cage, the capped daily missions and gem converts. Nothing else mints either currency.
+into coins. The star level counts the casino goals reached (below). Chips come only from round payouts and the 1%
+rakeback on settled stakes (below), so chips made ≈ coins claimed × (RTP + 1%) in expectation (a little over
+1 for a few games at home, which is fine: chips never turn into coins); coins come only from the capped cage,
+the capped daily missions and gem converts. Nothing else mints either currency.
 
 ## Coins
 
@@ -74,47 +75,55 @@ capped cage, the capped daily missions and gem converts. Nothing else mints eith
 
 ## Stars (a level the casino sets at the hub)
 
-The casino's stars are a **level from 0 to 10 that follows the current chip balance** (My Casino chips): the
-number of thresholds at or below `casino_profiles.chips`. Spend or lose the chips and the stars go with
-them. Coins never count.
+The casino's stars are a **level from 0 to 10: the number of casino goals reached**, in any order. Every
+goal is something built, bought or played, so the level never goes down. Coins and chips never count.
 
-| # | key | name | hold |
-|---|---|---|---|
-| 1 | `hold-1k` | Pocket change | 1,000 chips |
-| 2 | `hold-2500` | Fat wallet | 2,500 |
-| 3 | `hold-5k` | Chip stack | 5,000 |
-| 4 | `hold-10k` | High roller | 10,000 |
-| 5 | `hold-20k` | Whale watch | 20,000 |
-| 6 | `hold-40k` | Velvet rope | 40,000 |
-| 7 | `hold-75k` | Penthouse | 75,000 |
-| 8 | `hold-120k` | House money | 120,000 |
-| 9 | `hold-300k` | Casino royalty | 300,000 |
-| 10 | `hold-1m` | First million | 1,000,000 |
+| goal | key | reached when |
+|---|---|---|
+| Open for business | `level-5` | casino level 5 |
+| Neighbourhood joint | `level-10` | casino level 10 |
+| Going places | `level-15` | casino level 15 |
+| Big league | `level-20` | casino level 20 |
+| Grand casino | `level-25` | casino level 25 |
+| Full floor | `build-all` | every game in `TYCOON_GAMES` built |
+| Tried them all | `play-all` | a settled round of every game (`game_rounds`: solo, multi-step and live tables, at home or visiting) |
+| Collector | `all-specials` | every special decoration owned (placed or put away) |
+| Top of the line | `max-all` | every game at level 5 |
+| Best dressed | `all-cosmetics` | every cosmetic sold for chips owned (`CHIP_COSMETICS`: 11 items; free and gem-only ones never count, since a star level is never sold for gems) |
 
-The thresholds are sized on the simulation's chip balances (`bun scripts/tycoon-sim.ts`, which plays on
-for three weeks after max): stars 1-3 come in the first session, 4-6 in the first week while saving
-between builds (the Lounge, the Crew), 7 while saving for the High Limit Room (day ~11 regular, ~16-21
-casual; 24-seed means 10.5 and 17.4), 8 while saving for the Penthouse (it costs 132,000: day ~22 casual, ~15 regular;
-means 24.1 and 15.6), 9 around
-max (a maxed casino wins 100-200k chips a day) and 10 about a week of play after max (casual: max + ~8-10
-days, regular + ~6-7, whale + ~4-5). A regular who converts the 50 starting gems holds ~48,000 chips for a
-moment on day 0 (star 6) and spends them on builds. Star 8 was 150k until the polish pass: nothing in the
-catalog costs that much, so it only came at max and left casual players 13 days without a star (day 15 to
-28); at 120k it lands a week earlier. The thresholds changed with the catalog (they were 10k … 100M from
-the coin era); the hub takes the new keys from the next manifest and retires the old ones.
+The hub sees a level track (`STAR_LEVELS`, keys `goals-1` … `goals-10`, which retired the old `hold-*` chip
+keys): entry n is a title (Opening night, Rising star, Local favourite, Talk of the town, High stakes, Big shot,
+Headliner, High society, Casino mogul, Casino legend) described as "Earn n of the 10 casino stars"; the
+first also lists the goals. The Stars sheet in My Casino (the ★ button) shows every goal with its progress.
 
-- Chips only move inside a `coinTransaction` / `commitCoins` unit (`server/utils/chips.ts` throws
-  otherwise), which watches every chip move. After every committed unit whose chip level moved:
-  `PUT /api/v1/stars { playerId, game: 'casino', stars, seq }` with `seq = 1,000,000,000 + the player's
-  latest chip_transactions.id` (`STAR_SEQ_BASE`). Before v2 the seq was the coin ledger id; the hub only
-  applies a seq above the stored one, so the offset puts every chip-based seq above every coin id ever
-  sent, and ids only grow, so a stale set that arrives late is dropped. `players.stars_reported` /
-  `stars_seq` hold what the hub confirmed; a level that differs is retried on the next coin or chip change,
-  the next wallet read and the ten-minute sweep. No call when the level did not change.
-- Dev-login players never exist at the hub: no star reports, no gems, no convert.
+- The level is worked out from the database (`server/utils/stars.ts`): the build (a construction that is
+  ready counts before a read applies it), `casino_decor` specials, the distinct games in `game_rounds` (an
+  index skip scan) and `casino_cosmetics`. About 0.1 ms; a solo round takes ~0.5 ms.
+- After every `coinTransaction` / `commitCoins` unit, every player it touched (a coin or chip move, a stake,
+  or `checkStars`: the owner's casino read, which applies finished builds) has the level worked out; when it
+  differs from `players.stars_reported` it is reported before the response (rounds, builds, decorations,
+  cosmetics, collects and mission claims return `stars`, so the client celebrates the goal just earned); other
+  players the unit touched (a visit's host) are reported in the background. A level whose report failed is
+  retried in the background on later units, on wallet reads and by the ten-minute sweep. A gem purchase
+  reads the casino after delivery (a skip can finish a build, a cosmetic complete the set).
+- `PUT /api/v1/stars { playerId, game: 'casino', stars, seq }` with `seq = max(now in ms, stars_seq + 1)`
+  (a retry of the same level resends the seq it was first sent with, `stars_pending_level/seq`):
+  always above the stored one (old seqs were 1e9 + a chip ledger id or a coin ledger id, far below a ms
+  timestamp), so the hub drops a stale set that arrives late. A player's reports run one at a time, and the
+  update of `stars_reported` / `stars_seq` is guarded on `stars_seq < seq`. Levels reported from the old chip
+  balance are corrected (down too) on the first check.
+- Celebrations: `players.stars_seen` is the level the player was shown. Every response that carries a star
+  change claims it with a guarded update (`ownStarChange`: every rise above `stars_seen`, with the gems the hub
+  paid for it in `stars_unseen_bounty`), so each rise is celebrated exactly once. A rise reported without the
+  player's own request (the sweep, a build that became ready, a visitor's round in their casino, a background
+  retry) is delivered by their next casino read (`GET /api/tycoon`) or wallet read. A visitor's round reports the
+  host's level in the background: it never waits on the host's hub call. A drop is never celebrated (the seen
+  level follows it down). Migration 0014 set `stars_seen = stars_reported` for everyone.
+- Dev-login players never exist at the hub: no star reports, no gems, no convert (their goals still show).
 - `players.peak_coins` is kept as a stat ("best ever") only.
 
-Thresholds live in `shared/stars.ts`; balance scripts in `scripts/` import them.
+Goals and titles live in `shared/stars.ts`; `bun scripts/tycoon-sim.ts` prints the day each goal and level
+comes.
 
 ## My Casino
 
@@ -125,14 +134,13 @@ one purpose: Cashier Cage (storage, 5 levels), Marketing (more guests, 5), Hospi
 the richer-guests specials (decorations, below). The House Cut upgrade left with v2 and its levels are ignored;
 the Decor upgrade left too and was refunded (below). Rules and numbers
 live in `shared/tycoon.ts` (chip prices and cage sizes are written small and scaled by `CHIP_SCALE` 5
-and `GUEST_SCALE` 30, which size the economy against the fixed convert rate and star
-thresholds) and the guests in `shared/visitors.ts`; `bun scripts/tycoon-sim.ts [days] [seed] [days after max]`
+and `GUEST_SCALE` 30, which size the economy against the fixed convert rate) and the guests in `shared/visitors.ts`; `bun scripts/tycoon-sim.ts [days] [seed] [days after max]`
 plays it day by day for three kinds of player (pace, stars, what each campaign netted, the house rules by stage,
 the floor's luck) and is how the numbers were tuned.
 
 - **Chips** are stored like coins (units of 1/10,000) in `casino_profiles.chips`; every change writes a
   `chip_transactions` row (reason `bet:<slug>`, `win:<slug>`, `refund:<slug>`, `build:<kind>:<id>`,
-  `campaign:<id>`, `decor:<type>`) through `server/utils/chips.ts`, inside a coin unit (so the stars follow). A debit is
+  `campaign:<id>`, `decor:<type>`) through `server/utils/chips.ts`, inside a coin unit (which checks the star level after). A debit is
   guarded (`chips >= amount`).
 - **A game must be built to play it.** A round of an unbuilt game is a 403 (`Build <name> in your casino
   first`). Live tables stay shared: anyone can watch, sitting down needs the game built.
@@ -181,7 +189,12 @@ Every game has a home spot (its old fixed plot, `shared/floor/layout.ts`). When 
 server stores its spot: home when that lies in an owned room and is free, else the free spot nearest to home
 in an owned room (deterministic; `buildSpot`, also the floor's "build here" hint). A built game with no stored
 spot stands at home. Built games, games under construction (the construction keeps running) and decorations
-move to any owned room (`POST /api/tycoon/place`, free); only decorations can be put away. Nothing rotates,
+move to any owned room (`POST /api/tycoon/place`, free). Decorations and built games not under construction
+can be put away and placed again (free). A put-away game stays owned (its level, the casino value and level,
+the goals; the owner can still play it) but leaves the floor: its seats, crowd and top-level prestige leave
+the visitor model (the cage accrues up to that moment first), visitors can't play it there, and it can't be
+upgraded until placed (`Place it on the floor first`). Campaign, rush and mission prices count it as placed,
+so putting games away never makes them cheaper. Nothing rotates,
 machines face +gy, the cage and the builder's desk stay put. One pure check, `placementProblem`, serves the server, the floor's ghost
 and the floor socket's walk grid. A spot is fine when:
 
@@ -197,7 +210,8 @@ and the floor socket's walk grid. A spot is fine when:
   block nothing. Every default layout (rooms in order, games at home, all furniture of its rooms) starts
   fully reachable (tested).
 
-Unbuilt games take no floor. `casino_profiles.placements` holds the stored spots; the check runs inside the
+Unbuilt and put-away games take no floor. `casino_profiles.placements` holds the stored spots (null: put
+away); the check runs inside the
 `BEGIN IMMEDIATE` transaction against the rows read there, so of two parallel moves onto one tile only the
 first lands.
 
@@ -256,17 +270,17 @@ twice. Chandeliers stay fixed overhead and follow the room look.
 the last catalog prices (750 to 18,500 a level, 101,350 for all twelve; `DECOR_REFUND_CHIPS`, `decorRefund`),
 plus any Decor level still under construction, as one `refund:decor` chip credit. It happens on the owner's
 first read (`GET /api/tycoon`, and every action's response, a `commitCoins` unit): that read carries
-`decorRefund` (the chips) so the page can say why income dipped until specials are placed, and GET carries the
-star change it caused (`stars`). A gem skip can't finish a Decor level (the skip is handed back). The guards, in
+`decorRefund` (the chips) so the page can say why income dipped until specials are placed, and GET carries a
+star change the read reported (`stars`). A gem skip can't finish a Decor level (the skip is handed back). The guards, in
 the same BEGIN IMMEDIATE transaction: a conditional update that drops `decor` from `casino_profiles.upgrades`
 only while it still holds the level read, and the delete of the Decor construction rows (… RETURNING). Until
 then other writes keep the old level on the row.
 
 Errors: `POST /api/tycoon/decor` 400 for a bad body or spot (the message is the problem) and `Not enough
 chips`, 403 `Reach casino level N`, 409 `You already own the <name>`. `POST /api/tycoon/place` 400 for a bad
-body or spot (`Only decorations can be put away` for a game), 404 `You have not built that game` / `That
-decoration is not yours`. Owner reads (`GET /api/tycoon`) carry `placements` (every game on the floor, home spots resolved) and
-`decor` (all owned); visits carry `placements`, `decorations` (placed only) and `building` (games under their
+body or spot (`A game under construction can't be put away`), 404 `You have not built that game` / `That
+decoration is not yours`. Owner reads (`GET /api/tycoon`) carry `placements` (every game on the floor, home spots resolved),
+`storedGames` (put away) and `decor` (all owned); visits carry `games` and `placements` (on the floor only), `decorations` (placed only) and `building` (games under their
 first construction, which already take their tiles). The floor socket walks the same layout and reads it
 again as soon as something is built, placed or bought (`onFloorChange`).
 
@@ -410,13 +424,38 @@ against a 1.46 million catalog) would leave the chip economy.
 
 ### Chips in and out
 
-- In: round payouts only (solo and live, every win, stake included).
+- In: round payouts (solo and live, every win, stake included) and the rakeback on settled stakes.
 - Out: building (about 1,450,000 chips for everything; 376 build hours), ad campaigns, decorations (the
   twelve specials 162,000 together), and losing bets.
   Builds cost chips only (`Cost.coins` is always 0) and take time: seconds for the first ones (Limbo 10 s,
   Wheel 45 s, the starters' level 2 two minutes), 25 minutes for the Main Floor, level-ups from minutes early
   to hours late (level 4 at least an hour, level 5 at least three; at most 9 hours per construction). A
   construction applies when its timer runs out, on the next read or action.
+
+### Rakeback (`shared/rakeback.ts`, `server/utils/rakeback.ts`)
+
+Every **settled** stake pays `RAKEBACK` = 1% of itself back in **chips** (`rakebackOf`: `payFor(stake, 0.01)`,
+rounded down to 0.0001; a stake that rounds to 0 pays nothing). Who gets it:
+
+- In your own casino (no `host`, or the host is you): you, chip reason `rakeback:<slug>`.
+- In someone else's casino (a solo round or step round with a `host` that has the game built, a seat taken as
+  a visitor): **the host**, chip reason `host:<slug>`; you get none. Any casino counts, there is no friends
+  list. A host whose casino is gone by settle time falls back to you (never an error at settle).
+
+It is paid in the transaction that settles the stake, through `coins.creditChips` (`payRakeback`): a solo round
+with its stake and payout, a step round (Gem Dig, Card Climb) when it settles (cash-out, bust or the abandoned
+sweep's cash-out, never at start; the host is stored on `step_rounds.host` when the round starts), a live-table
+hand in `settleWagers` on the settled wagers (the seat's host). Refunds pay none: a refunded step round, an
+aborted or swept table stake, and a partial claim that turns into a refund (rakeback on returned money would be
+free chips). The response's chip balance includes it (`rakeback` on solo and step responses, the settled
+table result).
+
+Effective return: every game's RTP + 1% in chips at home (Pegfall 98-98.8%, blackjack 100.6% with basic
+strategy, so a few games are slightly profitable: fine, it's a game; chips never become coins), and the plain
+RTP when playing in someone else's casino, whose owner gets the 1%. The RTP badges and the `<game>-rtp.ts`
+scripts show the game's own RTP; the rules dialog adds "plus 1% of every bet back in chips". The welcome-back
+card shows the host what visitors' bets paid while away (`welcome.visitorChips`, the `host:%` chip rows since
+the last visit); the game overlay's footer says where your 1% goes.
 
 ### Builders
 
@@ -483,8 +522,8 @@ as "turned away".
 ### Gem items (`POST /api/tycoon/gems`)
 
 Gems are scarce (10 a day at the hub), so they buy speed, priced on the dear side of the platform guide.
-Gems never buy chips: chips set the star level, and the platform contract forbids selling star levels for
-gems (the old chip pack is gone; a pack still pending from before v2 is refunded).
+Gems never buy chips: chips are only won (the bound above), and the platform contract forbids selling star
+levels for gems (the old chip pack is gone; a pack still pending from before v2 is refunded).
 
 | item | gems | what |
 |---|---|---|
@@ -516,12 +555,11 @@ value. The avatar's own look is free: hair style, hair colour and skin tone (eac
 what the player's name gives). A few hats, outfits and accessories are free (the defaults among them). The
 others cost gems (5-50; premium Crown 90, Gold Suit 100, Diamond Suit 200) or, the mid and late game
 pieces, chips: Fedora 40,000, Velvet Blazer 120,000, Ice Chain 250,000, Royal Robe 600,000 and Golden
-Laurel 750,000 (a maxed casino wins 100-200k chips a day, so the dearest are days of winnings and a star
-level or two given up: an end-game sink). Zone skins: every room's own colours are free on any room
+Laurel 750,000 (a maxed casino wins 100-200k chips a day, so the dearest are days of winnings: an end-game sink). Zone skins: every room's own colours are free on any room
 (`BASIC_SKINS`: Oak Floor, Ruby, Emerald, Violet and Sapphire Carpet, Ivory Marble); Art Deco, Tropical and Wild West cost chips (2,400 /
 4,800 / 7,200), Ice Palace 35,000 (mid game), Vegas Gold 150,000 and Cosmic 500,000 (late and end game);
-Royal, Midnight and Jade Temple gems (40 / 60 / 150). A chip buy is a chip sink, so it can lower the star
-level. Bought once, owned for good; equipping is free (a skin goes on any owned zone). Chip buys are one
+Royal, Midnight and Jade Temple gems (40 / 60 / 150). A chip buy is a chip sink. Owning every cosmetic sold
+for chips is a star goal (`all-cosmetics`; gem-only ones never count). Bought once, owned for good; equipping is free (a skin goes on any owned zone). Chip buys are one
 `coinTransaction`: the `casino_cosmetics` insert (primary key = the double-buy guard) and the chip debit;
 gem buys use the gem flow
 (item `cosmetic`). Visitors see the owner's look and zone skins; nobody sees what anyone owns.
@@ -551,10 +589,6 @@ now, without the Decor upgrade:
 | | casual | regular | whale |
 |---|---|---|---|
 | days to max | 26.3 → 26.9 → 26.8 | 18.6 → 18.6 → 19.0 | 12.7 → 12.9 → 13.0 |
-| star 7 | 18.3 → 18.1 → 17.4 | 10.9 → 10.6 → 10.5 | 7.1 → 6.9 → 6.8 |
-| star 8 | 23.0 → 23.1 → 24.1 | 16.4 → 16.1 → 15.6 | 11.6 → 11.0 → 11.1 |
-| star 9 | - → 28.6 → 28.5 | - → 19.8 → 20.0 | - → 13.3 → 13.5 |
-| star 10 | - → 34.4 → 34.3 | - → 23.6 → 24.0 | - → 15.7 → 16.0 |
 
 The casino level reaches 5 in the first session, 10-12 around the Table Pit, 16-18 around the Lounge, 25-26
 around the High Limit Room and 30 at max. Games of a later room may unlock a little before their room opens and
@@ -564,14 +598,15 @@ get built in an earlier one. Specials bought on seed 7 (casual / regular / whale
 9.4, the Grand Fountain 22.9 / 15.5 / 11.4, and of the spend ones the Golden Statue, the Jackpot Sign and the
 Grand Piano (18.5 / 12.5 / 9.5); nobody buys the Champagne Bar before max (it pays back in 420 h).
 
-Day each star was first held (seed 7; 10 comes 3-8 days after max; star 8 stays at 120,000). Star days
-move a lot from seed to seed (casual star 7 lands between day 14 and 22): read the 24-seed means above.
+Day each star goal came (seed 7; the sim counts a built game as played and buys no cosmetics, and nobody
+buys the Champagne Bar, so 8 is its top level). The level goals spread over the climb (a star every day or
+two early, every few days late); building, playing and maxing every game come with max:
 
-| profile | 1-3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
-|---|---|---|---|---|---|---|---|---|
-| casual | 0.3 | 1.9 | 4.3 | 8.9 | 15.3 | 26.9 | 28.3 | 34.3 |
-| regular | 0.3 | 0.3 | 0.3 | 0.3 | 10.9 | 18.3 | 19.8 | 23.5 |
-| whale | 0.3 | 1.3 | 1.3 | 1.3 | 9.8 | 12.8 | 13.6 | 16.0 |
+| profile | level 5 | 10 | 15 | 20 | 25 | every game built / played | every game maxed |
+|---|---|---|---|---|---|---|---|
+| casual | 0.3 | 1.9 | 4.5 | 9.3 | 16.9 | 25.5 | 27.3 |
+| regular | 0.4 | 0.8 | 1.0 | 5.8 | 11.3 | 16.9 | 18.8 |
+| whale | 0.3 | 0.6 | 1.5 | 3.3 | 6.6 | 11.4 | 12.7 |
 
 Payback of single steps (chips ÷ expected coins an hour gained, at the stage they are bought; sim "Payback"):
 Limbo 11 h, Roulette 17 h; Hospitality 81-279 h; Marketing 176-340 h; game levels 3→4 and 4→5 320-672 h

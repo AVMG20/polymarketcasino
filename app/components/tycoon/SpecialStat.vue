@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { Gem, TrendingUp } from 'lucide-vue-next'
 import { formatCoins } from '#shared/money'
-import { lockedTiersHint, tierList, type SpecialLift } from '~/utils/tycoon-art'
+import { GEM_COLOR as GEM, lockedTiersHint, tierList, type SpecialLift } from '~/utils/tycoon-art'
 
 /**
- * A special's effect as compact stat chips, the same everywhere: rarity (a gem
- * in each richer guest tier's colour, "+12% Regulars", "+25% High Rollers",
- * with a muted line for the tiers whose room isn't open yet), spend (a rising
- * arrow, "+3% spend"), and the coins an hour it adds when that is at least 1.
+ * A special's effect as compact stat chips, the same everywhere: rarity (a gem,
+ * "+12% richer guests", with a muted line under it saying what that does per
+ * richer tier now, "Regulars +10%", and which tiers come later), spend (a
+ * rising arrow, "+3% spend"), and the coins an hour it adds when that is at
+ * least 1.
  */
 const props = defineProps<{
     lifts: (SpecialLift | null | undefined)[]
@@ -18,12 +19,8 @@ const props = defineProps<{
 }>()
 
 const chips = computed(() => props.lifts.filter((l): l is SpecialLift => !!l))
-/** Richer tiers still locked, one line under the chips. */
-const hints = computed(() => chips.value.flatMap((l) => {
-    const text = lockedTiersHint(l)
-    // Nothing richer comes yet: the gem goes on the hint, it is the whole stat.
-    return text && l.kind === 'rarity' ? [{ text, gem: l.locked[0]!.color, alone: !l.rises.length }] : []
-}))
+/** Per rarity lift, one muted line under the chips: what it does for each richer tier now, and the tiers still locked. */
+const details = computed(() => chips.value.flatMap(l => (l.kind === 'rarity' ? [{ rises: l.rises, later: lockedTiersHint(l) }] : [])))
 const pct = (share: number) => {
     const n = Math.round(share * 100)
     return n < 1 && share > 0 ? '<1%' : `${n}%`
@@ -35,14 +32,12 @@ const pct = (share: number) => {
     <template v-for="(l, i) in chips" :key="i">
       <template v-if="l.kind === 'rarity'">
         <span
-          v-for="r in l.rises"
-          :key="r.tier.id"
           class="chip"
-          :title="`Rarity: more of every richer guest type (${tierList([...l.rises.map(x => x.tier), ...l.locked])}). ${pct(r.rise)} more ${tierPlural(r.tier.id, 2)} come in.`"
+          :title="`Richer guests: more of every guest type above Tourists (${tierList([...l.rises.map(x => x.tier), ...l.locked])})`"
         >
-          <Gem class="size-3.5 shrink-0" :style="{ color: r.tier.color }" :stroke-width="2.75" />
-          <span class="g-num" :style="{ color: r.tier.color }">+{{ pct(r.rise) }}</span>
-          <span class="truncate">{{ tierPlural(r.tier.id, 2) }}</span>
+          <Gem class="size-3.5 shrink-0" :style="{ color: GEM }" :stroke-width="2.75" />
+          <span class="g-num" :style="{ color: GEM }">+{{ pct(l.bonus) }}</span>
+          <span class="truncate">richer guests</span>
         </span>
       </template>
       <span v-else class="chip" :title="`Every guest spends ${pct(l.share)} more`">
@@ -56,8 +51,8 @@ const pct = (share: number) => {
       <span class="g-num">+{{ formatCoins(gain) }}/h</span>
       <span v-if="stored" class="font-normal">placed</span>
     </span>
-    <span v-for="h in hints" :key="h.text" class="hint" title="Rarity: more of every richer guest type, once it can come">
-      <Gem v-if="h.alone" class="mr-0.5 inline size-3.5 align-[-2px]" :style="{ color: h.gem }" :stroke-width="2.75" />{{ h.text }}
+    <span v-for="(d, i) in details" :key="`d${i}`" class="hint" title="What that does for each richer guest type">
+      <template v-for="(r, j) in d.rises" :key="r.tier.id"><template v-if="j"> · </template>{{ tierPlural(r.tier.id, 2) }} <span class="g-num" :style="{ color: r.tier.color }">+{{ pct(r.rise) }}</span></template><template v-if="d.rises.length && d.later"> now · </template>{{ d.later ? (d.rises.length ? d.later.replace(/^more /, '') : d.later) : '' }}
     </span>
   </span>
 </template>

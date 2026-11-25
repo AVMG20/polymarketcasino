@@ -126,8 +126,11 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
 - **Placement** (`shared/floor/placement.ts`): a game stands at its stored spot
   (`casino_profiles.placements`) or its home spot; a new game's spot is stored when its first build starts
   (`buildSpot`: home, else the nearest free spot in an owned room; none = the build is refused). Games (built
-  or under construction) and decorations move to any owned room (`POST /api/tycoon/place`; only decorations
-  are put away); `placementProblem` is the one spot
+  or under construction) and decorations move to any owned room (`POST /api/tycoon/place`); decorations and
+  built games not under construction can be put away (a game: `placements[slug] = null`, `storedGames`). A
+  put-away game stays owned (level, value, goals; the owner still plays it) but is off the floor: no seats in
+  the visitor model (`floorGames`), no visitors playing it (`hostHasGame`), no upgrade until placed; prices
+  read every built game as if placed (`games`, never `floorGames`). `placementProblem` is the one spot
   check (server, floor ghost, walk grid). Validate inside the `BEGIN IMMEDIATE` transaction against the rows
   read in it. Where a game stands never changes income.
 - **Decorations** (`shared/decor.ts`, `casino_decor`): plain ones (no stats, unlimited) and specials (one
@@ -147,13 +150,17 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
 - Economy v2, "claim coins, win chips": coins come only from the cashier cage (guest income,
   **coins**, collected at the cage) and gem converts; every payout is **chips** (solo and live). Chips build
   (zones, games, levels, upgrades, ad campaigns) and can be bet; they never turn back into coins. Gems never
-  buy chips (chips set the star level).
+  buy chips.
 - Every stake is paid coins first, then chips for the rest (`splitStake` in `shared/tycoon.ts`;
   `coins.stake(...)` on the server, two guarded debits). There is no currency choice: the play endpoint
   ignores a `funding` field. `game_rounds.stake_chips` / `table_wagers.amount_chips` hold the chip part.
+- Rakeback (`shared/rakeback.ts`): every **settled** stake pays 1% (`rakebackOf`, rounded down) in chips via
+  `payRakeback` (`server/utils/rakeback.ts`) in the unit that settles it (solo round, step-round settle, table
+  `settleWagers`): to the player, or to the host when played in someone else's casino (round/seat `host`,
+  `step_rounds.host`; a host without a casino falls back to the player). Never on refunds.
 - Chips move only through `creditChips` / `debitChips` (`server/utils/chips.ts`), and only inside a
   `coinTransaction` / `commitCoins` unit (`coins.creditChips`, `coins.debitChips`, or the raw functions on
-  `coins.tx`): the unit watches chip moves to report stars, and a chip move outside one throws. Each
+  `coins.tx`): the unit watches chip moves to check stars, and a chip move outside one throws. Each
   writes a `chip_transactions` row. Never write `casino_profiles.chips` elsewhere.
 - The profile is created lazily (insert … on conflict do nothing). Every read and action starts with
   `advanceCasino(tx, …)`: it deletes finished constructions (`… RETURNING` is the guard) and applies
@@ -167,7 +174,7 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
   `runFloor` is reproducible and additive. The seed is the player id salted with a server-only secret
   (`luckSeed`, `PNX_LUCK_SALT`): never send it to the client. Prices, rewards and previews (`campaignGain`) read
   `expectedPerHour` / the full floor, never a lucky tick. Anything that changes the rate (a build finishing, a
-  rush, a campaign, a house rule, a special placed or put away) must `accrueCage` up to that moment first; `runFloor` splits at rush and
+  rush, a campaign, a house rule, a special or a game placed or put away) must `accrueCage` up to that moment first; `runFloor` splits at rush and
   campaign ends itself. Persisted accruals write `casino_history` (hour by hour) when the casino is saved
   (`flushHistory`).
 - An idle floor is never full; each guests ad adds its own share of the seats (several kinds run at once,
@@ -182,7 +189,7 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
   wealth ad the casino can run, every special it owns placed, for its four hours, × 1.25 at the convert rate), never from the occupancy,
   rules or ads at purchase: a rush must never be a cheaper way to coins than converting (tested).
 - Tune numbers in `shared/tycoon.ts` (`CHIP_SCALE`, `GUEST_SCALE`, the catalog, campaign `costHours`),
-  `shared/visitors.ts` (tier spends, `VISITOR_MODEL`), `shared/decor.ts` (specials), `shared/casino-level.ts` (levels) and the star thresholds in `shared/stars.ts` with
+  `shared/visitors.ts` (tier spends, `VISITOR_MODEL`), `shared/decor.ts` (specials), `shared/casino-level.ts` (levels) with
   `bun scripts/tycoon-sim.ts [days] [seed] [days after max]` (pace, stars, campaign net, rules by stage, luck)
   and update the tables in the economy doc.
 
@@ -200,16 +207,17 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
 - Bets are 10 to 1,000,000 with at most four decimals (live tables: their table-chip minimum), paid coins
   first, then chips; payouts are chips.
 - **Every coin change goes through `coinTransaction` in `server/utils/ledger.ts`**: one `BEGIN
-  IMMEDIATE` transaction whose body is synchronous, then a star-level report for every player whose
-  chip level moved (`commitCoins` is the same unit with the star report returned as a promise; the live
-  tables use it). Chips move in the same unit. Never write `players.coins` anywhere else, and never `await` inside the work function.
+  IMMEDIATE` transaction whose body is synchronous, then a star-level check (and report when it changed) for
+  every player the unit touched (`commitCoins` is the same unit with the star report returned as a promise;
+  the live tables use it). Chips move in the same unit. Never write `players.coins` anywhere else, and never `await` inside the work function.
   Other writes that belong to the same unit go through `coins.tx`.
 - Coins never become gems. Only the hub creates gems; the casino only spends them (convert) at
   1 gem = 1,000 coins.
 - Ledger category = the game's plain lowercase name (`'dice'`, `'spinata'`, `'convert'`, `'cage'` (old rows: `'allowance'`),
   `'cage'`); the live tables use their slug (`'blackjack'`, `'baccarat'`, `'casino-holdem'`,
   `'three-card-poker'`). Returned money passes `{ refund: true }`. Chip reasons: `bet:<slug>`,
-  `win:<slug>`, `refund:<slug>`, `build:<kind>:<id>`, `campaign:<id>`, `decor:<type>`.
+  `win:<slug>`, `refund:<slug>`, `rakeback:<slug>` (your own 1%), `host:<slug>` (a visitor's 1% to the
+  host), `build:<kind>:<id>`, `campaign:<id>`, `decor:<type>`.
 
 ## Concurrency (SQLite, one writer)
 
@@ -232,14 +240,28 @@ Assume every value-changing endpoint gets a burst of parallel requests.
 
 ## Stars
 
-A level 0-10 from the **current chip balance** (`shared/stars.ts`, 1k to 1M chips; coins never count), set at the hub
-with `PUT /api/v1/stars` and `seq = STAR_SEQ_BASE (1e9) + the latest chip_transactions id` (the offset
-keeps every chip seq above the coin ledger ids sent before economy v2). It goes down as well as up.
-`players.stars_reported/stars_seq` hold what the hub confirmed. A chip change that moves the level reports
-it before the response (so the client can celebrate it); a level still due from a failed report retries
-in the background on the next coin or chip change, and on the next wallet read and the ten-minute sweep.
-Dev-login players never touch the hub. Because `seq` is a ledger id, a casino database that starts over
-behind a hub that kept its data reports `applied: false` until the new ids pass the old ones.
+A level 0-10: the number of **casino goals** reached, in any order (`shared/stars.ts` `STAR_GOALS`: casino
+level 5/10/15/20/25, every game built, played, at max level, every special and every cosmetic sold for chips owned (never gem-only ones);
+coins and chips never count). It never goes down. The hub sees a level track (`STAR_LEVELS`, `goals-<n>`
+titles). `server/utils/stars.ts` works it out from the database (`starView`: the build with ready
+constructions, specials, distinct `game_rounds` games by index skip scan, `casino_cosmetics`) and sets it with
+`PUT /api/v1/stars`, `seq = max(now in ms, stars_seq + 1)` (a retry of the same level resends its seq:
+`stars_pending_level/seq`); reports of one player run one at a time and the `stars_reported/stars_seq` update is
+guarded on `stars_seq < seq`. After every coin unit, each touched player
+(coin/chip move, stake, `coins.checkStars`: the owner's casino read, which finishes builds) whose level
+differs from `stars_reported` is reported before the response (so the client celebrates the goal); a level
+still due from a failed report retries in the background on later units, wallet reads and the ten-minute
+sweep. Pass the request's player as `own` (`coinTransaction(work, playerId)`): other touched players (a visit's
+host) are reported in the background, never holding up the response. A path that can reach a goal outside a
+coin unit must check too (gem purchases read the casino after delivery). Dev-login players never touch the hub.
+
+**Celebrations: the seen level.** A report never hands its change to anyone; `players.stars_seen` is the level
+the player was shown. A response gives its player `ownStarChange(playerId, stars)`: it claims every rise above
+`stars_seen` (guarded update, with the gems in `stars_unseen_bounty`), so exactly one response carries each rise,
+and a rise reported in the background (sweep, visitor's round, retry, a build that became ready) reaches the
+owner's next casino or wallet read. Never send a raw report change to a client; a retry path that discards its
+result must not call `ownStarChange` (it would swallow the celebration). Live tables hand it over only while
+the player has a socket there. A drop is never celebrated: the seen level follows it down.
 
 ## Randomness
 

@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { CASINO_STARS } from '#shared/stars'
+import { Check } from 'lucide-vue-next'
 
 /**
  * One moment per star rise, in the casino's game style: a golden star bursts
- * in over spinning rays and confetti, with the star's name, the track and the
- * gem bounty, and waits for a tap. A level-up jingle plays. Drops are silent.
+ * in over spinning rays and confetti, with the level's title, the goal that
+ * earned it (when known), the track and the gem bounty, and waits for a tap.
+ * A level-up jingle plays. Drops are silent.
  */
 const { celebrations } = useWallet()
 const sound = useTycoonSound()
 const current = computed(() => celebrations.value[0] ?? null)
-const star = computed(() => (current.value ? CASINO_STARS[current.value.level - 1] : null))
 
 watch(current, value => value && sound.play('levelUp'))
 
@@ -29,7 +29,7 @@ const CONFETTI = Array.from({ length: 20 }, (_, i) => ({
 
 <template>
   <Transition name="star">
-    <div v-if="current && star" :key="`${current.previous}-${current.level}`" class="g-ui fixed inset-0 z-50 grid place-items-center overflow-hidden bg-[#0b0712]/65 p-4" role="dialog" :aria-label="`${star.name}: ${current.level} of 10 stars`" @click="dismiss">
+    <div v-if="current" :key="`${current.previous}-${current.level}`" class="g-ui fixed inset-0 z-50 grid place-items-center overflow-hidden bg-[#0b0712]/65 p-4" role="dialog" :aria-label="`${current.title}: ${current.level} of 10 stars`" @click="dismiss">
       <div class="rays pointer-events-none absolute top-1/2 left-1/2 size-[150vmax]" />
       <div class="relative w-full max-w-xs" @click.stop>
         <span
@@ -51,7 +51,13 @@ const CONFETTI = Array.from({ length: 20 }, (_, i) => ({
             <text x="12" y="14.6" text-anchor="middle" font-size="6" font-family="var(--font-game)" fill="#5a3200">{{ current.level }}</text>
           </svg>
           <p class="g-num text-sm text-[#ffe066] uppercase">{{ current.level }} / 10</p>
-          <p class="g-title mt-0.5 text-3xl leading-tight uppercase">{{ star.name }}</p>
+          <p class="g-title mt-0.5 text-3xl leading-tight uppercase">{{ current.title }}</p>
+          <ul v-if="current.earned.length" class="mt-2 space-y-1">
+            <li v-for="goal in current.earned" :key="goal.key" class="text-sm leading-5 font-bold text-[var(--g-ink)]">
+              <Check class="mr-1 inline size-4 align-[-3px] text-[#3fd25a]" :stroke-width="3.5" />{{ goal.name }}
+              <span class="block font-semibold text-[var(--g-muted)]">{{ goal.description }}</span>
+            </li>
+          </ul>
           <div class="mt-3 flex justify-center gap-1" :aria-label="`${current.level} of 10 stars`">
             <span v-for="i in 10" :key="i" class="pip block size-4 rounded-[5px] border-2" :class="i <= current.level ? 'border-[#7a4a00] bg-[#ffc93a]' : 'border-black/40 bg-black/30'" :style="{ animationDelay: `${300 + i * 40}ms` }" />
           </div>

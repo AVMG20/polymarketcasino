@@ -1153,6 +1153,8 @@ export class FloorEngine implements FloorApi {
         const zone = zoneAt(rect.x, rect.y) ?? plot.zone
         if (!this.owned.has(zone)) return 'ghost'
         if (plot.status === 'locked') return 'locked'
+        // A put-away game has no rect, so it never gets here; drawn as built should one slip through.
+        if (plot.status === 'stored') return 'built'
         return plot.status
     }
 

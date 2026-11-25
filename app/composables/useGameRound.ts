@@ -14,6 +14,8 @@ export interface RoundResponse<TResult> {
     chips: number
     /** The payout, paid in chips (0 on a loss). */
     chipsEarned: number
+    /** The rakeback on the stake, in chips (0 when it went to the casino being visited); `chips` includes it. */
+    rakeback?: number
     /** The stake's two parts: coins first, then chips for the rest. */
     stakeCoins: number
     stakeChips: number

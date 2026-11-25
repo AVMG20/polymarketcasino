@@ -14,7 +14,7 @@
  *   in its own currency).
  * - **Chips** build the casino (zones, games, levels, upgrades, ad
  *   campaigns) and can be bet. Chips never turn back into coins.
- * - **Stars** (0-10 at the hub) follow the chip balance (shared/stars.ts).
+ * - **Stars** (0-10 at the hub) count the ten casino goals reached (shared/stars.ts).
  * - Bound: chips come only from round payouts, and every game's RTP is
  *   below 1, so chips made ≤ coins claimed × RTP in expectation. Coins come
  *   only from the capped cage and gem converts.
@@ -34,6 +34,7 @@ import { ownedSpecials, placedSpecials, specialBonus, type DecorType, type Owned
 import { buildSpot, layoutOf, layoutStateOf } from './floor/placement'
 import { COINS_PER_GEM } from './economy'
 import type { MissionsState, WelcomeBack } from './missions'
+import type { StarGoalKey, StarSummary } from './stars'
 import { findGame } from './games/registry'
 import { normalizeCoins, roundCoins } from './money'
 import {
@@ -44,6 +45,7 @@ import {
     DEFAULT_RULES,
     seatedTotal,
     tierOdds,
+    zonesOf,
     type FloorNow,
     type FloorView,
     type HouseRules,
@@ -129,8 +131,8 @@ export interface UpgradeDef {
  * - golden: a cosmetic golden skin for one built game.
  * - cosmetic: an avatar item or a premium zone skin (shared/cosmetics.ts),
  *   target = its key (`hat:crown`, `skin:royal`). Cosmetic only.
- * Gems never buy chips: chips set the star level, and the platform contract
- * forbids selling star levels for gems.
+ * Gems never buy chips: chips are only won (the bound on coins claimed ×
+ * RTP), and the platform contract forbids selling star levels for gems.
  */
 export type GemItem = 'skip' | 'rush' | 'builder' | 'golden' | 'cosmetic'
 
@@ -150,7 +152,7 @@ export interface Construction {
 export interface TycoonState {
     /** Server clock (ms) when this state was made; the client extrapolates timers and the cage from it. */
     serverNow: number
-    /** The chip balance (what builds, campaigns and chip bets spend; what stars follow). */
+    /** The chip balance (what builds, campaigns and chip bets spend). */
     chips: number
     zones: ZoneId[]
     /** Built games and their level (1..max). Missing = not built (or still under construction). */
@@ -189,6 +191,11 @@ export interface TycoonState {
      * old payloads = every game at its home spot.
      */
     placements?: Record<string, { x: number, y: number }>
+    /**
+     * Built games put away (arrange mode): still owned (level, value, goals),
+     * but off the floor: no seats, no guests, no spot. Missing = none.
+     */
+    storedGames?: string[]
     /** Decorations the casino owns (shared/decor.ts); put-away ones have x = y = null. Visitors see only placed ones. */
     decor?: OwnedDecor[]
     /** Share of everything buildable that is built, 0..1. */
@@ -203,8 +210,10 @@ export interface TycoonState {
     welcome?: WelcomeBack | null
     /** Chips the removed Decor upgrade was refunded with, on the one owner's read that paid it (show a notice), else missing. */
     decorRefund?: number
-    /** GET /api/tycoon only: the star level change the read's chip move caused (the one-time Decor refund), once the hub confirmed it, else null. */
+    /** GET /api/tycoon only: the star rise the owner has not been shown yet (this read reported it, or the sweep, a visit or a retry did), once, else null. */
     stars?: TycoonStarChange | null
+    /** The casino goals and the star level (shared/stars.ts). Only on the owner's own reads. */
+    starGoals?: StarSummary
 }
 
 // ── API bodies and responses ─────────────────────────────────────────────
@@ -222,13 +231,17 @@ export interface GemBody {
     target?: string
 }
 
-/** A star level change the hub confirmed after an action (stars follow chips). */
+/** A star level change the hub confirmed after an action (a casino goal reached). */
 export interface TycoonStarChange {
     playerId: string
     level: number
     previous: number
     /** Gems the hub paid for a new best level. */
     bounty: number
+    /** The goals done when the level was reported. */
+    goals: StarGoalKey[]
+    /** Reported before this response (a build that became ready, the sweep, a visit): its bounty is in a gem count read since. */
+    late?: true
 }
 
 /** Response of build, collect, campaign and gem purchases. The chip balance is `state.chips`. */
@@ -240,7 +253,7 @@ export interface TycoonActionResponse {
     gems: number | null
     /** Coins the action collected from the cage (collect only), else 0. */
     collected: number
-    /** The star level change the action's chip spend caused, once the hub confirmed it. */
+    /** The star level change the action caused (a goal reached), once the hub confirmed it. */
     stars?: TycoonStarChange | null
     /** Coins a mission claim paid (POST /api/tycoon/mission), else missing. */
     reward?: number
@@ -312,7 +325,7 @@ export const MAX_LEVEL = 5
  * Chip prices (CHIP_SCALE) and guest income in coins (GUEST_SCALE) below are
  * written small and multiplied by these. They size the economy against the
  * fixed amounts outside it (1,000 coins a
- * converted gem, the star thresholds), so the cage carries a casino's
+ * converted gem), so the cage carries a casino's
  * income and gems stay a boost, not a skip.
  */
 const CHIP_SCALE = 5
@@ -589,13 +602,28 @@ export type VisitorView = Pick<TycoonState, 'games' | 'upgrades' | 'rushUntil' |
     /** The casino's decorations: the specials standing on the floor lift it (`specials` wins when given). */
     decor?: DecorView
     specials?: SpecialBonus
+    /** Built games put away: the visitor model leaves them out. */
+    storedGames?: readonly string[]
 }
 
-/** A state as the visitor model reads it. */
+/**
+ * The games standing on the floor: the built ones minus the put-away ones.
+ * Only these take guests (seats, the crowd, a top machine's prestige); the
+ * zones stay owned. Prices read every built game as if placed (`games`).
+ */
+export function floorGames(state: Pick<TycoonState, 'games'> & { storedGames?: readonly string[] }): Record<string, number> {
+    if (!state.storedGames?.length) return state.games
+    const games = { ...state.games }
+    for (const slug of state.storedGames) delete games[slug]
+    return games
+}
+
+/** A state as the visitor model reads it (the games on the floor only). */
 export function floorView(state: VisitorView): FloorView {
     return {
-        zones: state.zones,
-        games: state.games,
+        // Zones read from the games come from every built one: putting a game away keeps its room.
+        zones: state.zones ?? (state.storedGames?.length ? zonesOf({ games: state.games }) : undefined),
+        games: floorGames(state),
         upgrades: state.upgrades,
         rushUntil: state.rushUntil,
         campaign: state.campaign,
@@ -641,15 +669,16 @@ export function seatsOf(slug: string, level: number): number {
     return def && level >= 1 ? SEATS[def.archetype] + Math.min(MAX_LEVEL, Math.floor(level)) - 1 : 0
 }
 
-/** Seats on the whole floor: the most visitors it holds. */
-export function floorSeats(state: Pick<TycoonState, 'games'>): number {
-    return builtGames(state).reduce((sum, { def, level }) => sum + seatsOf(def.slug, level), 0)
+/** Seats on the whole floor: the most visitors it holds (put-away games have none). */
+export function floorSeats(state: Pick<TycoonState, 'games'> & { storedGames?: readonly string[] }): number {
+    return builtGames({ games: floorGames(state) }).reduce((sum, { def, level }) => sum + seatsOf(def.slug, level), 0)
 }
 
 /**
  * What the floor spends an hour with every seat taken, at the expected tier
- * mix and the default rules (no rush, no costs), with every special the
- * casino owns as if placed (putting one away must not make prices cheaper):
+ * mix and the default rules (no rush, no costs), with every built game and
+ * every special the casino owns as if placed (putting one away must not make
+ * prices cheaper):
  * what campaigns and mission rewards are priced from. Without zones they are
  * read from the built games.
  */
@@ -778,8 +807,9 @@ export const MAX_CAMPAIGN_QUEUE_MS = 7 * 24 * HOUR
  * The most extra guest coins a rush can bring: what a full floor spends over
  * RUSH_MS at the richest mix any of the casino's unlocked rules lets in (a
  * rush doubles what guests spend), as if every seat were taken (a campaign
- * started after the rush can fill them) and every special the casino owns
- * stood on the floor (one put away can be placed during the rush). Priced
+ * started after the rush can fill them) and every built game and special
+ * the casino owns stood on the floor (one put away can be placed during the
+ * rush: `games`, not `floorGames`). Priced
  * from the occupancy at purchase instead, a rush bought before a campaign
  * would come out cheaper than converting. Not capped by the cage: collecting
  * during the rush takes more than one cage.
@@ -845,8 +875,8 @@ function zoneName(id: ZoneId | null): string {
     return findZone(id ?? '')?.name ?? 'the zone'
 }
 
-/** What `buildBlocker` reads of a state (`placements` and `decor`: where a new game would stand). */
-export type BlockerView = Pick<TycoonState, 'zones' | 'games' | 'upgrades' | 'constructions' | 'builders' | 'placements' | 'decor'>
+/** What `buildBlocker` reads of a state (`placements`, `storedGames` and `decor`: where a new game would stand). */
+export type BlockerView = Pick<TycoonState, 'zones' | 'games' | 'upgrades' | 'constructions' | 'builders' | 'placements' | 'storedGames' | 'decor'>
 
 /**
  * Why `kind:id` can't start building now, or null when it can. Affordability
@@ -868,6 +898,7 @@ export function buildBlocker(state: BlockerView, kind: BuildKind, id: string): s
         if (!game) return 'Unknown game'
         if ((state.games[id] ?? 0) >= game.levels.length) return `${findGame(id)?.name ?? id} is at the top level`
         newGame = (state.games[id] ?? 0) < 1
+        if (!newGame && state.storedGames?.includes(id)) return STORED_BLOCKER
     } else if (kind === 'upgrade') {
         const upgrade = findUpgrade(id)
         if (!upgrade) return 'Unknown upgrade'
@@ -891,13 +922,16 @@ export function buildBlocker(state: BlockerView, kind: BuildKind, id: string): s
 /** `buildBlocker`'s refusal when no owned room has a free spot for a new game. */
 export const NO_ROOM_BLOCKER = 'No room for it: open a room or move things'
 
+/** `buildBlocker`'s refusal for a put-away game: it is upgraded where it stands. */
+export const STORED_BLOCKER = 'Place it on the floor first'
+
 /** Whether a game that isn't on the floor yet has a free spot in the owned rooms (false: build nothing, or move things first). */
-export function hasRoomFor(state: Pick<BlockerView, 'zones' | 'games' | 'constructions' | 'placements' | 'decor'>, slug: string): boolean {
+export function hasRoomFor(state: Pick<BlockerView, 'zones' | 'games' | 'constructions' | 'placements' | 'storedGames' | 'decor'>, slug: string): boolean {
     return newGameSpot(state, slug) !== null
 }
 
 /** Where a game that isn't on the floor yet would stand when built (null: no free spot in the owned rooms). */
-export function newGameSpot(state: Pick<BlockerView, 'zones' | 'games' | 'constructions' | 'placements' | 'decor'>, slug: string): { x: number, y: number } | null {
+export function newGameSpot(state: Pick<BlockerView, 'zones' | 'games' | 'constructions' | 'placements' | 'storedGames' | 'decor'>, slug: string): { x: number, y: number } | null {
     return buildSpot(layoutOf(layoutStateOf(state)), slug)
 }
 

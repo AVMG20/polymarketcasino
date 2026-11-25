@@ -1,16 +1,19 @@
 <script setup lang="ts">
-import { Check, Hand, Package, ShoppingBag, Undo2, X } from 'lucide-vue-next'
+import { Check, Hand, Package, ShoppingBag, Undo2, Users, X } from 'lucide-vue-next'
 import { findGame } from '#shared/games/registry'
 import { findDecor, type DecorType } from '#shared/decor'
+import { formatCoins } from '#shared/money'
+import { seatsOf } from '#shared/tycoon'
 import type { ArrangeItem } from '~/utils/floor/types'
 import { decorName } from '~/utils/decor-art'
-import { specialGain, specialLift } from '~/utils/tycoon-art'
+import { gameIncomePerHour, specialGain, specialLift } from '~/utils/tycoon-art'
 
 /**
  * Arrange mode's controls over the floor: a hint and Done at the top; at the
- * bottom the storage tray (put-away decorations, and the shop), or, while
- * something is in hand, a bar with its name, its price when it is a new
- * one, why it can't go where it hovers, Put away and Cancel.
+ * bottom the storage tray (put-away games and decorations, and the shop), or,
+ * while something is in hand, a bar with its name, its price when it is a new
+ * one, what a game's seats are worth, why it can't go where it hovers, Put
+ * away and Cancel.
  */
 const props = defineProps<{
     carrying: ArrangeItem | null
@@ -32,6 +35,27 @@ const stored = computed(() => {
         groups.set(d.type, group)
     }
     return [...groups.values()]
+})
+/** Put-away games (tap: place one). */
+const storedGames = computed(() => tycoon.storedGames.value.filter(slug => (tycoon.state.value?.games[slug] ?? 0) >= 1))
+const storedCount = computed(() => storedGames.value.length + stored.value.reduce((n, g) => n + g.ids.length, 0))
+
+/**
+ * A game in hand: its seats and what it earns on the floor, and whether it
+ * can be put away (built, not under construction) or comes from storage.
+ */
+const game = computed(() => {
+    const item = props.carrying
+    const st = tycoon.state.value
+    if (item?.kind !== 'game' || !st) return null
+    const level = st.games[item.id] ?? 0
+    const building = st.constructions.some(c => c.kind === 'game' && c.id === item.id)
+    return {
+        seats: seatsOf(item.id, level),
+        earns: level >= 1 ? gameIncomePerHour(st, item.id, level, st.serverNow) : 0,
+        building,
+        fromStorage: !building && tycoon.storedGames.value.includes(item.id)
+    }
 })
 
 const name = computed(() => {
@@ -101,6 +125,9 @@ watch(() => props.problem, (now, before) => now && now !== before && problemKey.
               <span class="g-title block truncate text-lg leading-tight">{{ name }}</span>
               <span v-if="problem" :key="problemKey" class="problem block truncate text-[13px] leading-4 font-semibold text-[#ff8a8a]">{{ problem }}</span>
               <TycoonSpecialStat v-else-if="special" class="mt-0.5" :lifts="[special.lift]" :gain="special.gain" />
+              <span v-else-if="game && !game.building" class="block truncate text-[13px] leading-4 font-semibold" :class="game.fromStorage ? 'text-[#7ee08f]' : 'text-[#ffb35c]'" :title="game.fromStorage ? 'Placed, its seats take guests again' : 'Put away, its seats take no guests (it stays yours, and you can still play it)'">
+                {{ game.fromStorage ? 'Place it' : 'Put away' }}: {{ game.fromStorage ? '+' : '−' }}{{ game.seats }} seat{{ game.seats === 1 ? '' : 's' }}<template v-if="game.earns > 0">, {{ game.fromStorage ? '+' : '−' }}{{ formatCoins(game.earns) }}/h</template>
+              </span>
               <span v-else class="block truncate text-[13px] leading-4 font-semibold text-[var(--g-muted)]">{{ carrying.kind === 'game' ? 'Any room you own' : 'Any free spot in your rooms' }}</span>
             </span>
             <span v-if="price !== null" class="flex shrink-0 items-center rounded-xl bg-black/30 px-2.5 py-1.5 text-lg" :class="short ? 'text-[#ff8a8a]' : ''" :title="short ? 'Not enough chips' : 'Drop it to buy it'">
@@ -110,6 +137,17 @@ watch(() => props.problem, (now, before) => now && now !== before && problemKey.
           <div class="flex gap-2">
             <button v-if="carrying.kind === 'decor'" type="button" class="g-btn g-dark h-11 flex-1 rounded-xl text-base" :disabled="busy" title="Back into storage (its bonus stops while it is away)" @click="emit('store')">
               <Package class="size-4.5" :stroke-width="2.75" /> Put away
+            </button>
+            <button
+              v-else-if="game && !game.fromStorage"
+              type="button"
+              class="g-btn g-dark h-11 flex-1 rounded-xl text-base"
+              :disabled="busy || game.building"
+              :title="game.building ? 'A game under construction can\'t be put away' : `Into storage: ${game.seats} fewer seats until you place it again`"
+              @click="emit('store')"
+            >
+              <Package class="size-4.5" :stroke-width="2.75" /> Put away
+              <span v-if="!game.building" class="g-num flex items-center gap-0.5 rounded-full bg-black/30 px-1.5 text-[12px] leading-5 text-[#ffb35c]" :aria-label="`${game.seats} fewer seats`">−{{ game.seats }}<Users class="size-3.5" :stroke-width="3" /></span>
             </button>
             <button type="button" class="g-btn g-dark h-11 flex-1 rounded-xl text-base" @click="emit('cancel')">
               <component :is="carrying.kind === 'new' ? X : Undo2" class="size-4.5" :stroke-width="2.75" /> Cancel
@@ -121,12 +159,24 @@ watch(() => props.problem, (now, before) => now && now !== before && problemKey.
         <div v-else key="tray" class="g-panel pointer-events-auto w-full max-w-[34rem] rounded-[24px] p-2.5">
           <p class="mb-1.5 flex items-center gap-1.5 px-0.5 text-[11px] font-bold tracking-wider text-[var(--g-muted)] uppercase">
             <Package class="size-3.5" :stroke-width="3" /> Storage
-            <span v-if="stored.length" class="g-num ml-auto">{{ stored.reduce((n, g) => n + g.ids.length, 0) }}</span>
+            <span v-if="storedCount" class="g-num ml-auto">{{ storedCount }}</span>
           </p>
           <div class="tray flex gap-2 overflow-x-auto pb-0.5">
             <button type="button" class="slot shop shrink-0" title="Buy decorations" @click="emit('shop')">
               <ShoppingBag class="size-6" :stroke-width="2.75" />
               <span class="text-[11px] leading-none uppercase">Shop</span>
+            </button>
+            <button
+              v-for="slug in storedGames"
+              :key="`game:${slug}`"
+              type="button"
+              class="slot relative shrink-0 overflow-hidden"
+              :title="`${findGame(slug)?.name ?? slug}: tap to place it`"
+              :aria-label="`Place ${findGame(slug)?.name ?? slug}`"
+              :disabled="busy"
+              @click="emit('take', { kind: 'game', id: slug })"
+            >
+              <TycoonGameArt :slug="slug" />
             </button>
             <button
               v-for="g in stored"
@@ -140,7 +190,7 @@ watch(() => props.problem, (now, before) => now && now !== before && problemKey.
               <TycoonDecorArt :type="g.type" />
               <span v-if="g.ids.length > 1" class="g-num absolute right-0.5 bottom-0.5 rounded-full border-2 border-black/50 bg-[#1b1329]/90 px-1 text-[11px] leading-3.5">×{{ g.ids.length }}</span>
             </button>
-            <p v-if="!stored.length" class="flex min-w-0 items-center px-1 text-[12.5px] leading-4 text-[var(--g-muted)]">Put-away decorations wait here.</p>
+            <p v-if="!storedCount" class="flex min-w-0 items-center px-1 text-[12.5px] leading-4 text-[var(--g-muted)]">Put-away games and decorations wait here.</p>
           </div>
         </div>
       </Transition>

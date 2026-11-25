@@ -107,11 +107,13 @@ export function useFloorScene() {
             const level = s.games[game.slug] ?? 0
             const construction = s.constructions.find(c => c.kind === 'game' && c.id === game.slug) ?? null
             const table = occupancy.value.find(t => t.slug === game.slug)
-            const onFloor = !!construction || level >= 1
+            // Put away: built, but not on the floor (no plot, no hint).
+            const stored = !construction && level >= 1 && !!s.storedGames?.includes(game.slug)
+            const onFloor = !stored && (!!construction || level >= 1)
             // A game not built yet: a dashed "build here" hint where it would go, once the level allows it.
             const unlocked = gameUnlockLevel(game.slug) <= casinoLevel
-            const rect = onFloor ? standingRect(s.placements, game.slug) : unlocked ? hints.get(game.slug) ?? null : null
-            const status = construction ? 'building' : level >= 1 ? 'built' : unlocked && rect ? 'available' : 'locked'
+            const rect = onFloor ? standingRect(s.placements, game.slug) : unlocked && !stored ? hints.get(game.slug) ?? null : null
+            const status = stored ? 'stored' : construction ? 'building' : level >= 1 ? 'built' : unlocked && rect ? 'available' : 'locked'
             return {
                 id: game.slug,
                 archetype: game.archetype,

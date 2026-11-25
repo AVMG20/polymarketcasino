@@ -17,6 +17,7 @@ import {
 } from '../../shared/cosmetics'
 import { findZone, type TycoonActionResponse, type ZoneId } from '../../shared/tycoon'
 import { coinTransaction } from './ledger'
+import { ownStarChange } from './stars'
 import { advanceCasino, getTycoonState } from './tycoon'
 
 /**
@@ -131,9 +132,8 @@ export async function buyCosmeticWithChips(playerId: string, body: CosmeticBuyBo
         if (!added) throw createError({ statusCode: 409, statusMessage: 'You own that already' })
         coins.debitChips({ playerId, amount: def.chips, reason: `cosmetic:${def.key}` })
         if (body.zone) equipIn(coins.tx, playerId, def, body.zone, now)
-    })
-    const star = stars.find(change => change.playerId === playerId) ?? null
-    return { state: getTycoonState(playerId, now), coins: null, gems: null, collected: 0, stars: star }
+    }, playerId)
+    return { state: getTycoonState(playerId, now), coins: null, gems: null, collected: 0, stars: ownStarChange(playerId, stars) }
 }
 
 /** The gem price of a cosmetic the player can buy now, or a 400. Runs in the gem purchase's insert transaction. */

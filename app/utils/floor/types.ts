@@ -18,6 +18,7 @@ export type PlotStatus =
     | 'available' // zone owned, can be built: an empty plot with a "build" sign
     | 'building' // under construction: scaffolding and a countdown
     | 'built'
+    | 'stored' // built but put away (arrange mode's storage): not drawn, its rect is null
 
 export interface FloorPlot {
     /** The game slug. */
@@ -28,7 +29,8 @@ export interface FloorPlot {
     status: PlotStatus
     /**
      * Where it stands: its stored spot (built or building), or for a game not
-     * built yet the spot it would get (a dashed "build here" hint). Null: not drawn.
+     * built yet the spot it would get (a dashed "build here" hint). Null: not
+     * drawn (locked, or put away).
      */
     rect: Rect | null
     /** 0 when not built, else 1..5. Higher levels draw a bigger, shinier machine. */
@@ -166,7 +168,7 @@ export interface FloorApi {
 
 /** What arrange mode carries. */
 export type ArrangeItem =
-    | { kind: 'game', id: string } // a built game being moved
+    | { kind: 'game', id: string } // a game being moved (built or building), or placed from storage
     | { kind: 'decor', id: number, type: DecorType } // an owned decoration (placed or from storage)
     | { kind: 'new', type: DecorType } // one being bought: dropping it buys it
 

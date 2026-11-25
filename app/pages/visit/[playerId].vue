@@ -18,8 +18,9 @@ import type { FloorApi, FloorPlot, FloorScene, FloorTarget, FloorZone } from '~/
  * Visiting another player's casino: their floor, read-only. Your avatar
  * walks around as a guest, theirs idles by the builder desk. Their built
  * games play here like at home (the same overlay), with your own coins and
- * chips: rounds and seats pass the host, and nothing moves between players.
- * No balances of theirs, no build menu.
+ * chips: rounds and seats pass the host, and the 1% rakeback on your bets
+ * goes to them instead of you (the game overlay says so). No balances of
+ * theirs, no build menu.
  */
 const route = useRoute()
 const router = useRouter()

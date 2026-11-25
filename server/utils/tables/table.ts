@@ -4,6 +4,7 @@ import type { CommittedCoins } from '../ledger'
 import { getCoins } from '../ledger'
 import { avatarOf } from '../cosmetics'
 import { hostHasGame } from '../social'
+import { ownStarChange } from '../stars'
 import { writeTx } from '../../database'
 import { chipBalance, ensureCasino, hasBuiltGame } from '../tycoon'
 import { findGame } from '#shared/games/registry'
@@ -423,10 +424,10 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
         this.bus.sendToPlayer(player.playerId, { t: 'balance', balance: balances.balance, chips: balances.chips })
         const playerId = player.playerId
         void committed.stars.then((changes) => {
-            for (const change of changes) {
-                if (change.playerId !== playerId) continue
-                this.bus.sendToPlayer(playerId, { t: 'stars', stars: { level: change.level, previous: change.previous, bounty: change.bounty } })
-            }
+            // Handed over (and claimed as seen) only while the player has a socket here; else their next read celebrates it.
+            if (!this.bus.isConnected(playerId)) return
+            const change = ownStarChange(playerId, changes)
+            if (change) this.bus.sendToPlayer(playerId, { t: 'stars', stars: { level: change.level, previous: change.previous, bounty: change.bounty, goals: change.goals, ...(change.late ? { late: true as const } : {}) } })
         })
     }
 

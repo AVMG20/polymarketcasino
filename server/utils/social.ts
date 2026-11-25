@@ -116,12 +116,16 @@ export function parseHost(value: unknown): string | null {
 }
 
 /**
- * Whether the casino of `hostId` has `slug` built (level 1 or more), read in
- * the caller's transaction. A player without a casino has nothing built.
+ * Whether the casino of `hostId` has `slug` built (level 1 or more) and on its
+ * floor (not put away), read in the caller's transaction. A player without a
+ * casino has nothing built.
  */
 export function hostHasGame(hostId: string, slug: string, ex: DbExecutor = db, now = Date.now()): boolean {
     const exists = ex.select({ id: casinoProfiles.playerId }).from(casinoProfiles).where(eq(casinoProfiles.playerId, hostId)).get()
-    return !!exists && (peekCasino(hostId, now, ex).games[slug] ?? 0) >= 1
+    if (!exists) return false
+    // A game put away is not on that floor: nobody plays it there.
+    const casino = peekCasino(hostId, now, ex)
+    return (casino.games[slug] ?? 0) >= 1 && !casino.storedGames.includes(slug)
 }
 
 function ownerOf(playerId: string): CasinoOwner & { skins: ZoneSkins } {
@@ -147,7 +151,8 @@ export function getCasinoVisit(visitorId: string, ownerId: string, now = Date.no
     const liked = db.select({ day: casinoLikes.day }).from(casinoLikes)
         .where(and(eq(casinoLikes.ownerId, ownerId), eq(casinoLikes.visitorId, visitorId), eq(casinoLikes.day, amsterdamDay(new Date(now)))))
         .get()
-    const games = Object.fromEntries(Object.entries(casino.games).filter(([, level]) => level >= 1))
+    // The games on the floor: put-away ones are private (the value and level still count them).
+    const games = Object.fromEntries(Object.entries(casino.games).filter(([slug, level]) => level >= 1 && !casino.storedGames.includes(slug)))
     // Games being built for the first time already stand on the floor (the walk grid blocks them too).
     const building = [...new Set(casino.constructions.filter(row => row.kind === 'game' && (games[row.target] ?? 0) < 1).map(row => row.target))]
     return {

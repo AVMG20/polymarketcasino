@@ -24,6 +24,8 @@ interface StepResponse<V> {
     chips: number
     stars: StarChange | null
     chipsEarned: number
+    /** The rakeback the player got when the round settled (0 when it went to the casino being visited); `chips` includes it. */
+    rakeback?: number
 }
 
 /**
