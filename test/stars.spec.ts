@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { COSMETICS, isFree } from '../shared/cosmetics'
 import { DECOR } from '../shared/decor'
-import { CHIP_COSMETICS, goalLevel, goalSummary, starGoals, starTitle, STAR_GOALS, STAR_LEVELS, type StarView } from '../shared/stars'
+import { CHIP_COSMETICS, goalLevel, goalSummary, starGoals, starTitle, STAR_GOALS, STAR_LEVELS, STAR_TITLES, type StarView } from '../shared/stars'
 import { MAX_LEVEL, TYCOON_GAMES, UPGRADES, ZONES, type UpgradeId } from '../shared/tycoon'
 
 // The fake hub keeps the last applied seq per player, like the real one.
@@ -106,13 +106,15 @@ describe('star goals', () => {
             expect(level.key).toMatch(/^[a-z0-9-]{1,40}$/)
             expect(level.name.length).toBeLessThanOrEqual(60)
             expect(level.description.length).toBeLessThanOrEqual(300)
-            expect(level.description).toContain(`Earn ${i + 1} of the 10 casino stars`)
+            expect(level.key).toBe(`goals-${i + 1}`)
+            expect(level).toMatchObject({ name: STAR_GOALS[i]!.name, description: STAR_GOALS[i]!.description })
         }
         // The old chip keys are retired by the new ones.
         expect(STAR_LEVELS.some(level => level.key.startsWith('hold-'))).toBe(false)
         expect(starTitle(0)).toBeNull()
-        expect(starTitle(1)).toBe(STAR_LEVELS[0]!.name)
-        expect(starTitle(10)).toBe(STAR_LEVELS[9]!.name)
+        expect(STAR_TITLES).toHaveLength(10)
+        expect(starTitle(1)).toBe('Opening night')
+        expect(starTitle(10)).toBe(STAR_TITLES[9])
     })
 
     it('starts a new casino at level 0, with the progress of every goal', () => {

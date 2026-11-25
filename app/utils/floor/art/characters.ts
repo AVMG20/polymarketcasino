@@ -1,6 +1,7 @@
 import { AUTO, DEFAULT_AVATAR, cosmeticsIn, findCosmetic, type AvatarLook, type LookSlot } from '#shared/cosmetics'
 import { INK, darken, hashString, lighten, roundRect } from '../iso'
 import { HAIRS, PANTS, SHIRTS, SKINS } from './palette'
+import { STAFF_TRAY, drawTray, drawUniform, type StaffLook } from './staff'
 
 /**
  * Chunky chibi figures: a big round head, a small body, stubby legs. Drawn
@@ -29,6 +30,8 @@ export interface Look {
     accessory?: Accessory
     /** A guest dressed by visitor tier (art/visitors.ts): its outfit looks are a fixed set, kept out of the players' key space. */
     npc?: boolean
+    /** Hospitality staff (art/staff.ts): a uniform and a tray held out in the front hand. */
+    staff?: StaffLook
 }
 
 export type Pose = 'front' | 'back' | 'sit'
@@ -44,6 +47,7 @@ export const FIGURE_FOOT = { x: 20, y: 70 }
 
 export function lookKey(look: Look): string {
     const base = [look.skin, look.hair, look.style, look.shirt, look.pants, look.hat, look.hatColor, look.dealer ? 'd' : ''].join('|')
+    if (look.staff) return `s|${look.staff.uniform}|${look.staff.tray}|${base}`
     // A player's look (outfit set) gets its own key space, so its textures can be freed without touching a guest's.
     if (!look.outfit) return base
     return `${look.npc ? 'g' : 'p'}|${look.outfit}|${look.accessory ?? 'none'}|${base}`
@@ -194,7 +198,14 @@ export function drawFigure(ctx: CanvasRenderingContext2D, x: number, y: number, 
     const swing = frame === 1 ? 1.5 : frame === 2 ? -1.5 : 0
     const armY = y - 23 + bodyDrop
     shapes.push({ path: c => roundRect(c, x - 11.5, armY + swing, 5, 11, 2.5), fill: darken(look.shirt, 0.12) })
-    shapes.push({ path: c => roundRect(c, x + 6.5, armY - swing, 5, 11, 2.5), fill: darken(look.shirt, 0.12) })
+    // Staff hold the tray out level in the front hand: that arm bends and keeps still.
+    const tray = look.staff && !sit ? STAFF_TRAY : null
+    if (tray) {
+        shapes.push({ path: c => roundRect(c, x + 6.5, armY, 5, 8, 2.5), fill: darken(look.shirt, 0.12) })
+        shapes.push({ path: c => roundRect(c, x + 7.5, armY + 3.5, tray.x - 6, 4.6, 2.3), fill: darken(look.shirt, 0.06) })
+    } else {
+        shapes.push({ path: c => roundRect(c, x + 6.5, armY - swing, 5, 11, 2.5), fill: darken(look.shirt, 0.12) })
+    }
 
     // Torso.
     const torsoGrad = ctx.createLinearGradient(x - 8, torsoY, x + 8, torsoY + 15)
@@ -247,14 +258,16 @@ export function drawFigure(ctx: CanvasRenderingContext2D, x: number, y: number, 
     drawHairDetail(ctx, look, hx, hy, back, t)
     if (robe) drawRobeTrim(ctx, x, y, torsoY, back, sit)
 
-    // Hands.
+    // Hands (a butler wears white gloves).
     if (!back) {
-        ctx.fillStyle = look.skin
+        ctx.fillStyle = look.staff?.uniform === 3 ? '#ffffff' : look.skin
         ctx.beginPath()
         ctx.arc(x - 9, armY + 11 + swing, 2.6, 0, Math.PI * 2)
-        ctx.arc(x + 9, armY + 11 - swing, 2.6, 0, Math.PI * 2)
+        if (tray) ctx.arc(x + tray.x - 0.5, armY + tray.y + 2.6, 2.6, 0, Math.PI * 2)
+        else ctx.arc(x + 9, armY + 11 - swing, 2.6, 0, Math.PI * 2)
         ctx.fill()
     }
+    if (look.staff) drawUniform(ctx, look.staff.uniform, x, y, torsoY, back, sit)
 
     // Dealer waistcoat and bow tie.
     if (look.dealer) {
@@ -334,6 +347,7 @@ export function drawFigure(ctx: CanvasRenderingContext2D, x: number, y: number, 
         ctx.stroke()
     }
     if (look.accessory && look.accessory !== 'none') drawAccessory(ctx, look, x, torsoY, hx, hy, back, t)
+    if (tray && look.staff) drawTray(ctx, x + tray.x, armY + tray.y, look.staff)
     // Head shine (on a bald head or under the hat it reads as skin; under hair it's a hair gloss).
     ctx.fillStyle = 'rgba(255,255,255,0.28)'
     ctx.beginPath()

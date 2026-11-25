@@ -92,9 +92,10 @@ goal is something built, bought or played, so the level never goes down. Coins a
 | Best dressed | `all-cosmetics` | every cosmetic sold for chips owned (`CHIP_COSMETICS`: 11 items; free and gem-only ones never count, since a star level is never sold for gems) |
 
 The hub sees a level track (`STAR_LEVELS`, keys `goals-1` … `goals-10`, which retired the old `hold-*` chip
-keys): entry n is a title (Opening night, Rising star, Local favourite, Talk of the town, High stakes, Big shot,
-Headliner, High society, Casino mogul, Casino legend) described as "Earn n of the 10 casino stars"; the
-first also lists the goals. The Stars sheet in My Casino (the ★ button) shows every goal with its progress.
+keys): the ten goals with their names and descriptions, in the order above. The hub lights the first n entries
+at level n, whichever goals were reached. The casino's own titles per level (`STAR_TITLES`: Opening night, Rising
+star, Local favourite, Talk of the town, High stakes, Big shot, Headliner, High society, Casino mogul, Casino
+legend) name the celebrations and the Stars sheet. The Stars sheet in My Casino (the ★ button) shows every goal with its progress.
 
 - The level is worked out from the database (`server/utils/stars.ts`): the build (a construction that is
   ready counts before a read applies it), `casino_decor` specials, the distinct games in `game_rounds` (an

@@ -9,7 +9,7 @@ import {
     DICE_SPOTS, FLIGHT_CENTER, HANDS_GLOVES, HANDS_GRID, HILO_CARD, MINES_GRID, ROCKET_BASE, ROULETTE_CENTER, ROULETTE_RADIUS, STOOL_Z, WHEEL_CENTER, WHEEL_RADIUS,
     cardSeat, drawCardFace, drawGem, drawGlove, drawMachine, drawPlane, drawRocket, drawRouletteFace, drawWheelFace, handsCell, machineHeight, minesCell, plinkoBoard, slotScreens, type MachineInfo
 } from './art/machines'
-import { BADGE, BUILD_SIGN, CAGE_PILE, CAGE_TOP, DESK_TOP, SALE_SIGN, craneHook, drawBuildBadge, drawBuildSign, drawCage, drawDesk, drawLockSign, drawPlotOutline, drawSaleSign, drawScaffold } from './art/props'
+import { BADGE, BUILD_SIGN, CAGE_PILE, CAGE_TOP, DESK_TOP, SALE_SIGN, craneHook, drawBuildBadge, drawBuildSign, drawCage, drawDesk, drawLockSign, drawPlotOutline, drawSaleSign, drawScaffold, type CageLights } from './art/props'
 import { footprintCanvas, hexNum, project, type Pt } from './iso'
 import type { PlotLayout } from '#shared/floor/layout'
 import type { FloorPlot } from './types'
@@ -750,11 +750,18 @@ export class PlotView {
 
 // ── cashier cage ───────────────────────────────────────────────────────────
 
+const cageLights = new Map<string, CageLights>()
+
 export class CageView {
     readonly container: Container
     private base: Sprite
     private stacks: Sprite[] = []
+    /** Gold stacks grow with the cage level. */
+    private stackScale: number
     private glow: Sprite
+    private twinkles: { sprite: Sprite, phase: number, speed: number }[] = []
+    private gemGlows: Sprite[] = []
+    private neon: Sprite | null = null
     private bubble: Sprite
     private label: Container
     private labelText: Text
@@ -763,15 +770,20 @@ export class CageView {
     private labelFull = false
     private t = 0
 
-    constructor(private readonly ctx: ViewContext, origin: Pt, decor: number) {
+    /** `level`: the Cashier Cage upgrade (0-5), each a richer cage. */
+    constructor(private readonly ctx: ViewContext, origin: Pt, level: number) {
         const { PIXI, bank, fx } = ctx
         this.container = new PIXI.Container()
         this.container.position.set(origin.x, origin.y)
-        const rich = decor >= 3 ? 1 : 0
-        const baked = bank.get(`cage:${rich}`, () => {
+        const key = `cage:${level}`
+        const baked = bank.get(key, () => {
             const c = footprintCanvas(2, 2, 104, 14)
-            return bank.bake(c.width, c.height, c.ox, c.oy, p => drawCage(p, decor), true)
+            return bank.bake(c.width, c.height, c.ox, c.oy, (p) => {
+                cageLights.set(key, drawCage(p, level))
+            }, true)
         })
+        const lights = cageLights.get(key) ?? { bulbs: [], gems: [], neon: null }
+        this.stackScale = 1 + level * 0.07
         this.base = sprite(ctx, baked)
         this.glow = new PIXI.Sprite(fx.glow.texture)
         this.glow.anchor.set(0.5)
@@ -781,6 +793,23 @@ export class CageView {
         this.glow.scale.set(2.2, 1.4)
         this.glow.alpha = 0
         this.container.addChild(this.base, this.glow)
+        // Lights the art put up: marquee bulbs twinkle, gems and the neon sign glow (additive: never clickable).
+        const light = (at: Pt, tint: number, sx: number, sy = sx) => {
+            const s = new PIXI.Sprite(fx.glow.texture)
+            s.anchor.set(0.5)
+            s.position.set(at.x, at.y)
+            s.scale.set(sx, sy)
+            s.tint = tint
+            s.blendMode = 'add'
+            this.container.addChild(s)
+            return s
+        }
+        if (lights.neon) {
+            this.neon = light(lights.neon, 0xff4fd8, 1.0, 0.42)
+            this.neon.alpha = 0.5
+        }
+        for (const at of lights.bulbs) this.twinkles.push({ sprite: light(at, level >= 5 ? 0xffe0f6 : 0xffe39a, 0.15), phase: Math.random() * Math.PI * 2, speed: 2 + Math.random() * 3 })
+        for (const at of lights.gems) this.gemGlows.push(light(at, level >= 5 ? 0x5eead4 : 0xff5577, level >= 5 ? 0.42 : 0.3))
         const slots = [-0.55, -0.25, 0.05, 0.35, 0.62, -0.4]
         for (let i = 0; i < 6; i++) {
             // The cage pays coins: gold stacks.
@@ -788,6 +817,7 @@ export class CageView {
             const p = project(1 + slots[i]! * 1.1, 1.55 - slots[i]! * 0.1, 30)
             s.anchor.set(0.5, 1)
             s.position.set(p.x, p.y + 4)
+            s.scale.set(this.stackScale)
             s.visible = false
             this.container.addChild(s)
             this.stacks.push(s)
@@ -863,10 +893,15 @@ export class CageView {
             const b = this.ctx.reduced ? 0 : Math.abs(Math.sin(this.t * 4)) * 4
             this.bubble.y = CAGE_TOP.y - 4 - b
             this.glow.alpha = 0.45 + (this.ctx.reduced ? 0 : Math.sin(this.t * 5) * 0.2)
-            this.stacks.forEach((s, i) => (s.scale.y = 1 + (this.ctx.reduced ? 0 : Math.max(0, Math.sin(this.t * 6 - i * 0.6)) * 0.08)))
+            this.stacks.forEach((s, i) => (s.scale.y = this.stackScale * (1 + (this.ctx.reduced ? 0 : Math.max(0, Math.sin(this.t * 6 - i * 0.6)) * 0.08))))
         } else {
             this.glow.alpha = this.fill * 0.25
         }
+        const reduced = this.ctx.reduced
+        for (const tw of this.twinkles) tw.sprite.alpha = reduced ? 0.7 : 0.55 + Math.sin(this.t * tw.speed + tw.phase) * 0.35
+        this.gemGlows.forEach((g, i) => (g.alpha = reduced ? 0.6 : 0.5 + Math.sin(this.t * 2 + i * 1.7) * 0.2))
+        // The neon hums, with the odd flicker.
+        if (this.neon) this.neon.alpha = reduced ? 0.5 : 0.45 + Math.sin(this.t * 3) * 0.06 - (Math.sin(this.t * 17) > 0.97 ? 0.25 : 0)
     }
 
     destroy() {

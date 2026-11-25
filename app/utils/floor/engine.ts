@@ -16,6 +16,7 @@ import { Camera, FloorInput } from './camera'
 import { rankStatics, tileRanks, type DepthBox } from './depth'
 import { FloatTexts, Particles, coinBurst } from './effects'
 import { GuestCrowd, type GuestSpot } from './guests'
+import { StaffCrew } from './staff'
 import { HH, HW, footprintCanvas, hashString, project, unproject, type Pt } from './iso'
 import {
     ARCH_SIZE, CAGE, CHANDELIERS, DESK, DOORWAYS, GRID_H, GRID_W, PLOTS, PORCH, SPAWN, ZONE_RECTS, ZONE_ORDER,
@@ -162,6 +163,11 @@ function sceneLayout(scene: FloorScene, owned: ReadonlySet<ZoneId>): LayoutState
     return { zones: [...owned], games, decor: (scene.decorations ?? []).map(d => ({ id: d.id, type: d.type, x: d.x, y: d.y })) }
 }
 
+/** The Cashier Cage upgrade level the cage is drawn at (0-5). */
+function cageLevel(scene: FloorScene): number {
+    return Math.max(0, Math.min(5, Math.floor(scene.cageLevel ?? 0)))
+}
+
 function sameRect(a: Rect, b: Rect): boolean {
     return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h
 }
@@ -257,7 +263,7 @@ export class FloorEngine implements FloorApi {
     private clouds: { sprite: Sprite, rect: Rect, vx: number, phase: number }[] = []
     private plots = new Map<string, PlotView>()
     private cage: CageView | null = null
-    private cageDecor = -1
+    private cageLevel = -1
     private desk: DeskView | null = null
     private ranks = new Map<string, number>()
     private tileRank: Int32Array = new Int32Array(GRID_W * GRID_H).fill(-1)
@@ -293,6 +299,8 @@ export class FloorEngine implements FloorApi {
     private playerRing: Sprite
     private pending: Interactable | null = null
     private guests: GuestCrowd
+    /** The Hospitality upgrade's waiters (decoration only, never guests). */
+    private staff: StaffCrew
     private marker: Container
     private markerT = 1
     private party: { sprite: Sprite, phase: number, speed: number }[] = []
@@ -449,6 +457,7 @@ export class FloorEngine implements FloorApi {
 
         this.guests = new GuestCrowd(PIXI, this.bank, this.fx, this.objects, this.overlay, this.reduced)
         this.guests.onEarn = (x, y, amount) => this.guestEarned(x, y, amount)
+        this.staff = new StaffCrew(PIXI, this.bank, this.fx, this.objects, this.reduced)
 
         // Click marker: a ring and an X, yellow for walking, red for using.
         this.marker = new PIXI.Container()
@@ -535,7 +544,8 @@ export class FloorEngine implements FloorApi {
         const key = JSON.stringify([
             [...owned].sort(),
             scene.zones.map(z => [z.id, z.available, z.construction?.readyAt ?? 0, z.construction?.startedAt ?? 0]),
-            Math.max(0, Math.min(5, Math.round(scene.decor)))
+            Math.max(0, Math.min(5, Math.round(scene.decor))),
+            cageLevel(scene)
         ])
         const skins = new Map(scene.zones.map(z => [z.id, owned.has(z.id) ? z.skin ?? DEFAULT_SKIN : DEFAULT_SKIN] as const))
         const layoutState = sceneLayout(scene, owned)
@@ -566,6 +576,7 @@ export class FloorEngine implements FloorApi {
         this.partyOn = scene.rush
         const mix = drawnGuests(scene.visitors ?? { tourist: guestCount(scene.guestsPerHour, scene.rush), regular: 0, highroller: 0, whale: 0 })
         this.guests.setMix(mix, TIER_COLORS, scene.rush)
+        this.staff.setLevel(scene.hospitality ?? 0)
         // Playing guests pop coins off their machines, labelled with their real share of the income (by what their tier spends).
         const weight = VISITOR_TIER_IDS.reduce((sum, id) => sum + mix[id] * TIER_SPEND[id], 0)
         const perUnit = weight > 0 ? Math.max(0, scene.guestsPerHour) / weight / 3600 : 0
@@ -1046,12 +1057,12 @@ export class FloorEngine implements FloorApi {
         // Navigation: the floor of the owned rooms, minus what stands on it.
         this.rebuildNav()
 
-        // Cage and desk (re-baked only when the decor tier changes).
-        const cageTier = decor >= 3 ? 1 : 0
-        if (!this.cage || this.cageDecor !== cageTier) {
+        // Cage and desk (the cage is re-baked only when its upgrade level changes).
+        const cage = cageLevel(scene)
+        if (!this.cage || this.cageLevel !== cage) {
             this.cage?.destroy()
-            this.cage = new CageView(this.ctx, project(CAGE.rect.x, CAGE.rect.y), decor)
-            this.cageDecor = cageTier
+            this.cage = new CageView(this.ctx, project(CAGE.rect.x, CAGE.rect.y), cage)
+            this.cageLevel = cage
             this.objects.addChild(this.cage.container)
         }
         if (!this.desk) {
@@ -1276,6 +1287,7 @@ export class FloorEngine implements FloorApi {
             })
         }
         this.guests.setWorld(this.nav, spots)
+        this.staff.setWorld(this.nav)
         this.indexArrange()
         // Keep the player on walkable ground.
         const pt = this.player.tile
@@ -1977,6 +1989,7 @@ export class FloorEngine implements FloorApi {
         this.playerArrow.y = -60 - (this.reduced ? 0 : Math.abs(Math.sin(this.time * 3)) * 4) - this.player.jump
         this.playerRing.alpha = this.reduced ? 0.5 : 0.45 + Math.sin(this.time * 3) * 0.15
         this.guests.update(dt, this.partyOn)
+        this.staff.update(dt, this.guests)
         this.updateOwner(dt)
         for (const view of this.remotes.values()) {
             view.actor.update(dt)
@@ -2041,6 +2054,7 @@ export class FloorEngine implements FloorApi {
         // Depth for everyone walking around.
         this.player.container.zIndex = this.actorZ(this.player) + 1
         this.guests.eachActor(this.setActorZ)
+        this.staff.eachActor(this.setActorZ)
 
         // Camera.
         this.camera.update(dt)
@@ -2073,6 +2087,7 @@ export class FloorEngine implements FloorApi {
         const k = this.arrangeFade
         const seen = 1 - k * 0.85
         this.guests.visibility = seen
+        this.staff.visibility = seen
         const hidePlayer = k > 0.5
         this.player.container.visible = !hidePlayer
         if (this.player.tag) this.player.tag.visible = !hidePlayer
@@ -2098,6 +2113,7 @@ export class FloorEngine implements FloorApi {
         this.hoverRoots = []
         this.hitRoots.clear()
         this.guests.destroy()
+        this.staff.destroy()
         for (const v of this.plots.values()) v.destroy()
         this.plots.clear()
         for (const s of this.structureSigns) s.destroy()

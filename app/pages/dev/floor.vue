@@ -19,6 +19,8 @@ const level = ref(1)
 const building = ref(false)
 const golden = ref(false)
 const decor = ref(0)
+const cageLevel = ref(0)
+const hospitality = ref(0)
 const rush = ref(false)
 const guestsPerHour = ref(40)
 const cageFill = ref(0.4)
@@ -68,6 +70,8 @@ const scene = computed<FloorScene>(() => {
         decorations: [],
         cage: { fill: cageFill.value, stored: Math.round(cageFill.value * 1200) },
         decor: decor.value,
+        cageLevel: cageLevel.value,
+        hospitality: hospitality.value,
         guestsPerHour: guestsPerHour.value,
         rush: rush.value,
         player: { name: 'Arno', image: null },
@@ -117,6 +121,12 @@ function togglePlaying() {
       <label class="flex items-center gap-2"><input v-model="golden" type="checkbox"> Golden skins</label>
       <label class="block">Decor: {{ decor }}
         <input v-model.number="decor" type="range" min="0" max="5" class="w-full">
+      </label>
+      <label class="block">Cage level: {{ cageLevel }}
+        <input v-model.number="cageLevel" type="range" min="0" max="5" class="w-full">
+      </label>
+      <label class="block">Hospitality: {{ hospitality }}
+        <input v-model.number="hospitality" type="range" min="0" max="8" class="w-full">
       </label>
       <label class="block">Guests per hour: {{ guestsPerHour }}
         <input v-model.number="guestsPerHour" type="range" min="0" max="4000" step="20" class="w-full">

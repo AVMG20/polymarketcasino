@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { STAR_LEVELS } from '#shared/stars'
+import { STAR_TITLES } from '#shared/stars'
 
 /**
  * Ten rounded squares, the first `level` filled amber: one per casino goal
@@ -8,7 +8,7 @@ import { STAR_LEVELS } from '#shared/stars'
  * A star gained pops in, a star lost blinks out (not on the first render).
  */
 const props = withDefaults(defineProps<{ level: number, size?: 'sm' | 'md' }>(), { size: 'md' })
-const stars = computed(() => STAR_LEVELS.map((star, i) => ({ ...star, on: i < props.level })))
+const stars = computed(() => STAR_TITLES.map((name, i) => ({ key: i, name, on: i < props.level })))
 
 /** The stars between the old and the new level, while they animate. */
 const changed = ref<{ from: number, to: number, up: boolean } | null>(null)

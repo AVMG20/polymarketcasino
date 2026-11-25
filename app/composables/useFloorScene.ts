@@ -135,6 +135,8 @@ export function useFloorScene() {
             cage,
             // The room look (carpet, walls, lights, chandeliers) grows with the casino level.
             decor: roomLook(casinoLevel),
+            cageLevel: s.upgrades.cage ?? 0,
+            hospitality: s.upgrades.hospitality ?? 0,
             guestsPerHour: s.floor.perHour,
             // The floor's tick, from the state: a new tick, a rush or a campaign running out re-reads it (useTycoon's ticker).
             visitors: s.floor.visitors,

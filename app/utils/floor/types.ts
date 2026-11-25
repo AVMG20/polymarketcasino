@@ -72,6 +72,10 @@ export interface FloorScene {
     }
     /** The room look 0..5 (from the casino level): carpet, walls, lights, chandeliers. Furniture is `decorations`. */
     decor: number
+    /** The Cashier Cage upgrade level 0..5: the cage looks richer with each (missing = 0). */
+    cageLevel?: number
+    /** The Hospitality upgrade level 0..8: waiters carry trays round the floor (none at 0; missing = 0). */
+    hospitality?: number
     /** Guest coins an hour: what the playing guests' coin pops add up to (and how busy the floor is without `visitors`). */
     guestsPerHour: number
     /**

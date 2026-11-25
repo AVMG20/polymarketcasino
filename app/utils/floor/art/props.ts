@@ -18,22 +18,152 @@ export const CAGE_HEIGHT = 92
 export const CAGE_PILE = project(1.0, 1.55, 26)
 export const CAGE_TOP = project(1.0, 1.0, 96)
 
-export function drawCage(p: Painter, decor: number) {
+/** What the cage's art lights up: bulbs that twinkle, gems and a neon sign that glow (local px from the cage's origin). */
+export interface CageLights {
+    bulbs: Pt[]
+    gems: Pt[]
+    /** The neon sign's centre (top level), or null. */
+    neon: Pt | null
+}
+
+const brass = () => ({ top: '#ecd08f', left: '#c9a25e', right: '#8f6d36' })
+
+/** A marquee bulb at a local point. */
+function cageBulb(p: Painter, at: Pt, r = 1.5, color: string = PAL.goldLight) {
     const { ctx } = p
+    p.reset()
+    ctx.fillStyle = INK
+    ctx.beginPath()
+    ctx.arc(p.ox + at.x, p.oy + at.y, r + 0.9, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.arc(p.ox + at.x, p.oy + at.y, r, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'
+    ctx.beginPath()
+    ctx.arc(p.ox + at.x - r * 0.3, p.oy + at.y - r * 0.3, r * 0.4, 0, Math.PI * 2)
+    ctx.fill()
+}
+
+/** A cut gem on a little gold stand, at a local point (its base). */
+function cageGem(p: Painter, at: Pt, r: number, color: string) {
+    const { ctx } = p
+    p.reset()
+    const x = p.ox + at.x
+    const y = p.oy + at.y
+    ctx.fillStyle = PAL.gold
+    ctx.strokeStyle = INK
+    ctx.lineWidth = 1.1
+    ctx.beginPath()
+    ctx.ellipse(x, y, r * 0.75, r * 0.32, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+    const cy = y - r * 1.25
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    ctx.moveTo(x, y - r * 0.15)
+    ctx.lineTo(x - r, cy)
+    ctx.lineTo(x - r * 0.55, cy - r * 0.75)
+    ctx.lineTo(x + r * 0.55, cy - r * 0.75)
+    ctx.lineTo(x + r, cy)
+    ctx.closePath()
+    const g = ctx.createLinearGradient(x - r, cy - r, x + r, y)
+    g.addColorStop(0, lighten(color, 0.75))
+    g.addColorStop(0.45, color)
+    g.addColorStop(1, darken(color, 0.35))
+    ctx.fillStyle = g
+    ctx.fill()
+    ctx.lineWidth = 1.2
+    ctx.stroke()
+    // Facets.
+    ctx.strokeStyle = rgba('#ffffff', 0.55)
+    ctx.lineWidth = 0.7
+    ctx.beginPath()
+    ctx.moveTo(x - r, cy)
+    ctx.lineTo(x + r, cy)
+    ctx.moveTo(x - r * 0.25, cy)
+    ctx.lineTo(x, y - r * 0.15)
+    ctx.lineTo(x + r * 0.25, cy)
+    ctx.stroke()
+    ctx.fillStyle = 'rgba(255,255,255,0.9)'
+    ctx.beginPath()
+    ctx.ellipse(x - r * 0.35, cy - r * 0.4, r * 0.22, r * 0.12, -0.4, 0, Math.PI * 2)
+    ctx.fill()
+}
+
+/** A gold bar (ingot) on a face plane: u, v its top-left in face px. */
+function ingot(ctx: CanvasRenderingContext2D, u: number, v: number, w = 9, h = 4) {
+    ctx.fillStyle = '#c98a1e'
+    roundRect(ctx, u, v, w, h, 1)
+    ctx.fill()
+    ctx.fillStyle = '#f4c14f'
+    roundRect(ctx, u + 1, v, w - 2, h - 1.4, 0.8)
+    ctx.fill()
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'
+    ctx.fillRect(u + 1.6, v + 0.6, w - 4, 0.8)
+}
+
+/**
+ * The cashier cage, richer with each Cashier Cage level (0-5): a wooden
+ * booth with brass bars and a plank sign; a polished counter with panels, a
+ * red sign and a banker's lamp; burgundy walls, a brass kick plate, marquee
+ * bulbs and topiary on the roof; a marble counter, gold bars, velvet drapes,
+ * gold bars on the shelves and a gold sign; an emerald room, gold finials,
+ * more bulbs and rubies; then black lacquer and gold, a neon sign and two
+ * glowing diamonds. The footprint never changes.
+ */
+export function drawCage(p: Painter, level: number): CageLights {
+    const { ctx } = p
+    const lv = Math.max(0, Math.min(5, Math.floor(level)))
+    const lights: CageLights = { bulbs: [], gems: [], neon: null }
     p.shadow([[0, 0], [2, 0], [2, 2], [0, 2]], 8, 0.4)
-    const wall = decor >= 3 ? '#6b2a3a' : '#7a4a35'
-    const trim = decor >= 3 ? gold() : faceColors(PAL.woodLight)
+    const wall = ['#7a4a35', '#7a4a35', '#6b2a3a', '#6b2a3a', '#1f5a4a', '#231a2e'][lv]!
+    const trim = lv >= 3 ? gold() : lv === 2 ? brass() : faceColors(PAL.woodLight)
+    const bars = lv >= 3 ? gold() : brass()
     // Back and side walls of the booth.
     p.box(0.04, 0.04, 0, 1.92, 0.16, 70, wall)
     p.box(0.04, 0.2, 0, 0.16, 1.2, 70, wall)
-    // Shelves of chips on the back wall.
+    // The back wall's finish: pinstripes, then an art-deco fan.
+    p.faceY(0.2, 0.2, 70)
+    if (lv >= 3) {
+        ctx.strokeStyle = rgba(PAL.gold, lv >= 4 ? 0.45 : 0.3)
+        ctx.lineWidth = 0.8
+        for (let u = 3; u < 58; u += 6) {
+            ctx.beginPath()
+            ctx.moveTo(u, 0)
+            ctx.lineTo(u, 70)
+            ctx.stroke()
+        }
+    }
+    if (lv >= 5) {
+        ctx.strokeStyle = PAL.gold
+        ctx.lineWidth = 0.9
+        for (const cu of [14, 29, 44]) {
+            for (let r = 3; r <= 9; r += 3) {
+                ctx.beginPath()
+                ctx.arc(cu, 10, r, Math.PI, Math.PI * 2)
+                ctx.stroke()
+            }
+        }
+    }
+    p.reset()
+    // Shelves on the back wall: chips, then gold bars.
     p.faceY(0.2, 0.2, 60)
-    for (let row = 0; row < 3; row++) {
-        ctx.fillStyle = PAL.woodDark
-        ctx.fillRect(4, 12 + row * 14, 50, 2.5)
+    const rows = lv === 0 ? 2 : 3
+    for (let row = 0; row < rows; row++) {
+        const v = 12 + row * 14
+        ctx.fillStyle = lv >= 3 ? PAL.goldDark : PAL.woodDark
+        ctx.fillRect(4, v, 50, 2.5)
+        const goldRow = (lv >= 3 && row === rows - 1) || (lv >= 5 && row === rows - 2)
+        if (goldRow) {
+            for (let i = 0; i < 5; i++) ingot(ctx, 5 + i * 9.6, v - 4)
+            if (lv >= 4) for (let i = 0; i < 4; i++) ingot(ctx, 9.8 + i * 9.6, v - 8)
+            continue
+        }
         for (let i = 0; i < 8; i++) {
             ctx.fillStyle = [PAL.chip, '#3b82f6', '#16a34a', '#f59e0b'][(i + row) % 4]!
-            roundRect(ctx, 5 + i * 6, 5 + row * 14, 5, 7, 1.5)
+            roundRect(ctx, 5 + i * 6, v - 7, 5, 7, 1.5)
             ctx.fill()
         }
     }
@@ -42,35 +172,248 @@ export function drawCage(p: Painter, decor: number) {
     const [cx, cy] = p.pt(1.05, 0.95, 0)
     p.reset()
     drawFigure(ctx, cx, cy, CASHIER_LOOK, 'front', 0, 0)
-    // Counter.
-    p.box(0.04, 1.3, 0, 1.92, 0.62, 26, faceColors(PAL.wood))
+    // Counter: wood, polished wood, marble, dark marble, black lacquer.
+    const counter = lv >= 5 ? faceColors('#2a2236') : lv >= 4 ? faceColors('#24493e') : lv >= 3 ? faceColors('#e9dfcf') : lv >= 1 ? faceColors('#8a5233') : faceColors(PAL.wood)
+    p.box(0.04, 1.3, 0, 1.92, 0.62, 26, counter)
     p.faceY(0.04, 1.92, 26)
-    roundRect(ctx, 4, 5, 1.92 * 32 - 8, 15, 3)
-    ctx.fillStyle = rgba('#000000', 0.15)
-    ctx.fill()
-    ctx.strokeStyle = rgba(PAL.goldLight, 0.6)
-    ctx.lineWidth = 1
-    ctx.stroke()
+    if (lv === 0) {
+        // Plain planks.
+        ctx.strokeStyle = rgba(PAL.woodDark, 0.5)
+        ctx.lineWidth = 0.8
+        for (let v = 6; v < 26; v += 6) {
+            ctx.beginPath()
+            ctx.moveTo(2, v)
+            ctx.lineTo(59, v)
+            ctx.stroke()
+        }
+    } else if (lv <= 2) {
+        // Raised panels.
+        for (let i = 0; i < 3; i++) {
+            roundRect(ctx, 4 + i * 18.4, 5, 16, 14, 2)
+            ctx.fillStyle = rgba('#000000', 0.16)
+            ctx.fill()
+            ctx.strokeStyle = rgba(lv === 2 ? PAL.goldLight : '#e0a070', 0.55)
+            ctx.lineWidth = 0.9
+            ctx.stroke()
+        }
+    } else if (lv <= 4) {
+        // Marble veins under a gold rule.
+        ctx.strokeStyle = lv === 3 ? rgba('#8f8fa3', 0.55) : rgba('#d8f0e4', 0.4)
+        ctx.lineWidth = 0.7
+        for (const [u, v] of [[6, 3], [22, 8], [38, 2], [50, 12]] as const) {
+            ctx.beginPath()
+            ctx.moveTo(u, v)
+            ctx.quadraticCurveTo(u + 6, v + 6, u + 3, v + 12)
+            ctx.quadraticCurveTo(u + 1, v + 16, u + 7, v + 20)
+            ctx.stroke()
+        }
+        ctx.strokeStyle = PAL.gold
+        ctx.lineWidth = 1.4
+        roundRect(ctx, 3, 4, 55.4, 17, 2)
+        ctx.stroke()
+        if (lv === 4) {
+            ctx.fillStyle = PAL.gold
+            for (const u of [17, 30.7, 44.4]) {
+                ctx.beginPath()
+                ctx.arc(u, 12.5, 1.6, 0, Math.PI * 2)
+                ctx.fill()
+            }
+        }
+    } else {
+        // Black lacquer with a gold diamond inlay.
+        ctx.strokeStyle = PAL.gold
+        ctx.lineWidth = 1.2
+        roundRect(ctx, 3, 3.5, 55.4, 18, 2)
+        ctx.stroke()
+        ctx.lineWidth = 0.9
+        for (let i = 0; i < 6; i++) {
+            const u = 8 + i * 9.2
+            ctx.beginPath()
+            ctx.moveTo(u, 7)
+            ctx.lineTo(u + 4, 12.5)
+            ctx.lineTo(u, 18)
+            ctx.lineTo(u - 4, 12.5)
+            ctx.closePath()
+            ctx.stroke()
+        }
+        ctx.fillStyle = PAL.goldLight
+        for (let i = 0; i < 6; i++) {
+            ctx.beginPath()
+            ctx.arc(8 + i * 9.2, 12.5, 1, 0, Math.PI * 2)
+            ctx.fill()
+        }
+    }
     p.reset()
+    // A brass (then gold) kick plate along the floor.
+    if (lv >= 2) p.box(0.02, 1.9, 0, 1.96, 0.04, 3, lv >= 3 ? gold() : brass(), { lineWidth: 0.8, shine: false })
     p.box(0.0, 1.26, 26, 2.0, 0.7, 4, trim)
-    // The grille: gold bars on the counter's front edge.
+    // A green banker's lamp on the left end of the counter.
+    if (lv >= 1) {
+        p.cylinder(0.17, 1.62, 30, 0.07, 1.5, gold(), { lineWidth: 0.8, shine: false })
+        p.cylinder(0.17, 1.62, 31.5, 0.018, 7, gold(), { lineWidth: 0.6, shine: false })
+        const [lx, ly] = p.pt(0.17, 1.62, 39)
+        p.reset()
+        ctx.fillStyle = '#1f7a4a'
+        ctx.strokeStyle = INK
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(lx - 5.5, ly + 1.5)
+        ctx.quadraticCurveTo(lx, ly - 4.5, lx + 5.5, ly + 1.5)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+        ctx.fillStyle = 'rgba(255,255,255,0.35)'
+        ctx.fillRect(lx - 3, ly - 1.4, 2.6, 0.9)
+        ctx.fillStyle = rgba(PAL.goldLight, 0.9)
+        ctx.fillRect(lx - 4.5, ly + 1.4, 9, 1)
+    }
+    // Velvet drapes tied back at the sides of the window.
+    if (lv >= 3) {
+        p.faceY(0.06, 1.28, 58)
+        const drape = (u0: number, dir: 1 | -1) => {
+            ctx.beginPath()
+            ctx.moveTo(u0, 0)
+            ctx.lineTo(u0 + dir * 11, 0)
+            ctx.quadraticCurveTo(u0 + dir * 5, 10, u0 + dir * 3.2, 17)
+            ctx.quadraticCurveTo(u0 + dir * 6, 23, u0 + dir * 6.5, 28)
+            ctx.lineTo(u0, 28)
+            ctx.closePath()
+            ctx.fillStyle = PAL.velvet
+            ctx.fill()
+            ctx.strokeStyle = INK
+            ctx.lineWidth = 0.9
+            ctx.stroke()
+            ctx.strokeStyle = rgba('#ff8fa8', 0.45)
+            ctx.beginPath()
+            ctx.moveTo(u0 + dir * 2.5, 1)
+            ctx.lineTo(u0 + dir * 1.8, 26)
+            ctx.stroke()
+            ctx.fillStyle = PAL.gold
+            roundRect(ctx, Math.min(u0, u0 + dir * 4.5), 16, 4.5, 2.2, 1)
+            ctx.fill()
+        }
+        drape(0, 1)
+        drape(60, -1)
+        p.reset()
+    }
+    // The grille: brass, then gold bars on the counter's front edge (gold finials from level 4).
     for (let i = 0; i <= 8; i++) {
         const gx = 0.06 + i * 0.235
-        p.box(gx, 1.3, 30, 0.04, 0.04, 30, gold(), { lineWidth: 0.8, shine: false })
+        p.box(gx, 1.3, 30, 0.04, 0.04, 30, bars, { lineWidth: 0.8, shine: false })
+        if (lv >= 4) {
+            const [fx, fy] = p.pt(gx + 0.02, 1.32, 63)
+            p.reset()
+            ctx.fillStyle = PAL.gold
+            ctx.strokeStyle = INK
+            ctx.lineWidth = 0.7
+            ctx.beginPath()
+            ctx.arc(fx, fy, 1.5, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.stroke()
+        }
     }
-    p.box(0.02, 1.27, 58, 1.96, 0.1, 4, gold(), { lineWidth: 1 })
+    p.box(0.02, 1.27, 58, 1.96, 0.1, 4, bars, { lineWidth: 1 })
+    if (lv >= 5) {
+        // A gold arch across the window.
+        p.faceY(0.06, 1.3, 58)
+        ctx.strokeStyle = INK
+        ctx.lineWidth = 2.6
+        ctx.beginPath()
+        ctx.moveTo(1, 0)
+        ctx.quadraticCurveTo(30, -10, 59, 0)
+        ctx.stroke()
+        ctx.strokeStyle = PAL.gold
+        ctx.lineWidth = 1.4
+        ctx.stroke()
+        p.reset()
+    }
     // Side post at the front right corner, up to the sign.
     p.box(1.9, 1.3, 30, 0.08, 0.08, 40, trim)
     p.box(0.02, 1.25, 70, 0.08, 0.08, 0, trim)
-    // Roof sign.
+    // Roof (gold-edged from level 3).
     p.box(0.0, 0.0, 70, 2.0, 1.5, 6, faceColors(darken(wall, 0.15)))
-    p.box(0.2, 1.3, 76, 1.6, 0.14, 18, decor >= 3 ? gold() : faceColors('#e11d48'))
+    if (lv >= 3) {
+        p.faceY(0.0, 1.5, 76)
+        ctx.fillStyle = PAL.gold
+        ctx.fillRect(0, 0.5, 64, 1.4)
+        p.reset()
+    }
+    // Roof sign: a plank, red, gold, then neon on black.
+    const signColors = lv >= 5 ? faceColors('#2a1b30') : lv >= 3 ? gold() : lv >= 1 ? faceColors('#e11d48') : faceColors(PAL.woodDark)
+    p.box(0.2, 1.3, 76, 1.6, 0.14, 18, signColors)
     p.faceY(0.2, 1.44, 94)
     roundRect(ctx, 2.5, 2.5, 1.6 * 32 - 5, 13, 4)
-    ctx.fillStyle = PAL.cream
-    ctx.fill()
-    p.text('CASHIER', 0.8 * 32, 9.5, 10, '#9f1239', { maxWidth: 1.6 * 32 - 8 })
+    if (lv >= 5) {
+        ctx.fillStyle = '#120c1d'
+        ctx.fill()
+        ctx.save()
+        ctx.shadowColor = '#22d3ee'
+        ctx.shadowBlur = 4 * p.res
+        ctx.strokeStyle = '#a5f3fc'
+        ctx.lineWidth = 1
+        roundRect(ctx, 3.8, 3.8, 1.6 * 32 - 7.6, 10.4, 3)
+        ctx.stroke()
+        ctx.shadowColor = '#ff4fd8'
+        ctx.shadowBlur = 5 * p.res
+        p.text('CASHIER', 0.8 * 32, 9.5, 10, '#ffd1f4', { maxWidth: 1.6 * 32 - 10, stroke: '#ff4fd8', strokeWidth: 1.6 })
+        ctx.restore()
+    } else if (lv >= 3) {
+        ctx.fillStyle = '#2a1b30'
+        ctx.fill()
+        p.text('CASHIER', 0.8 * 32, 9.5, 10, PAL.goldLight, { maxWidth: 1.6 * 32 - 8 })
+    } else if (lv >= 1) {
+        ctx.fillStyle = PAL.cream
+        ctx.fill()
+        p.text('CASHIER', 0.8 * 32, 9.5, 10, '#9f1239', { maxWidth: 1.6 * 32 - 8 })
+    } else {
+        ctx.fillStyle = PAL.woodLight
+        ctx.fill()
+        p.text('CASHIER', 0.8 * 32, 9.5, 10, PAL.leather, { maxWidth: 1.6 * 32 - 8 })
+    }
     p.reset()
+    if (lv >= 5) lights.neon = project(1.0, 1.44, 85)
+    // Marquee bulbs along the sign's top (and sides from level 4), then the roof's edge.
+    if (lv >= 2) {
+        const n = lv >= 3 ? 9 : 7
+        for (let i = 0; i < n; i++) lights.bulbs.push(project(0.24 + (i * 1.52) / (n - 1), 1.44, 95.5))
+        if (lv >= 4) {
+            for (const gx of [0.22, 1.78]) for (const z of [82, 88]) lights.bulbs.push(project(gx, 1.44, z))
+            for (let i = 0; i < 9; i++) lights.bulbs.push(project(0.1 + i * 0.225, 1.5, 73))
+            for (let i = 1; i < 6; i++) lights.bulbs.push(project(2.0, 1.5 - i * 0.25, 73))
+        }
+        const color = lv >= 5 ? '#fff1fb' : PAL.goldLight
+        for (const at of lights.bulbs) cageBulb(p, at, lv >= 4 ? 1.3 : 1.5, color)
+    }
+    // On the roof's front corners: topiary, then rubies, then diamonds.
+    const corners = [project(0.12, 1.36, 76), project(1.9, 1.36, 76)]
+    if (lv === 2 || lv === 3) {
+        for (const at of corners) {
+            p.reset()
+            const x = p.ox + at.x
+            const y = p.oy + at.y
+            ctx.fillStyle = lv === 3 ? PAL.gold : PAL.pot
+            ctx.strokeStyle = INK
+            ctx.lineWidth = 1
+            roundRect(ctx, x - 3.2, y - 5, 6.4, 5.5, 1.2)
+            ctx.fill()
+            ctx.stroke()
+            ctx.beginPath()
+            ctx.arc(x, y - 9.5, 5.2, 0, Math.PI * 2)
+            ctx.fillStyle = PAL.leafDark
+            ctx.fill()
+            ctx.stroke()
+            ctx.fillStyle = PAL.leaf
+            ctx.beginPath()
+            ctx.arc(x - 1.3, y - 10.8, 3, 0, Math.PI * 2)
+            ctx.fill()
+        }
+    } else if (lv >= 4) {
+        for (const at of corners) {
+            cageGem(p, at, lv >= 5 ? 5.2 : 3.8, lv >= 5 ? '#5eead4' : '#e11d48')
+            lights.gems.push({ x: at.x, y: at.y - (lv >= 5 ? 7 : 5) })
+        }
+    }
+    return lights
 }
 
 // ── architect's desk (2×1) ─────────────────────────────────────────────────

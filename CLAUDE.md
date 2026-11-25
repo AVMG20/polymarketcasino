@@ -248,8 +248,8 @@ Assume every value-changing endpoint gets a burst of parallel requests.
 
 A level 0-10: the number of **casino goals** reached, in any order (`shared/stars.ts` `STAR_GOALS`: casino
 level 5/10/15/20/25, every game built, played, at max level, every special and every cosmetic sold for chips owned (never gem-only ones);
-coins and chips never count). It never goes down. The hub sees a level track (`STAR_LEVELS`, `goals-<n>`
-titles). `server/utils/stars.ts` works it out from the database (`starView`: the build with ready
+coins and chips never count). It never goes down. The hub sees a level track (`STAR_LEVELS`, keys `goals-<n>`:
+the goals' own names, lit in order; `STAR_TITLES` are the casino's level titles). `server/utils/stars.ts` works it out from the database (`starView`: the build with ready
 constructions, specials, distinct `game_rounds` games by index skip scan, `casino_cosmetics`) and sets it with
 `PUT /api/v1/stars`, `seq = max(now in ms, stars_seq + 1)` (a retry of the same level resends its seq:
 `stars_pending_level/seq`); reports of one player run one at a time and the `stars_reported/stars_seq` update is

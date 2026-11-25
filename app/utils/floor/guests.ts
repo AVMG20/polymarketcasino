@@ -92,6 +92,23 @@ export class GuestCrowd {
         return this.guests.length
     }
 
+    /** A guest playing a machine, at random, not one in `skip` (the hospitality staff bring them a tray), or null. */
+    servable(skip: ReadonlySet<Actor | null>): Actor | null {
+        let pick: Actor | null = null
+        let seen = 0
+        for (const g of this.guests) {
+            if (g.state !== 'play' || skip.has(g.actor)) continue
+            seen++
+            if (Math.random() * seen < 1) pick = g.actor
+        }
+        return pick
+    }
+
+    /** The actor is a guest still at their machine (not gone, not leaving). */
+    isPlaying(actor: Actor): boolean {
+        return this.guests.some(g => g.actor === actor && g.state === 'play')
+    }
+
     setWorld(nav: NavGrid, spots: GuestSpot[]) {
         this.nav = nav
         // Wander inside the building, not on the porch.

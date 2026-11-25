@@ -9,9 +9,9 @@ import { MAX_LEVEL, TYCOON_GAMES } from './tycoon'
  * played, so the level never goes down. The level is reported to the hub
  * whenever it differs from what the hub holds (server/utils/stars.ts).
  *
- * The hub sees a level track (`STAR_LEVELS`): entry n names level n, "earn n
- * of the 10 casino stars". The goals themselves live here and in the Stars
- * sheet.
+ * The hub sees a level track (`STAR_LEVELS`): the ten goals, listed as in the
+ * Stars sheet. The hub lights the first n entries for level n, whichever goals
+ * were reached. The title of a level (`starTitle`) is the casino's own.
  */
 
 export const CASINO_GAME_SLUG = 'casino'
@@ -42,21 +42,25 @@ export const STAR_GOALS: readonly StarGoalDef[] = [
 
 export const MAX_STAR_LEVEL = STAR_GOALS.length
 
-/** The level track the hub shows: entry n names level n (manifest keys, `[a-z0-9-]{1,40}`). */
-export const STAR_LEVELS: readonly { key: string, name: string, description: string }[] = [
+/**
+ * The level track the hub shows: the goals in Stars-sheet order (manifest keys,
+ * `[a-z0-9-]{1,40}`; the `goals-<n>` keys stay so the hub keeps its rows).
+ */
+export const STAR_LEVELS: readonly { key: string, name: string, description: string }[] = STAR_GOALS.map((goal, i) => ({
+    key: `goals-${i + 1}`,
+    name: goal.name,
+    description: goal.description
+}))
+
+/** The casino's title for each level, 1 to 10 (celebrations, the Stars sheet, the star track). */
+export const STAR_TITLES: readonly string[] = [
     'Opening night', 'Rising star', 'Local favourite', 'Talk of the town', 'High stakes',
     'Big shot', 'Headliner', 'High society', 'Casino mogul', 'Casino legend'
-].map((name, i) => ({
-    key: `goals-${i + 1}`,
-    name,
-    description: i === 0
-        ? 'Earn 1 of the 10 casino stars. A star per goal, in any order: casino level 5, 10, 15, 20 and 25; every game built, played and maxed; every special and every chip cosmetic owned'
-        : `Earn ${i + 1} of the 10 casino stars`
-}))
+]
 
 /** The title of a star level (null at 0). */
 export function starTitle(level: number): string | null {
-    return level > 0 ? STAR_LEVELS[Math.min(level, STAR_LEVELS.length) - 1]?.name ?? null : null
+    return level > 0 ? STAR_TITLES[Math.min(level, STAR_TITLES.length) - 1] ?? null : null
 }
 
 /** What the goals read: the build, the decorations owned, the games played and the cosmetics bought. */
