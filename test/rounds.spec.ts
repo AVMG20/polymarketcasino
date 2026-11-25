@@ -24,13 +24,14 @@ describe('playRound', () => {
         for (const slug of Object.keys(TABLES)) expect(GAMES.find(game => game.slug === slug)?.live).toBe(true)
     })
 
-    it('debits the coin stake, pays the payout and 1% rakeback in chips and returns both balances', async () => {
+    it('debits the coin stake, pays the payout in chips, puts 1% rakeback in the cage and returns both balances', async () => {
         const id = seedPlayer(10_000)
         let chips = 0
         for (let i = 0; i < 30; i++) {
             const round = await playRound(id, 'dice', { bet: 100, options: { chance: 50 } })
             expect(round.rakeback).toBe(1)
-            chips = normalizeCoins(chips + round.payout + round.rakeback)
+            expect(round.rakebackPot).toBe(i + 1)
+            chips = normalizeCoins(chips + round.payout)
             expect(round.balance).toBe(10_000 - 100 * (i + 1))
             expect(round.chips).toBe(chips)
             expect(round.chipsEarned).toBe(round.payout)
@@ -58,11 +59,11 @@ describe('playRound', () => {
         for (let i = 0; i < 9; i++) {
             const round = await playRound(id, 'dice', { bet: 10.0001, options: { chance: 50 } })
             expect(round.stake).toBe(10.0001)
-            // 10.0001 × 1.96 = 19.600196: rounded down to 19.6001; the rakeback 0.100001 to 0.1.
+            // 10.0001 × 1.96 = 19.600196: rounded down to 19.6001; the rakeback (into the cage) 0.100001 to 0.1.
             expect([0, 19.6001]).toContain(round.payout)
             expect(round.rakeback).toBe(0.1)
             coins = normalizeCoins(coins - round.stake)
-            chips = normalizeCoins(chips + round.payout + round.rakeback)
+            chips = normalizeCoins(chips + round.payout)
             expect(round.balance).toBe(coins)
             expect(round.chips).toBe(chips)
         }
@@ -93,9 +94,9 @@ describe('playRound', () => {
             await expect(playRound(id, 'dice', { bet, options: { chance: 50 } })).rejects.toMatchObject({ statusCode: 400 })
         }
         await expect(playRound(id, 'dice', { bet: 100, options: ['chance'] })).resolves.toMatchObject({ stake: 100 })
-        // Only that last round moved money: 100 coins staked, 0 or 196 chips paid, plus 1 chip rakeback.
+        // Only that last round moved money: 100 coins staked, 0 or 196 chips paid (and 1 coin rakeback in the cage).
         expect(coinsOf(id).coins).toBe(9_900)
-        expect([1, 197]).toContain(chipsOf(id))
+        expect([0, 196]).toContain(chipsOf(id))
         expect(ledgerSum(id)).toBe(-100)
     })
 
@@ -131,7 +132,7 @@ describe('playRound', () => {
         expect(coinsOf(id).coins).toBe(0)
         expect(ledgerSum(id)).toBe(-500)
         expect(chipsOf(id)).toBeGreaterThanOrEqual(0)
-        expect(chipsOf(id)).toBe(normalizeCoins(sumCoins(played.map(round => round.payout + round.rakeback)) - sumCoins(played.map(round => round.stakeChips))))
+        expect(chipsOf(id)).toBe(normalizeCoins(sumCoins(played.map(round => round.payout)) - sumCoins(played.map(round => round.stakeChips))))
         for (const r of results) if (r.status === 'rejected') expect(r.reason).toMatchObject({ statusCode: 400 })
     })
 })

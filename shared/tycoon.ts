@@ -172,6 +172,13 @@ export interface TycoonState {
         capacity: number
         /** Coins an hour it fills at now: the current tick's rate, luck included (= `floor.perHour`). */
         perHour: number
+        /**
+         * The rakeback pots, in coins, on top of `stored` and never capped by
+         * `capacity` (collect takes them too): the 1% of your own settled bets,
+         * and of other players' bets in your casino. Missing on old payloads = 0.
+         */
+        rakeback?: number
+        visitors?: number
     }
     /** The floor now: seated guests per tier, the tick's rate and the expected rate (shared/visitors.ts). */
     floor: FloorNow
@@ -251,7 +258,7 @@ export interface TycoonActionResponse {
     coins: number | null
     /** Gem balance after a gem purchase, else null. */
     gems: number | null
-    /** Coins the action collected from the cage (collect only), else 0. */
+    /** Coins the action collected from the cage, rakeback pots included (collect only), else 0. */
     collected: number
     /** The star level change the action caused (a goal reached), once the hub confirmed it. */
     stars?: TycoonStarChange | null

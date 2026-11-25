@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Coins, Gem, Gift, ListChecks, TriangleAlert, Vault, X } from 'lucide-vue-next'
+import { Coins, Gem, Gift, ListChecks, Percent, TriangleAlert, Vault, X } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatCoins, formatCoinsExact } from '#shared/money'
@@ -63,6 +63,7 @@ const FLOW_LABELS = {
     allowance: { label: 'Daily allowance', icon: Gift },
     convert: { label: 'Gems converted', icon: Gem },
     cage: { label: 'Cashier cage', icon: Vault },
+    rakeback: { label: 'Rakeback (1% of bets)', icon: Percent },
     mission: { label: 'Daily missions', icon: ListChecks }
 } as const
 

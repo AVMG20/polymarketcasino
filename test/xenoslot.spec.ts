@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isCoinAmount, normalizeCoins, payFor } from '../shared/money'
+import { isCoinAmount, payFor } from '../shared/money'
 import { seededRng, type Rng } from '../shared/rng'
 import {
     evaluateLine,
@@ -226,7 +226,7 @@ describe('xenoslot buy and stakes', () => {
         const buy = await playRound(id, 'xenoslot', { bet: 100, options: { buy: true } })
         expect(buy.stake).toBe(100 * XS_BUY_COST)
         expect(buy.balance).toBe(100_000 - buy.stake)
-        expect(buy.chips).toBe(normalizeCoins(buy.payout + buy.rakeback))
+        expect(buy.chips).toBe(buy.payout)
         // A player who can't cover the buy is refused and keeps every coin.
         const poor = seedPlayer(1_000)
         await expect(playRound(poor, 'xenoslot', { bet: 100, options: { buy: true } })).rejects.toMatchObject({ statusCode: 400 })

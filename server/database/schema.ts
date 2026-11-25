@@ -202,7 +202,7 @@ export const tableWagers = sqliteTable(
  * `chips` only moves through server/utils/chips.ts, in the same transaction
  * as its chip_transactions row. The cage holds
  * `cage_stored` **coins** (guest income) at `cage_at`; guest income since
- * then is worked out on read. Finished
+ * then is worked out on read. The rakeback pots sit next to it. Finished
  * constructions are applied on every read and action (server/utils/tycoon.ts).
  */
 export const casinoProfiles = sqliteTable('casino_profiles', {
@@ -216,6 +216,15 @@ export const casinoProfiles = sqliteTable('casino_profiles', {
     builders: integer('builders').notNull().default(1),
     cageStored: coins('cage_stored').notNull().default(0),
     cageAt: integer('cage_at', { mode: 'timestamp_ms' }).notNull(),
+    /**
+     * The jar's rakeback pots (server/utils/rakeback.ts), in **coins**, apart
+     * from `cage_stored` and never capped by the cage: `cage_rakeback` is the
+     * 1% of the owner's own settled stakes, `cage_visitors` the 1% of other
+     * players' stakes in this casino. Raised by a guarded `+ ?` update in the
+     * unit that settles the stake; collect takes both (server/utils/tycoon.ts).
+     */
+    cageRakeback: coins('cage_rakeback').notNull().default(0),
+    cageVisitors: coins('cage_visitors').notNull().default(0),
     rushUntil: integer('rush_until', { mode: 'timestamp_ms' }),
     /** The running ad campaign that ends first and when (kept for old readers; `campaigns` has them all). */
     campaign: text('campaign'),

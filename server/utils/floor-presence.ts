@@ -202,6 +202,20 @@ export function createFloorPresence(source: PresenceSource, now: () => number = 
             const room = rooms.get(casinoId)
             if (room) room.walkable = null
         },
+        /**
+         * Send `message` to the casino owner's own sockets in their room (display
+         * news, like a visitor's rakeback). `make` runs only when the owner is
+         * there. Returns whether anyone got it.
+         */
+        toOwner(casinoId: string, make: () => PresenceServerMessage | null): boolean {
+            const owner = rooms.get(casinoId)?.members.get(casinoId)
+            if (!owner?.peers.size) return false
+            const message = make()
+            if (!message) return false
+            const payload = JSON.stringify(message)
+            for (const peer of owner.peers) write(peer, payload)
+            return true
+        },
         /** The players in a casino's room now (tests, diagnostics). */
         members(casinoId: string): PresenceMember[] {
             return [...(rooms.get(casinoId)?.members.values() ?? [])].map(view)

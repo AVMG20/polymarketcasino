@@ -74,10 +74,10 @@ describe('card climb rounds', () => {
         await expect(actStepRound(id, 'hilo', { action: { type: 'skip' } })).rejects.toMatchObject({ statusCode: 400 })
         const out = await cashOutStepRound(id, 'hilo')
         const paid = payFor(100, hiloMultiplier([7, 10]))
-        // The cash-out plus the 1% rakeback on the bet, paid at settle.
-        expect(out).toMatchObject({ chipsEarned: paid, rakeback: 1, chips: normalizeCoins(paid + 1), balance: 900 })
-        expect(chipsOf(id)).toBe(normalizeCoins(paid + 1))
-        expect(chipLedgerSum(id)).toBe(normalizeCoins(paid + 1))
+        // The cash-out in chips; the 1% rakeback on the bet goes into the cage (coins), not the chips.
+        expect(out).toMatchObject({ chipsEarned: paid, rakeback: 1, rakebackPot: 1, chips: paid, balance: 900 })
+        expect(chipsOf(id)).toBe(paid)
+        expect(chipLedgerSum(id)).toBe(paid)
         expect(ledgerSum(id)).toBe(-100)
         expect(currentStepRound(id, 'hilo')).toBeNull()
     })
@@ -87,9 +87,9 @@ describe('card climb rounds', () => {
         await startStepRound(id, 'hilo', { bet: 100 }, deck(6))
         const bust = await actStepRound(id, 'hilo', { step: 0, action: { type: 'guess', guess: 'higher' } }, deck(2))
         expect(bust.round).toMatchObject({ status: 'lost', payout: 0 })
-        // A bust settles the stake: only its rakeback comes back.
-        expect(bust).toMatchObject({ chipsEarned: 0, rakeback: 1, chips: 1 })
-        expect(chipsOf(id)).toBe(1)
+        // A bust settles the stake: its rakeback goes into the cage.
+        expect(bust).toMatchObject({ chipsEarned: 0, rakeback: 1, rakebackPot: 1, chips: 0 })
+        expect(chipsOf(id)).toBe(0)
         expect(coinsOf(id).coins).toBe(900)
     })
 
@@ -105,7 +105,7 @@ describe('card climb rounds', () => {
         const ok = burst.flatMap(r => r.status === 'fulfilled' ? [r.value] : [])
         expect(ok).toHaveLength(1)
         for (const r of burst) if (r.status === 'rejected') expect([400, 409]).toContain(r.reason.statusCode)
-        const paid = normalizeCoins(ok.reduce((sum, r) => sum + r.chipsEarned + r.rakeback, 0))
+        const paid = normalizeCoins(ok.reduce((sum, r) => sum + r.chipsEarned, 0))
         expect(chipsOf(id)).toBe(paid)
         expect(chipLedgerSum(id)).toBe(paid)
     })
@@ -122,8 +122,8 @@ describe('card climb rounds', () => {
         const out = await cashOutStepRound(id, 'hilo')
         expect(out.chipsEarned).toBe(MAX_COINS)
         expect(out.rakeback).toBe(10_000)
-        expect(chipsOf(id)).toBe(MAX_COINS + 10_000)
-        expect(chipLedgerSum(id)).toBe(MAX_COINS + 10_000)
+        expect(chipsOf(id)).toBe(MAX_COINS)
+        expect(chipLedgerSum(id)).toBe(MAX_COINS)
         expect(currentStepRound(id, 'hilo')).toBeNull()
     })
 
@@ -148,8 +148,8 @@ describe('card climb rounds', () => {
             logged.mockRestore()
         }
         expect(currentStepRound(played, 'hilo')).toBeNull()
-        // Cashed out by the sweep: the rakeback comes with it; the refund pays none.
-        expect(chipsOf(played)).toBe(normalizeCoins(payFor(100, hiloMultiplier([7])) + 1))
+        // Cashed out by the sweep (its rakeback goes into the cage); the refund pays none.
+        expect(chipsOf(played)).toBe(payFor(100, hiloMultiplier([7])))
         expect([coinsOf(idle).coins, chipsOf(idle)]).toEqual([30, 100])
         expect(ledgerSum(idle)).toBe(0)
         expect(currentStepRound(idle, 'hilo')).toBeNull()

@@ -48,7 +48,7 @@ the Bun and Nuxt versions; don't move the dev server to Node (bun:sqlite would n
   process's rooms), `socket-auth.ts` (Origin + session checks every socket shares), `rate-limit.ts`.
 - `server/api/`: `auth/launch`, `auth/logout`, `dev/login`, `config`, `me`, `wallet/*`,
   `games/[slug]/play`, `games/[slug]/{start,act,cashout,round}` (multi-step games), `games`, `tables` (occupancy), `tables/[slug]/ws` (WebSocket), `floor/[casinoId]/ws` (who walks
-  around a casino floor: positions and looks, no money, no writes), `tycoon`
+  around a casino floor: positions and looks, no money, no writes; the owner also hears visitors' rakeback), `tycoon`
   (state), `tycoon/collect`, `tycoon/build`, `tycoon/campaign`, `tycoon/gems`, `tycoon/rules`, `tycoon/history`,
   `tycoon/decor` (buy a decoration), `tycoon/place` (move a game, place or put away a decoration). `server/routes/healthz`.
   `server/plugins/hub-sync.ts` (manifest, heartbeat, retry sweeps), `server/plugins/tables.ts` (escrow
@@ -147,17 +147,23 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
   other writes keep the old level on the row until then (`Casino.legacyDecor`), and a gem skip can't finish a
   Decor level.
 
-- Economy v2, "claim coins, win chips": coins come only from the cashier cage (guest income,
-  **coins**, collected at the cage) and gem converts; every payout is **chips** (solo and live). Chips build
-  (zones, games, levels, upgrades, ad campaigns) and can be bet; they never turn back into coins. Gems never
-  buy chips.
+- Economy v2, "claim coins, win chips": coins come only from the cashier cage (guest income and the 1%
+  rakeback pots, **coins**, collected at the cage) and gem converts; every payout is **chips** (solo and live).
+  Chips build (zones, games, levels, upgrades, ad campaigns) and can be bet; they never turn back into coins
+  (only the 1% rakeback on a stake they paid lands as coins). Gems never buy chips.
 - Every stake is paid coins first, then chips for the rest (`splitStake` in `shared/tycoon.ts`;
   `coins.stake(...)` on the server, two guarded debits). There is no currency choice: the play endpoint
   ignores a `funding` field. `game_rounds.stake_chips` / `table_wagers.amount_chips` hold the chip part.
-- Rakeback (`shared/rakeback.ts`): every **settled** stake pays 1% (`rakebackOf`, rounded down) in chips via
-  `payRakeback` (`server/utils/rakeback.ts`) in the unit that settles it (solo round, step-round settle, table
-  `settleWagers`): to the player, or to the host when played in someone else's casino (round/seat `host`,
-  `step_rounds.host`; a host without a casino falls back to the player). Never on refunds.
+- Rakeback (`shared/rakeback.ts`): every **settled** stake pays 1% (`rakebackOf`, rounded down) as **coins into a
+  cage pot** via `payRakeback` (`server/utils/rakeback.ts`) in the unit that settles it (solo round, step-round
+  settle, table `settleWagers`): the player's `casino_profiles.cage_rakeback`, or the host's `cage_visitors` when
+  played in someone else's casino (round/seat `host`, `step_rounds.host`; a host without a casino falls back to the
+  player). One guarded `+ ?` update, no coin or chip move, no ledger row (the host is not touched by the unit).
+  Never on refunds. The pots sit on top of `cage_stored`, never capped by the capacity (the cage-full logic reads
+  only `cage_stored`); `saveCasino` never writes them. Collect takes the cage and both pots in one compare-and-set
+  (`cage_at` and the pots as read). Responses carry the player's pot (`rakebackPot`; tables: on `balance`); a
+  visitor's rakeback is pushed after commit (`coins.afterCommit` → `onVisitorRakeback`) to the owner's floor
+  socket as `{ t: 'rakeback', amount, pot, from, game }`: display only.
 - Chips move only through `creditChips` / `debitChips` (`server/utils/chips.ts`), and only inside a
   `coinTransaction` / `commitCoins` unit (`coins.creditChips`, `coins.debitChips`, or the raw functions on
   `coins.tx`): the unit watches chip moves to check stars, and a chip move outside one throws. Each
@@ -214,10 +220,10 @@ the backroom (Pegfall, Spiñata); everything else is built with **chips**, and a
 - Coins never become gems. Only the hub creates gems; the casino only spends them (convert) at
   1 gem = 1,000 coins.
 - Ledger category = the game's plain lowercase name (`'dice'`, `'spinata'`, `'convert'`, `'cage'` (old rows: `'allowance'`),
-  `'cage'`); the live tables use their slug (`'blackjack'`, `'baccarat'`, `'casino-holdem'`,
-  `'three-card-poker'`). Returned money passes `{ refund: true }`. Chip reasons: `bet:<slug>`,
-  `win:<slug>`, `refund:<slug>`, `rakeback:<slug>` (your own 1%), `host:<slug>` (a visitor's 1% to the
-  host), `build:<kind>:<id>`, `campaign:<id>`, `decor:<type>`.
+  `'rakeback'` (both cage pots, credited on collect next to the `'cage'` row)); the live tables use their slug
+  (`'blackjack'`, `'baccarat'`, `'casino-holdem'`, `'three-card-poker'`). Returned money passes `{ refund: true }`. Chip reasons: `bet:<slug>`,
+  `win:<slug>`, `refund:<slug>`, `build:<kind>:<id>`, `campaign:<id>`, `decor:<type>` (old rows also
+  `rakeback:<slug>` / `host:<slug>`, from when the rakeback was chips).
 
 ## Concurrency (SQLite, one writer)
 

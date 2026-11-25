@@ -15,7 +15,6 @@ import { SESSION_COOKIE, sessionConfig } from '../server/utils/session'
 import { seededRng } from '../shared/rng'
 import type { ServerMessage } from '../shared/tables/protocol'
 import { sumCoins } from '../shared/money'
-import { rakebackOf } from '../shared/rakeback'
 import { amsterdamDay } from '../shared/economy'
 import { BONUS_MISSION } from '../shared/missions'
 import { chipLedgerSum, chipsOf, coinsOf, giveChips, ledgerSum, seedPlayer } from './setup/players'
@@ -47,13 +46,13 @@ describe('table escrow', () => {
         const id = seedPlayer(START)
         const { wagerIds } = stakeWagers(id, 'baccarat', 1, [{ amount: 100, kind: 'player' }, { amount: 200, kind: 'banker' }]).value
         const input = { playerId: id, game: 'baccarat', wagerIds, staked: 300, payout: 490, summary: {} }
-        // The stake was coins; the whole payout comes as chips, with the 1% rakeback on the 300 staked.
-        expect(settleWagers(input).value).toEqual({ kind: 'settled', balance: START - 300, chips: 493, chipsEarned: 490, rakeback: 3 })
+        // The stake was coins; the whole payout comes as chips, and the 1% rakeback on the 300 staked goes into the cage.
+        expect(settleWagers(input).value).toEqual({ kind: 'settled', balance: START - 300, chips: 490, chipsEarned: 490, rakeback: 3, rakebackPot: 3 })
         expect(settleWagers(input).value).toEqual({ kind: 'closed' })
         expect(coinsOf(id).coins).toBe(START - 300)
         expect(ledgerSum(id)).toBe(-300)
-        expect(chipsOf(id)).toBe(493)
-        expect(chipLedgerSum(id)).toBe(493)
+        expect(chipsOf(id)).toBe(490)
+        expect(chipLedgerSum(id)).toBe(490)
         expect(openRows(id)).toHaveLength(0)
         expect(rounds(id)).toMatchObject([{ game: 'baccarat', stake: 300, payout: 490, funding: 'coins' }])
     })
@@ -63,11 +62,11 @@ describe('table escrow', () => {
         const { wagerIds } = stakeWagers(id, 'baccarat', 1, [{ amount: 0.1, kind: 'banker' }, { amount: 0.2, kind: 'player' }, { amount: 50, kind: 'tie' }]).value
         // 0.1 + 0.2 + 50 in floats is 50.300000000000004: still the same escrow.
         const result = settleWagers({ playerId: id, game: 'baccarat', wagerIds, staked: 0.1 + 0.2 + 50, payout: 97.5, summary: {} }).value
-        // Rakeback: 1% of 50.3 is 0.503.
-        expect(result).toMatchObject({ kind: 'settled', balance: START - 50.3, chips: 98.003, rakeback: 0.503 })
+        // Rakeback (into the cage): 1% of 50.3 is 0.503.
+        expect(result).toMatchObject({ kind: 'settled', balance: START - 50.3, chips: 97.5, rakeback: 0.503 })
         expect(coinsOf(id).coins).toBe(START - 50.3)
         expect(ledgerSum(id)).toBe(-50.3)
-        expect(chipsOf(id)).toBe(98.003)
+        expect(chipsOf(id)).toBe(97.5)
         expect(() => settleWagers({ playerId: id, game: 'baccarat', wagerIds: [], staked: 0, payout: 1.23456, summary: {} })).toThrow('4 decimals')
     })
 
@@ -80,10 +79,10 @@ describe('table escrow', () => {
         expect(openRows(id).map(row => [row.amount, row.amountChips]).sort()).toEqual([[400, 400], [500, 200]])
         expect(() => stakeWagers(id, 'blackjack', 1, [{ amount: 5_000, kind: 'double' }])).toThrow(expect.objectContaining({ statusMessage: 'Not enough coins or chips' }))
         expect(settleWagers({ playerId: id, game: 'blackjack', wagerIds, staked: 900, payout: 1_800, summary: {} }).value)
-            .toEqual({ kind: 'settled', balance: 0, chips: 6_209, chipsEarned: 1_800, rakeback: 9 })
+            .toEqual({ kind: 'settled', balance: 0, chips: 6_200, chipsEarned: 1_800, rakeback: 9, rakebackPot: 9 })
         expect(rounds(id)).toMatchObject([{ stake: 900, stakeChips: 600, payout: 1_800, funding: 'coins' }])
         const reasons = db.select({ reason: chipTransactions.reason }).from(chipTransactions).where(eq(chipTransactions.playerId, id)).all().map(row => row.reason)
-        expect(reasons).toEqual(['bet:blackjack', 'bet:blackjack', 'win:blackjack', 'rakeback:blackjack'])
+        expect(reasons).toEqual(['bet:blackjack', 'bet:blackjack', 'win:blackjack'])
     })
 
     it('stakes chips alone once the coins are gone, and refunds each part in its own currency', async () => {
@@ -179,8 +178,7 @@ function seat(table: AnyTable, index: number, coins = START, chips = 0) {
 function settledCorrectly(id: string) {
     expect(openRows(id)).toHaveLength(0)
     const staked = sumCoins(rounds(id).filter(round => round.funding === 'coins').map(round => round.stake))
-    // Every payout and the 1% rakeback on every settled stake, in chips.
-    const paid = sumCoins(rounds(id).flatMap(round => [round.payout, rakebackOf(round.stake)]))
+    const paid = sumCoins(rounds(id).map(round => round.payout))
     expect(coinsOf(id).coins).toBe(START - staked)
     expect(ledgerSum(id)).toBe(-staked)
     expect(chipLedgerSum(id)).toBe(paid)
@@ -324,9 +322,9 @@ describe('live tables with chips', () => {
         vi.advanceTimersByTime(4_000 + 2_500)
         const [round] = rounds(a.id)
         expect(round).toMatchObject({ stake: 1_000, stakeChips: 600 })
-        // The payout and the 1% rakeback (10 on 1,000).
-        expect(chipsOf(a.id)).toBe(4_410 + round!.payout)
-        expect(a.inbox.filter(m => m.t === 'balance').at(-1)).toEqual({ t: 'balance', balance: 0, chips: 4_410 + round!.payout })
+        // The payout in chips; the 1% rakeback (10 on 1,000) goes into the cage and the pot comes with the balance.
+        expect(chipsOf(a.id)).toBe(4_400 + round!.payout)
+        expect(a.inbox.filter(m => m.t === 'balance').at(-1)).toEqual({ t: 'balance', balance: 0, chips: 4_400 + round!.payout, rakebackPot: 10 })
     })
 
     it('an abandoned round hands each part back in its own currency', () => {

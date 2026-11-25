@@ -202,3 +202,18 @@ describe('0014_stars_seen', () => {
         ])
     })
 })
+
+describe('0015_cage_rakeback', () => {
+    it('gives every casino two empty rakeback pots and leaves the cage alone', () => {
+        const sqlite = new Database(join(scratch, `${crypto.randomUUID()}.sqlite`), { create: true, strict: true })
+        sqlite.exec('PRAGMA foreign_keys = ON')
+        const db = drizzle({ client: sqlite, schema })
+        migrate(db, { migrationsFolder: before('0015_cage_rakeback') })
+        sqlite.run(`insert into players (id, name, coins, peak_coins) values ('o1', 'Owner', 0, 0)`)
+        sqlite.run(`insert into casino_profiles (player_id, zones, games, upgrades, golden, cage_stored, cage_at) values ('o1', '["backroom"]', '{"plinko":1}', '{}', '[]', 1234500, 0)`)
+        migrate(db, { migrationsFolder: DRIZZLE })
+        expect(sqlite.query(`select cage_stored as stored, cage_rakeback as rakeback, cage_visitors as visitors from casino_profiles`).get()).toEqual({ stored: 1_234_500, rakeback: 0, visitors: 0 })
+        // Read through the schema: coins.
+        expect(db.select({ rakeback: schema.casinoProfiles.cageRakeback, visitors: schema.casinoProfiles.cageVisitors }).from(schema.casinoProfiles).get()).toEqual({ rakeback: 0, visitors: 0 })
+    })
+})

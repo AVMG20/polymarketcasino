@@ -11,8 +11,8 @@ import { GAME_EMBED, QUICK_GAMES } from '~/utils/game-embed'
  * the floor still running above; everything else takes the whole screen with a
  * zoom-in from the machine (the floor is paused behind it). Live tables can be
  * watched without being built; sitting needs the game. The game's header
- * (GameFrame) shows the rakeback chip; visiting, the host badge says the
- * owner gets it.
+ * (GameFrame) shows the rakeback chip; visiting, the host badge says it
+ * goes to the owner's cage.
  */
 const props = defineProps<{ slug: string | null }>()
 const emit = defineEmits<{ close: [], build: [slug: string] }>()
@@ -46,7 +46,7 @@ const unlocked = computed(() => atHost.value || (!!shown.value && !!tycoon.state
 const playable = computed(() => !tycoon.state.value || unlocked.value || !!game.value?.live)
 
 const open = computed(() => !!props.slug && !!game.value)
-/** "1%": the share of every bet that comes back in chips (shared/rakeback.ts). */
+/** "1%": the share of every bet that goes into a cage as coins (shared/rakeback.ts). */
 const rakeback = `${Math.round(RAKEBACK * 100)}%`
 
 // Escape leaves a full-screen game (quick games close through their sheet).
@@ -68,7 +68,7 @@ const quickOpen = computed(() => open.value && quick.value)
   <TycoonSheet :open="quickOpen" :modal="false" size="wide" max-height="min(85dvh, calc(100dvh - 7rem))" :z="45" @close="emit('close')" @closed="closed">
     <template v-if="shown && quick">
       <p v-if="atHost" class="g-ui flex justify-center px-3 pt-1 pb-1.5">
-        <span class="host-badge"><Store class="size-3.5" :stroke-width="3" />Playing at {{ host?.name }}'s casino · {{ rakeback }} of your bets goes to them</span>
+        <span class="host-badge"><Store class="size-3.5" :stroke-width="3" />Playing at {{ host?.name }}'s casino · {{ rakeback }} of your bets goes to their cage</span>
       </p>
       <component :is="component" v-if="playable && component" :key="shown" />
       <TycoonLockedGame v-else :slug="shown" overlay @build="emit('build', shown!)" />
@@ -89,11 +89,11 @@ const quickOpen = computed(() => open.value && quick.value)
         </div>
         <!-- Games without the GameFrame header (the slots) say where the rakeback goes under the game. -->
         <p v-if="playable && component && !headerClaimed && !atHost" class="g-ui px-4 pt-1 pb-3 text-center text-xs font-semibold text-[var(--g-muted)]">
-          Every bet gives you {{ rakeback }} back in chips
+          Every bet puts {{ rakeback }} back in your cage as coins
         </p>
         <!-- Visiting: whose casino this game stands in (your own coins and chips pay). -->
         <p v-if="atHost" class="g-ui pointer-events-none fixed inset-x-0 top-[3.75rem] z-40 flex justify-center px-3">
-          <span class="host-badge"><Store class="size-3.5" :stroke-width="3" />Playing at {{ host?.name }}'s casino · {{ rakeback }} of your bets goes to them</span>
+          <span class="host-badge"><Store class="size-3.5" :stroke-width="3" />Playing at {{ host?.name }}'s casino · {{ rakeback }} of your bets goes to their cage</span>
         </p>
       </div>
     </Transition>

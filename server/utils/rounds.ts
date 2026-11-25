@@ -27,8 +27,10 @@ export interface RoundResponse {
     stakeChips: number
     /** The round's payout, paid in chips (0 on a loss); the same number as `payout`. */
     chipsEarned: number
-    /** The rakeback the player got on the stake, in chips (0 when it went to the casino they visit); `chips` includes it. */
+    /** The rakeback on the stake that went into the player's own cage, in coins (0 when it went to the casino they visit). */
     rakeback: number
+    /** The player's rakeback pot in the cage after the round, when it grew; else null. */
+    rakebackPot: number | null
 }
 
 /**
@@ -42,8 +44,8 @@ export interface RoundResponse {
  * coins don't cover (each part a guarded debit), and the whole payout, stake
  * included, is paid in **chips**, in the same transaction. A `funding` field
  * from an older client is ignored. The game must be built in My Casino (403
- * otherwise). The stake's rakeback (1% in chips) lands in the same
- * transaction: the player's, or the host's when played in their casino.
+ * otherwise). The stake's rakeback (1%, coins into a cage pot) lands in the
+ * same transaction: the player's cage, or the host's when played in their casino.
  */
 export interface PlayBody {
     bet?: unknown
@@ -94,9 +96,8 @@ export async function playRound(playerId: string, slug: string, body: PlayBody):
         if ((casino.games[slug] ?? 0) < 1 && !hosted) throw notBuiltError(slug)
 
         const paid = coins.stake({ playerId, amount: stake, category: slug })
-        const afterWin = payout > 0 ? coins.creditChips({ playerId, amount: payout, reason: `win:${slug}` }) : paid.chipBalance
+        const chips = payout > 0 ? coins.creditChips({ playerId, amount: payout, reason: `win:${slug}` }) : paid.chipBalance
         const back = payRakeback(coins, { playerId, game: slug, stake, host: hosted ? host : null })
-        const chips = back.chipBalance ?? afterWin
         const round = coins.tx.insert(gameRounds).values({
             playerId,
             game: slug,
@@ -107,9 +108,9 @@ export async function playRound(playerId: string, slug: string, body: PlayBody):
             summary: outcome.summary
         }).returning({ id: gameRounds.id }).get()
         recordMissions(coins.tx, playerId, roundMissionEvents({ playerId, game: slug, stake, payout, multiple: outcome.multiple, host }))
-        return { roundId: round.id, balance: paid.balance, chips, chipsEarned: payout, rakeback: back.rakeback, stakeCoins: paid.coins, stakeChips: paid.chips }
+        return { roundId: round.id, balance: paid.balance, chips, chipsEarned: payout, rakeback: back.rakeback, rakebackPot: back.pot, stakeCoins: paid.coins, stakeChips: paid.chips }
     }, playerId)
 
-    // The unit may have moved the host's chips too: theirs is reported in the background, the response carries the player's own.
+    // The response carries the player's own star change (the host's pot is no coin or chip move).
     return { ...value, game: slug, stake, payout, result: outcome.result, stars: ownStarChange(playerId, stars) }
 }

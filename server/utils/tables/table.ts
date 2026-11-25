@@ -347,7 +347,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
                     this.pushBalance(player, outcome, committed)
                     continue
                 }
-                this.pushBalance(player, outcome, committed)
+                this.pushBalance(player, outcome, committed, outcome.rakebackPot)
                 const net = normalizeCoins(result.payout - result.staked)
                 this.recordResult(player, net)
             } catch (error) {
@@ -416,12 +416,12 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
         return this.seated().flatMap(player => player.wagerIds)
     }
 
-    /** Tell the player's sockets both balances (`balance` = coins, `chips`), then any star change. */
-    private pushBalance(player: TablePlayer<TSeat>, balances: { balance: number, chips: number }, committed: CommittedCoins<unknown>) {
+    /** Tell the player's sockets both balances (`balance` = coins, `chips`) and their rakeback pot when a settle raised it, then any star change. */
+    private pushBalance(player: TablePlayer<TSeat>, balances: { balance: number, chips: number }, committed: CommittedCoins<unknown>, rakebackPot: number | null = null) {
         player.coins = balances.balance
         player.chips = balances.chips
         player.balance = bankroll(player.coins, player.chips)
-        this.bus.sendToPlayer(player.playerId, { t: 'balance', balance: balances.balance, chips: balances.chips })
+        this.bus.sendToPlayer(player.playerId, { t: 'balance', balance: balances.balance, chips: balances.chips, ...(rakebackPot !== null ? { rakebackPot } : {}) })
         const playerId = player.playerId
         void committed.stars.then((changes) => {
             // Handed over (and claimed as seen) only while the player has a socket here; else their next read celebrates it.

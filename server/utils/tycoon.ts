@@ -5,7 +5,7 @@ import { casinoLevel } from '../../shared/casino-level'
 import { DECOR_TYPES, findDecor, placedSpecials, specialBonus, type BuyDecorBody, type DecorType, type OwnedDecor, type PlaceBody } from '../../shared/decor'
 import { furnitureGrants, layoutOf, layoutStateOf, placementProblem, type LayoutInput } from '../../shared/floor/placement'
 import { findGame } from '../../shared/games/registry'
-import { roundCoins } from '../../shared/money'
+import { roundCoins, sumCoins } from '../../shared/money'
 import {
     DOOR_RULES,
     floorNow,
@@ -111,6 +111,8 @@ export interface Casino {
     cageStored: number
     /** ms */
     cageAt: number
+    /** The jar's rakeback pots, in coins, read with the row (server/utils/rakeback.ts). Never written by `saveCasino`: only their own guarded updates move them. */
+    pots: { rakeback: number, visitors: number }
     rushUntil: number | null
     /** Ad campaigns, one per kind (some may have run out). */
     campaigns: RunningCampaignRef[]
@@ -173,7 +175,9 @@ function newProfile(playerId: string, now: number) {
         golden: [],
         builders: 1,
         cageStored: STARTER_CAGE,
-        cageAt: new Date(now)
+        cageAt: new Date(now),
+        cageRakeback: 0,
+        cageVisitors: 0
     }
 }
 
@@ -222,6 +226,7 @@ function fromRow(row: ProfileRow, constructions: ConstructionRow[], decor: Decor
         gemBuilder,
         cageStored: row.cageStored,
         cageAt: row.cageAt.getTime(),
+        pots: { rakeback: row.cageRakeback ?? 0, visitors: row.cageVisitors ?? 0 },
         rushUntil: row.rushUntil?.getTime() ?? null,
         campaigns: campaignsFromRow(row),
         constructions: constructions.filter(known).sort((a, b) => a.readyAt.getTime() - b.readyAt.getTime()),
@@ -576,7 +581,9 @@ export function toState(casino: Casino, now: number, gemsEnabled: boolean, house
         cage: {
             stored: view.cageStored,
             capacity: cageCapacity(view.upgrades.cage),
-            perHour: floor.perHour
+            perHour: floor.perHour,
+            rakeback: view.pots.rakeback,
+            visitors: view.pots.visitors
         },
         floor,
         ...(house ? { house: houseState(casinoView(view), now, view.rulesAt) } : {}),
@@ -636,26 +643,40 @@ function starOf(stars: StarChange[], playerId: string): TycoonStarChange | null 
 }
 
 /**
- * Empty the cage into the coin balance. Whole coins only: the fraction stays
- * in the cage. The compare-and-set on `cage_at` is the guard, so parallel
- * collects pay the cage once.
+ * Empty the cage into the coin balance: the guest income (whole coins only:
+ * the fraction stays in the cage, category 'cage') and both rakeback pots in
+ * full (category 'rakeback'), in one transaction. One update is the guard: a
+ * compare-and-set on `cage_at` and on the pots as read in this unit, so
+ * parallel collects pay the cage and the pots once. A cage with nothing in it
+ * but a pot still collects.
  */
 export async function collectCage(playerId: string, now = Date.now()): Promise<TycoonActionResponse> {
     const { value, stars } = await coinTransaction((coins) => {
         const casino = advanceCasino(coins.tx, playerId, now)
         const readAt = casino.cageAt
+        const pots = casino.pots
         accrueCage(casino, now)
         const amount = Math.floor(casino.cageStored)
-        if (amount <= 0) return { collected: 0, balance: null }
+        const rakeback = sumCoins([pots.rakeback, pots.visitors])
+        if (amount <= 0 && rakeback <= 0) return { collected: 0, balance: null }
         const emptied = coins.tx.update(casinoProfiles)
-            .set({ cageStored: roundCoins(casino.cageStored - amount), cageAt: new Date(Math.max(now, readAt)) })
-            .where(and(eq(casinoProfiles.playerId, playerId), eq(casinoProfiles.cageAt, new Date(readAt))))
+            .set({ cageStored: roundCoins(casino.cageStored - amount), cageAt: new Date(Math.max(now, readAt)), cageRakeback: 0, cageVisitors: 0 })
+            .where(and(
+                eq(casinoProfiles.playerId, playerId),
+                eq(casinoProfiles.cageAt, new Date(readAt)),
+                eq(casinoProfiles.cageRakeback, pots.rakeback),
+                eq(casinoProfiles.cageVisitors, pots.visitors)
+            ))
             .returning({ playerId: casinoProfiles.playerId })
             .get()
         if (!emptied) return { collected: 0, balance: null }
+        casino.pots = { rakeback: 0, visitors: 0 }
         flushHistory(coins.tx, casino)
         recordMissions(coins.tx, playerId, ['collects'], now)
-        return { collected: amount, balance: coins.credit({ playerId, amount, category: 'cage' }).coins }
+        let balance = 0
+        if (amount > 0) balance = coins.credit({ playerId, amount, category: 'cage' }).coins
+        if (rakeback > 0) balance = coins.credit({ playerId, amount: rakeback, category: 'rakeback' }).coins
+        return { collected: sumCoins([amount, rakeback]), balance }
     }, playerId)
     return { state: getTycoonState(playerId, now), coins: value.balance, gems: null, collected: value.collected, stars: starOf(stars, playerId) }
 }

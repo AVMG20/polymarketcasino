@@ -1754,6 +1754,28 @@ export class FloorEngine implements FloorApi {
         }
     }
 
+    /** A visitor's bet at `slug` put `amount` coins of rakeback in the cage: "+N" and a coin rise over that machine (over the cage when it isn't on the floor). */
+    rakeback(slug: string, amount: number) {
+        if (this.paused || this.destroyed || this.arranger.active || !(amount > 0)) return
+        const view = this.plots.get(slug)
+        const pile = this.cage?.pilePoint()
+        const at = view && view.show !== 'ghost' ? view.topPoint() : pile ? { x: pile.x, y: pile.y - 30 } : null
+        if (!at) return
+        this.floaters.spawn(`+${formatCoins(amount, amount >= 10_000)}`, at.x + 10, at.y - 6, COIN_TINT, 17)
+        if (!this.reduced) {
+            this.particles.spawn(this.fx.coin.texture, at.x - 6, at.y, {
+                vx: (Math.random() - 0.5) * 12,
+                vy: -46,
+                gravity: 0,
+                life: 0,
+                max: 0.9,
+                scale0: 0.6,
+                scale1: 0.5,
+                drag: 0.4
+            })
+        }
+    }
+
     playing(slug: string, on: boolean) {
         if (on) this.playingSet.add(slug)
         else this.playingSet.delete(slug)

@@ -36,9 +36,9 @@ import { payRakeback } from './rakeback'
  *   lock and the flip; a round pays once.
  *
  * The stake's rakeback (shared/rakeback.ts) is paid when the round settles
- * (cash-out, bust, the sweep), never at start: to the player, or to the host
- * stored on the row when it was started in someone else's casino. A refund
- * pays none.
+ * (cash-out, bust, the sweep), never at start, as coins into a cage pot: the
+ * player's, or the host's stored on the row when it was started in someone
+ * else's casino. A refund pays none.
  *
  * Abandoned rounds stay open: the player finds them again on the game's page
  * (GET /round) and plays on or cashes out. A round nobody touched for
@@ -95,8 +95,10 @@ export interface StepResponse<V = unknown> {
     stars: StarChange | null
     /** Chips this response paid (the cash-out); 0 otherwise. */
     chipsEarned: number
-    /** The rakeback the player got when this response settled the round (0 when it went to the host, or nothing settled); `chips` includes it. */
+    /** The rakeback that went into the player's own cage when this response settled the round, in coins (0 when it went to the host, or nothing settled). */
     rakeback: number
+    /** The player's rakeback pot in the cage after, when this response made it grow; else null. */
+    rakebackPot: number | null
 }
 
 interface Row {
@@ -151,7 +153,7 @@ function toView(rules: AnyStepGame, row: Pick<Row, 'id' | 'game' | 'bet' | 'stak
     }
 }
 
-/** The player's own star change: a settle can move the host's chips (the rakeback) in the same unit, reported in the background. */
+/** The player's own star change (other players' are reported in the background). */
 function ownStars(stars: StarChange[], playerId: string): StarChange | null {
     return ownStarChange(playerId, stars)
 }
@@ -174,11 +176,11 @@ function openRow(tx: Tx, playerId: string, slug: string): Row | null {
 
 /**
  * End a round that the rules say is over (lost or cashed): flip it
- * `open → settled` guarded by the step it was read at, pay the cash-out and
- * the stake's rakeback in chips and record it in game_rounds. Returns the
- * payout and the player's rakeback.
+ * `open → settled` guarded by the step it was read at, pay the cash-out in
+ * chips and the stake's rakeback into a cage pot, and record it in
+ * game_rounds. Returns the payout and the player's rakeback.
  */
-function settle(coins: CoinWork, playerId: string, row: Row, rules: AnyStepGame, state: StepState, now: Date): { payout: number, rakeback: number } {
+function settle(coins: CoinWork, playerId: string, row: Row, rules: AnyStepGame, state: StepState, now: Date): { payout: number, rakeback: number, rakebackPot: number | null } {
     const payout = state.status === 'cashed' ? cashValue(row.bet, rules.multiplier(state)) : 0
     const flipped = coins.tx.update(stepRounds)
         .set({ status: 'settled', state: state as unknown as Record<string, unknown>, step: row.step + 1, payout, updatedAt: now, settledAt: now })
@@ -187,8 +189,8 @@ function settle(coins: CoinWork, playerId: string, row: Row, rules: AnyStepGame,
         .get()
     if (!flipped) throw createError({ statusCode: 409, statusMessage: 'The round has moved on' })
     if (payout > 0) coins.creditChips({ playerId, amount: payout, reason: `win:${row.game}` })
-    const { rakeback } = payRakeback(coins, { playerId, game: row.game, stake: row.bet, host: row.host })
-    // A first round of a game can reach a star goal, even a lost one whose rakeback went to the host.
+    const back = payRakeback(coins, { playerId, game: row.game, stake: row.bet, host: row.host })
+    // A first round of a game can reach a star goal, even a lost one.
     coins.checkStars(playerId)
     coins.tx.insert(gameRounds).values({
         playerId,
@@ -200,7 +202,7 @@ function settle(coins: CoinWork, playerId: string, row: Row, rules: AnyStepGame,
         summary: { bet: row.bet, ...rules.summary(state) }
     }).run()
     recordMissions(coins.tx, playerId, roundMissionEvents({ playerId, game: row.game, stake: row.bet, payout }), now.getTime())
-    return { payout, rakeback }
+    return { payout, rakeback: back.rakeback, rakebackPot: back.pot }
 }
 
 /** POST /api/games/<slug>/start: stake and deal a new round. */
@@ -234,7 +236,7 @@ export async function startStepRound(playerId: string, slug: string, body: { bet
         const round = toView(rules, { id: row.id, game: slug, bet: stake, stakeChips: paid.chips }, state, 0)
         return { round, balance: paid.balance, chips: paid.chipBalance }
     }, playerId)
-    return { ...value, stars: ownStars(stars, playerId), chipsEarned: 0, rakeback: 0 }
+    return { ...value, stars: ownStars(stars, playerId), chipsEarned: 0, rakeback: 0, rakebackPot: null }
 }
 
 /** POST /api/games/<slug>/act: one move on the open round, made on the step the client saw. */
@@ -252,8 +254,8 @@ export async function actStepRound(playerId: string, slug: string, body: { step?
         if (row.step !== seen) throw createError({ statusCode: 409, statusMessage: 'The round has moved on' })
         const next = rule(() => rules.act(row.state as unknown as StepState, action, rng))
         if (next.status !== 'open') {
-            const { payout, rakeback } = settle(coins, playerId, row, rules, next, now)
-            return { round: toView(rules, row, next, row.step + 1, payout), chipsEarned: payout, rakeback, ...balances(coins.tx, playerId) }
+            const { payout, rakeback, rakebackPot } = settle(coins, playerId, row, rules, next, now)
+            return { round: toView(rules, row, next, row.step + 1, payout), chipsEarned: payout, rakeback, rakebackPot, ...balances(coins.tx, playerId) }
         }
         const moved = coins.tx.update(stepRounds)
             .set({ state: next as unknown as Record<string, unknown>, step: row.step + 1, updatedAt: now })
@@ -261,7 +263,7 @@ export async function actStepRound(playerId: string, slug: string, body: { step?
             .returning({ id: stepRounds.id })
             .get()
         if (!moved) throw createError({ statusCode: 409, statusMessage: 'The round has moved on' })
-        return { round: toView(rules, row, next, row.step + 1), chipsEarned: 0, rakeback: 0, ...balances(coins.tx, playerId) }
+        return { round: toView(rules, row, next, row.step + 1), chipsEarned: 0, rakeback: 0, rakebackPot: null, ...balances(coins.tx, playerId) }
     }, playerId)
     return { ...value, stars: ownStars(stars, playerId) }
 }
@@ -277,8 +279,8 @@ export async function cashOutStepRound(playerId: string, slug: string, body: { s
         if (body.step !== undefined && row.step !== body.step) throw createError({ statusCode: 409, statusMessage: 'The round has moved on' })
         const state = row.state as unknown as StepState
         const cashed = rule(() => rules.cashOut(state))
-        const { payout, rakeback } = settle(coins, playerId, row, rules, cashed, new Date())
-        return { round: toView(rules, row, cashed, row.step + 1, payout), chipsEarned: payout, rakeback, ...balances(coins.tx, playerId) }
+        const { payout, rakeback, rakebackPot } = settle(coins, playerId, row, rules, cashed, new Date())
+        return { round: toView(rules, row, cashed, row.step + 1, payout), chipsEarned: payout, rakeback, rakebackPot, ...balances(coins.tx, playerId) }
     }, playerId)
     return { ...value, stars: ownStars(stars, playerId) }
 }

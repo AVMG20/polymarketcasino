@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ChartArea, ChartNoAxesColumn, Hammer, LayoutGrid, ListChecks, Megaphone, ScrollText, Shirt, Sofa, Sparkles, Star, Timer, Trophy, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
-import { formatCoins } from '#shared/money'
+import { ChartArea, ChartNoAxesColumn, Hammer, LayoutGrid, ListChecks, Megaphone, RotateCcw, ScrollText, Shirt, Sofa, Sparkles, Star, Store, Timer, Trophy, Users, Volume2, VolumeX, Zap } from 'lucide-vue-next'
+import { formatCoins, formatCoinsExact } from '#shared/money'
 import { findZone, type ZoneId } from '#shared/tycoon'
 
 /**
@@ -51,6 +51,13 @@ const openDrawers = useState<number>('tycoon:open-drawers', () => 0)
 const fold = computed(() => (openDrawers.value > 0 ? 'max-md:hidden' : ''))
 const full = computed(() => tycoon.cageFill.value >= 0.999)
 const stored = computed(() => Math.floor(tycoon.cageStored.value))
+// The rakeback pots ride on top of the guest income (never capped): the jar shows the lot, the details one line each.
+const rakebackPot = computed(() => tycoon.cageRakeback.value)
+const visitorsPot = computed(() => tycoon.cageVisitors.value)
+const jarTotal = computed(() => tycoon.cageTotal.value)
+/** The jar's number pops when a pot grows (a round of yours settled, or a visitor's bet came in). */
+const jarPop = ref(0)
+watch(() => rakebackPot.value + visitorsPot.value, (to, from) => to > from && jarPop.value++)
 
 // Visitors on the floor (capped by the seats) and the hourly guest income, live.
 const visitors = computed(() => tycoon.visitors.value)
@@ -407,17 +414,19 @@ useEventListener('keydown', (event: KeyboardEvent) => {
         data-tip="cage"
         class="cage relative flex items-center gap-2 rounded-[22px] py-1.5 pr-3.5 pl-1.5 transition-transform active:scale-95"
         :class="full ? 'cage-full' : ''"
-        :title="full ? 'Cage full: income stopped. Collect your coins' : `Cage: ${formatCoins(stored)} / ${formatCoins(state?.cage.capacity ?? 0)} coins · +${formatCoins(perHour)} coins/h`"
+        :title="full ? 'Cage full: income stopped. Collect your coins' : `Cage: ${formatCoins(stored)} / ${formatCoins(state?.cage.capacity ?? 0)} coins · +${formatCoins(perHour)} coins/h${rakebackPot > 0 ? ` · rakeback +${formatCoins(rakebackPot)}` : ''}${visitorsPot > 0 ? ` · from visitors +${formatCoins(visitorsPot)}` : ''}`"
         :aria-label="full ? 'Collect the full cage' : 'Cage details'"
         :aria-expanded="info"
         @click="full ? collect() : (info = !info)"
       >
         <span class="relative grid size-12 place-items-center rounded-2xl bg-black/30" :class="full && !reducedMotion ? 'g-bounce' : ''">
           <TycoonChipJar :fill="tycoon.cageFill.value" class="h-11 w-10" />
+          <!-- Visitors' bets put coins in: a gold badge on the jar until it is collected. -->
+          <span v-if="visitorsPot > 0" class="visitors-badge absolute -top-1 -right-1 grid size-5 place-items-center rounded-full" aria-hidden="true"><Store class="size-3" :stroke-width="3" /></span>
         </span>
         <span class="flex flex-col items-start gap-1">
           <span v-if="full" class="g-title full-glow text-lg leading-none text-[#ffc93a] uppercase">Full!</span>
-          <span v-else class="g-num flex items-center gap-1 text-lg leading-none"><CasinoCoinIcon class="size-4" />{{ formatCoins(stored) }}</span>
+          <span v-else :key="jarPop" class="g-num flex items-center gap-1 text-lg leading-none" :class="jarPop ? 'g-pop' : ''"><CasinoCoinIcon class="size-4" />{{ formatCoins(jarTotal) }}</span>
           <span class="g-well block h-2 w-[4.75rem] overflow-hidden rounded-full">
             <span class="block h-full rounded-full bg-gradient-to-r from-[#f08a00] to-[#ffe066] transition-[width] duration-500" :style="{ width: `${tycoon.cageFill.value * 100}%` }" />
           </span>
@@ -433,6 +442,13 @@ useEventListener('keydown', (event: KeyboardEvent) => {
       <Transition name="pop">
         <div v-if="info" class="g-panel absolute top-full left-0 z-10 mt-2.5 w-60 space-y-1.5 rounded-2xl p-3 text-sm">
           <p class="stat-row"><CasinoCoinIcon class="size-4" /> Coins <span class="g-num ml-auto">{{ formatCoins(stored) }} / {{ formatCoins(state?.cage.capacity ?? 0) }}</span></p>
+          <!-- The rakeback pots: on top of the cage, never capped; a collect takes them and the lines go. -->
+          <p v-if="rakebackPot > 0" class="stat-row" :title="`1% of every bet you play here, win or lose: ${formatCoinsExact(rakebackPot)} coins`">
+            <RotateCcw class="size-4 text-[#7ee08f]" :stroke-width="3" /> Rakeback <span class="g-num ml-auto text-[#7ee08f]">+{{ formatCoins(rakebackPot) }}</span>
+          </p>
+          <p v-if="visitorsPot > 0" class="stat-row visitors-row" :title="`1% of every bet other players place in your casino: ${formatCoinsExact(visitorsPot)} coins`">
+            <Store class="size-4 text-[#ffc93a]" :stroke-width="3" /> From visitors <span class="g-num ml-auto text-[#ffe066]">+{{ formatCoins(visitorsPot) }}</span>
+          </p>
           <p class="stat-row" :title="moodTitle">
             <CasinoCoinIcon class="size-4" /> Per hour
             <span v-if="mood" class="text-[11px] font-semibold" :style="{ color: mood.color }">{{ mood.label }}</span>
@@ -645,6 +661,19 @@ useEventListener('keydown', (event: KeyboardEvent) => {
   font-weight: 600;
 }
 .full-glow { animation: full-glow 1.2s ease-in-out infinite; }
+/* Coins from visitors' bets: a gold row in the cage details and a badge on the jar. */
+.visitors-row {
+  margin: 0 -0.4rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 0.6rem;
+  background: rgb(255 201 58 / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(255 201 58 / 0.35);
+}
+.visitors-badge {
+  background: linear-gradient(180deg, #ffe066, #f0a400);
+  color: #3a2300;
+  border: 2px solid #120c1d;
+}
 /* The "New rule" bubble: a little tail up to the cage. */
 .new-rule::before {
   content: '';

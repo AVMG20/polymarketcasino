@@ -413,25 +413,18 @@ describe('star celebrations (the seen level)', () => {
         expect((await readTycoonState(claimer)).stars).toBeNull()
     })
 
-    it("never holds a visitor's round on the host's report, nor hands them the host's change", async () => {
+    it("never reports the host's level on a visitor's round (the rakeback is no chip move); the host's own read does", async () => {
         const host = newPlayer()
         buyCosmetics(host, FOR_SALE)
         const visitor = bettor()
-        let release!: () => void
-        const gate = new Promise<void>((resolve) => {
-            release = resolve
-        })
-        hold = playerId => (playerId === host ? gate : undefined)
-        // The rakeback moves the host's chips: their level is due, and reported in the background.
+        // The rakeback goes into the host's cage pot: the host is not part of the visitor's unit.
         const round = await playRound(visitor, 'plinko', { ...PLINKO, host })
         expect(round.rakeback).toBe(0)
         expect(round.stars).toBeNull()
-        expect(setStars).toHaveBeenCalledWith(expect.objectContaining({ playerId: host, stars: 1 }))
+        expect(setStars).not.toHaveBeenCalledWith(expect.objectContaining({ playerId: host }))
         expect(reported(host).level).toBe(0)
-        release()
-        await vi.waitFor(() => expect(reported(host).level).toBe(1))
-        expect(seen(host).level).toBe(0)
-        expect((await readTycoonState(host)).stars).toMatchObject({ playerId: host, level: 1, previous: 0, bounty: 10, late: true })
+        // The host's next read reports the goal and hands it over once.
+        expect((await readTycoonState(host)).stars).toMatchObject({ playerId: host, level: 1, previous: 0 })
         expect((await readTycoonState(host)).stars).toBeNull()
     })
 

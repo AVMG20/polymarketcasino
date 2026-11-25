@@ -2,9 +2,10 @@ import { eq } from 'drizzle-orm'
 // The floor plan lives with the client's floor renderer; the server reads the same walkable grid.
 import { NavGrid } from '../../shared/floor/nav'
 import { db } from '../database'
-import { casinoProfiles } from '../database/schema'
+import { casinoProfiles, players } from '../database/schema'
 import { avatarOf } from './cosmetics'
 import { createFloorPresence, type PresenceContext, type PresenceSource } from './floor-presence'
+import { onVisitorRakeback } from './rakeback'
 import { refuseCrossSiteSocket, socketPlayer, type SocketUpgradeRequest } from './socket-auth'
 import { casinoLayout, onFloorChange, peekCasino } from './tycoon'
 
@@ -45,3 +46,9 @@ export const floorPresence = createFloorPresence(dbPresenceSource)
 
 // A build, a placement or a decoration changes the floor: the room reads its walk grid again on the next move.
 onFloorChange(casinoId => floorPresence.invalidate(casinoId))
+
+// A visitor's settled bet put its rakeback in the host's cage (the unit has committed): tell the host's open floor.
+onVisitorRakeback(event => floorPresence.toOwner(event.host, () => {
+    const from = db.select({ name: players.name }).from(players).where(eq(players.id, event.playerId)).get()?.name ?? 'A visitor'
+    return { t: 'rakeback', amount: event.amount, pot: event.pot, from, game: event.game, at: Date.now() }
+}))

@@ -147,6 +147,8 @@ export interface FloorApi {
     focus(target: FloorTarget, options?: FloorFocusOptions): void
     /** A round finished at this game: the payout (chips) pops above the machine, guests cheer on a big win. */
     celebrate(slug: string, info: { payout: number, stake: number, chipsEarned: number, big: boolean }): void
+    /** A visitor's bet at this game put `amount` coins of rakeback in your cage: "+N" rises over the machine (or the cage). */
+    rakeback(slug: string, amount: number): void
     /** A round is playing at this game (lights spin / reels blur on the floor). */
     playing(slug: string, on: boolean): void
     /**

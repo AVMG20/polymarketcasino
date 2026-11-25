@@ -3,7 +3,8 @@ import type { AvatarLook } from './cosmetics'
 /**
  * Live presence on a casino floor: who walks around it right now. One room
  * per casino (its owner's player id), over /api/floor/<casinoId>/ws. Nothing
- * here moves money or writes the database; positions are grid tiles of the
+ * here moves money or writes the database (the owner's rakeback news only
+ * reports money that already moved); positions are grid tiles of the
  * floor plan (shared/floor/layout.ts).
  */
 
@@ -34,6 +35,12 @@ export type PresenceServerMessage =
     | { t: 'move', id: string, x: number, y: number, walk: boolean }
     | { t: 'look', id: string, avatar: AvatarLook }
     | { t: 'leave', id: string }
+    /**
+     * To the casino's owner only: a visitor's settled bet just put its 1%
+     * rakeback in your cage's visitors pot (`amount` coins; `pot` is the pot
+     * after). Display only: the next casino read is the truth.
+     */
+    | { t: 'rakeback', amount: number, pot: number, from: string, game: string, at: number }
 
 /** Close codes the client acts on (no reconnect storm into a full room). */
 export const PRESENCE_CLOSE = {

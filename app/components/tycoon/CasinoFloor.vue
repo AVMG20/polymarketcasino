@@ -305,6 +305,7 @@ const api: FloorApi = {
     focus: (target, options) => engine?.focus(target, options),
     celebrate: (slug, info) => engine?.celebrate(slug, info),
     playing: (slug, on) => engine?.playing(slug, on),
+    rakeback: (slug, amount) => engine?.rakeback(slug, amount),
     collected: (amount, options) => {
         // The target comes in viewport pixels; the engine draws in the host's.
         const box = host.value?.getBoundingClientRect()

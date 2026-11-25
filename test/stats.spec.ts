@@ -174,6 +174,7 @@ describe('playerStats', () => {
             { category: 'allowance', count: 1, amount: 2_500 },
             { category: 'convert', count: 2, amount: 6_000 },
             { category: 'cage', count: 0, amount: 0 },
+            { category: 'rakeback', count: 0, amount: 0 },
             { category: 'mission', count: 0, amount: 0 }
         ])
         expect(stats.balance).toEqual({ start: 2_500, end: 8_600 })

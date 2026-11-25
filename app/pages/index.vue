@@ -19,8 +19,14 @@ const sound = useTycoonSound()
 const leaderboard = useLeaderboard()
 const houseRules = useHouseRules()
 const session = useCasinoSession()
-// Visitors walking around your casino (and you, in your other tabs' eyes).
-const presence = useFloorPresence(() => session.player.value?.id)
+// Visitors walking around your casino (and you, in your other tabs' eyes). A visitor's
+// settled bet puts 1% in your cage: the jar's visitors pot grows and "+N" rises over the machine.
+const presence = useFloorPresence(() => session.player.value?.id, {
+    onRakeback: (news) => {
+        tycoon.setPot('visitors', news.pot, { at: news.at })
+        if (floorReady.value) floor.value?.rakeback(news.game, news.amount)
+    }
+})
 
 const floor = ref<FloorApi | null>(null)
 const floorReady = ref(false)

@@ -8,6 +8,16 @@ const FULL_RETRY_MS = 60_000
 /** A tab hidden this long leaves the floor; it comes back when shown. */
 const HIDDEN_LEAVE_MS = 60_000
 
+/** A visitor's settled bet put `amount` coins in your cage's visitors pot (now `pot`). */
+export interface FloorRakeback {
+    amount: number
+    pot: number
+    from: string
+    game: string
+    /** Server ms the bet committed (a push from before your last collect is stale). */
+    at: number
+}
+
 interface Tracked {
     member: PresenceMember
     seq: number
@@ -19,9 +29,11 @@ interface Tracked {
  * walks (`move`, from CasinoFloor's `move` event) and keeps `remotes`, the
  * other players there, for CasinoFloor to draw. Reconnects with backoff;
  * leaves while the tab has been hidden a minute. Your look is read by the
- * server; a wardrobe change only says "look again".
+ * server; a wardrobe change only says "look again". On your own floor the
+ * server also tells you when a visitor's bet put rakeback in your cage
+ * (`onRakeback`; display only).
  */
-export function useFloorPresence(casinoId: MaybeRefOrGetter<string | null | undefined>) {
+export function useFloorPresence(casinoId: MaybeRefOrGetter<string | null | undefined>, options: { onRakeback?: (news: FloorRakeback) => void } = {}) {
     const session = useCasinoSession()
     const tycoon = useTycoon()
 
@@ -77,6 +89,9 @@ export function useFloorPresence(casinoId: MaybeRefOrGetter<string | null | unde
             case 'leave':
                 if (!members.delete(message.id)) return
                 break
+            case 'rakeback':
+                if (typeof message.amount === 'number' && typeof message.pot === 'number') options.onRakeback?.({ amount: message.amount, pot: message.pot, from: String(message.from ?? ''), game: String(message.game ?? ''), at: typeof message.at === 'number' ? message.at : 0 })
+                return
             default:
                 return
         }

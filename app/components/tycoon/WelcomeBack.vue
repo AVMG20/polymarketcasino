@@ -9,8 +9,8 @@ import { findCampaign } from '#shared/tycoon'
  * server/utils/welcome.ts). The cage's coins come first, with a gentle
  * nudge when a full cage turned income away; then what got built, the
  * campaign that ran out and the visitors now. One big button walks to the
- * cage and collects. Chips other players' bets paid the casino (their 1%
- * rakeback) show under the cage.
+ * cage and collects. Coins other players' bets put in the cage (their 1%
+ * rakeback, the visitors pot) show under it.
  */
 const emit = defineEmits<{ collect: [], upgradeCage: [], campaigns: [] }>()
 const tycoon = useTycoon()
@@ -92,11 +92,11 @@ const CONFETTI = Array.from({ length: 16 }, (_, i) => ({
               </span>
             </span>
           </div>
-          <!-- What visitors' bets paid you: 1% of every bet placed in your casino by someone else. -->
-          <p v-if="(away.visitorChips ?? 0) > 0" class="mt-2 flex items-center gap-1.5 text-[13px] leading-4 font-semibold" :title="`Other players bet in your casino: 1% of their bets, ${formatCoinsExact(away.visitorChips ?? 0)} chips, came to you`">
+          <!-- What visitors' bets paid you: 1% of every bet placed in your casino by someone else, as coins in the cage. -->
+          <p v-if="(away.visitorCoins ?? 0) > 0" class="mt-2 flex items-center gap-1.5 text-[13px] leading-4 font-semibold" :title="`Other players bet in your casino: 1% of their bets, ${formatCoinsExact(away.visitorCoins ?? 0)} coins, went into your cage`">
             <Store class="size-4 shrink-0 text-[#ffc93a]" :stroke-width="2.75" />
             <span>Visitors' bets paid you</span>
-            <span class="g-num flex items-center gap-1 text-[#ffe066]"><CasinoChipIcon class="size-3.5" />+{{ formatCoins(away.visitorChips ?? 0) }}</span>
+            <span class="g-num flex items-center gap-1 text-[#ffe066]"><CasinoCoinIcon class="size-3.5" />+{{ formatCoins(away.visitorCoins ?? 0) }}</span>
           </p>
           <!-- Hour by hour, and who came by -->
           <TycoonHourStrip v-if="hours.length > 1" :hours="hours" :days="longAway" class="mt-2.5" />

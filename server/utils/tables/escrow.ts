@@ -16,8 +16,9 @@ import { payRakeback } from '../rakeback'
  * transaction; refunding claims them `open → refunded` and hands each part
  * of a stake back in its own currency. The claim is the guard: a row closes
  * exactly once, so no retry, timer or sweep can pay a stake twice. A settle
- * also pays the stakes' rakeback (1% in chips, to the seat's host when the
- * player sat down in someone else's casino); a refund pays none. All of it
+ * also pays the stakes' rakeback (1%, coins into a cage pot: the seat's
+ * host's when the player sat down in someone else's casino); a refund pays
+ * none. All of it
  * is synchronous (bun:sqlite), so nothing awaits while a table is mid-change.
  */
 
@@ -64,8 +65,11 @@ function giveBack(coins: CoinWork, playerId: string, game: string, rows: { amoun
 }
 
 export type SettleResult =
-    /** `chipsEarned`: the payout, paid in chips; `rakeback`: the player's rakeback on the stakes (0 when it went to the host). */
-    | ({ kind: 'settled', chipsEarned: number, rakeback: number } & Balances)
+    /**
+     * `chipsEarned`: the payout, paid in chips; `rakeback`: the coins the stakes put in the player's own cage
+     * (0 when they went to the host); `rakebackPot`: that pot after, when it grew, else null.
+     */
+    | ({ kind: 'settled', chipsEarned: number, rakeback: number, rakebackPot: number | null } & Balances)
     /** Some of the stakes were already closed (a sweep refunded them): the rest came back as a refund. */
     | ({ kind: 'refunded', refunded: number } & Balances)
     /** Nothing was open any more: nothing moved. */
@@ -108,9 +112,9 @@ export function settleWagers(input: {
             return { kind: 'refunded', refunded, ...balancesOf(coins, input.playerId) }
         }
         if (input.payout > 0) coins.creditChips({ playerId: input.playerId, amount: input.payout, reason: `win:${input.game}` })
-        const { rakeback } = payRakeback(coins, { playerId: input.playerId, game: input.game, stake: input.staked, host: input.host })
+        const back = payRakeback(coins, { playerId: input.playerId, game: input.game, stake: input.staked, host: input.host })
         const stakeChips = sumCoins(claimed.map(row => row.amountChips))
-        // A first hand of a game can reach a star goal, even a lost one whose rakeback went to the host.
+        // A first hand of a game can reach a star goal, even a lost one.
         coins.checkStars(input.playerId)
         coins.tx.insert(gameRounds).values({
             playerId: input.playerId,
@@ -122,7 +126,7 @@ export function settleWagers(input: {
             summary: input.summary
         }).run()
         recordMissions(coins.tx, input.playerId, roundMissionEvents({ playerId: input.playerId, game: input.game, stake: input.staked, payout: input.payout, multiple: input.multiple, host: input.host }))
-        return { kind: 'settled', chipsEarned: input.payout, rakeback, ...balancesOf(coins, input.playerId) }
+        return { kind: 'settled', chipsEarned: input.payout, rakeback: back.rakeback, rakebackPot: back.pot, ...balancesOf(coins, input.playerId) }
     }, input.playerId)
 }
 

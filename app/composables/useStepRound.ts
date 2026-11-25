@@ -24,8 +24,10 @@ interface StepResponse<V> {
     chips: number
     stars: StarChange | null
     chipsEarned: number
-    /** The rakeback the player got when the round settled (0 when it went to the casino being visited); `chips` includes it. */
+    /** The coins the round's rakeback put in the player's own cage (0 when it went to the casino being visited). */
     rakeback?: number
+    /** The player's rakeback pot in the cage after, when the settle raised it; else null. */
+    rakebackPot?: number | null
 }
 
 /**
@@ -45,6 +47,8 @@ export function useStepRound<V>(slug: string) {
     const round = shallowRef<StepRound<V> | null>(null)
     const busy = ref(false)
     let ended: StepResponse<V> | null = null
+    /** The pots' epoch when the ending request was sent (a collect since makes its pot stale). */
+    let endedEpoch = 0
     let unmounted = false
 
     function fail(failure: unknown, fallback: string) {
@@ -58,6 +62,7 @@ export function useStepRound<V>(slug: string) {
     async function send(path: string, body: Record<string, unknown>, fallback: string): Promise<StepResponse<V> | null> {
         if (busy.value) return null
         busy.value = true
+        const epoch = tycoon.potsEpoch()
         try {
             // Visiting: a game built in the host's casino may be started there.
             const host = path === 'start' ? hostFor(slug) : undefined
@@ -65,6 +70,7 @@ export function useStepRound<V>(slug: string) {
             round.value = response.round
             if (response.round.status !== 'open') {
                 ended = response
+                endedEpoch = epoch
                 if (unmounted) settle()
             } else {
                 busy.value = false
@@ -117,6 +123,7 @@ export function useStepRound<V>(slug: string) {
             const { round: done } = ended
             session.setCoins(ended.balance)
             tycoon.setChips(ended.chips)
+            tycoon.setPot('rakeback', ended.rakebackPot, { epoch: endedEpoch })
             wallet.applyStars(ended.stars)
             floorEvents.emitRound({
                 slug,

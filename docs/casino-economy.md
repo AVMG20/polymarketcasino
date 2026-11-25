@@ -6,13 +6,13 @@ slug `casino`, name "Polynux Casino", playPath `/`, visibility `public`. All slo
 ## Economy v2 in one paragraph: claim coins, win chips
 
 **Coins are claimed, never won**: the cashier cage of the player's own casino (guest
-income), daily mission rewards and gems converted at the hub. Coins can only be bet. **Every win pays chips**: a stake is paid from
+income, plus the 1% rakeback pots), daily mission rewards and gems converted at the hub. Coins can only be bet. **Every win pays chips**: a stake is paid from
 coins first, then chips for whatever coins don't cover, and the whole payout (stake included) comes back as
 chips; a loss is gone. Chips build the casino (My Casino, below) and can be bet again; they never turn back
-into coins. The star level counts the casino goals reached (below). Chips come only from round payouts and the 1%
-rakeback on settled stakes (below), so chips made ≈ coins claimed × (RTP + 1%) in expectation (a little over
-1 for a few games at home, which is fine: chips never turn into coins); coins come only from the capped cage,
-the capped daily missions and gem converts. Nothing else mints either currency.
+into coins, except the 1% rakeback on a stake they paid, which lands in the cage as coins (below). The star level
+counts the casino goals reached (below). Chips come only from round payouts, so chips made ≈ coins claimed × RTP
+in expectation; coins come only from the cage (capped guest income plus the uncapped rakeback pots), the capped
+daily missions and gem converts. Nothing else mints either currency.
 
 ## Coins
 
@@ -424,7 +424,7 @@ against a 1.46 million catalog) would leave the chip economy.
 
 ### Chips in and out
 
-- In: round payouts (solo and live, every win, stake included) and the rakeback on settled stakes.
+- In: round payouts (solo and live, every win, stake included). The rakeback is coins now (below).
 - Out: building (about 1,450,000 chips for everything; 376 build hours), ad campaigns, decorations (the
   twelve specials 162,000 together), and losing bets.
   Builds cost chips only (`Cost.coins` is always 0) and take time: seconds for the first ones (Limbo 10 s,
@@ -434,28 +434,42 @@ against a 1.46 million catalog) would leave the chip economy.
 
 ### Rakeback (`shared/rakeback.ts`, `server/utils/rakeback.ts`)
 
-Every **settled** stake pays `RAKEBACK` = 1% of itself back in **chips** (`rakebackOf`: `payFor(stake, 0.01)`,
-rounded down to 0.0001; a stake that rounds to 0 pays nothing). Who gets it:
+Every **settled** stake pays `RAKEBACK` = 1% of itself as **coins into a cage** (`rakebackOf`:
+`payFor(stake, 0.01)`, rounded down to 0.0001; a stake that rounds to 0 pays nothing). It goes into one of two
+pots on `casino_profiles`, next to the guest income and **never capped** by the cage capacity (rakeback is never
+lost to a full cage; the cage-full state and "Full in" read only the guest income):
 
-- In your own casino (no `host`, or the host is you): you, chip reason `rakeback:<slug>`.
+- In your own casino (no `host`, or the host is you): your `cage_rakeback` pot ("Rakeback" in the jar).
 - In someone else's casino (a solo round or step round with a `host` that has the game built, a seat taken as
-  a visitor): **the host**, chip reason `host:<slug>`; you get none. Any casino counts, there is no friends
-  list. A host whose casino is gone by settle time falls back to you (never an error at settle).
+  a visitor): **the host's** `cage_visitors` pot ("From visitors"); you get none. Any casino counts, there is no
+  friends list. A host whose casino is gone by settle time falls back to you (never an error at settle).
 
-It is paid in the transaction that settles the stake, through `coins.creditChips` (`payRakeback`): a solo round
-with its stake and payout, a step round (Gem Dig, Card Climb) when it settles (cash-out, bust or the abandoned
-sweep's cash-out, never at start; the host is stored on `step_rounds.host` when the round starts), a live-table
-hand in `settleWagers` on the settled wagers (the seat's host). Refunds pay none: a refunded step round, an
-aborted or swept table stake, and a partial claim that turns into a refund (rakeback on returned money would be
-free chips). The response's chip balance includes it (`rakeback` on solo and step responses, the settled
-table result).
+It is paid in the transaction that settles the stake (`payRakeback`, one guarded `+ ?` update on the pot, no coin
+or chip move and no ledger row yet): a solo round with its stake and payout, a step round (Gem Dig, Card Climb)
+when it settles (cash-out, bust or the abandoned sweep's cash-out, never at start; the host is stored on
+`step_rounds.host` when the round starts), a live-table hand in `settleWagers` on the settled wagers (the seat's
+host). Refunds pay none: a refunded step round, an aborted or swept table stake, and a partial claim that turns
+into a refund. Responses carry the player's pot after (`rakeback` and `rakebackPot` on solo and step responses,
+`rakebackPot` on the table's `balance` message), so the jar updates as the round is shown.
 
-Effective return: every game's RTP + 1% in chips at home (Pegfall 98-98.8%, blackjack 100.6% with basic
-strategy, so a few games are slightly profitable: fine, it's a game; chips never become coins), and the plain
-RTP when playing in someone else's casino, whose owner gets the 1%. The RTP badges and the `<game>-rtp.ts`
-scripts show the game's own RTP; the rules dialog adds "plus 1% of every bet back in chips". The welcome-back
-card shows the host what visitors' bets paid while away (`welcome.visitorChips`, the `host:%` chip rows since
-the last visit); the game overlay's footer says where your 1% goes.
+Collect (`collectCage`) takes the guest income (whole coins, ledger category `'cage'`) and both pots in full
+(category `'rakeback'`) in one transaction; one update zeroes the pots guarded on the values it read (and on
+`cage_at`), so parallel collects pay once, and a collect works with an empty cage when a pot isn't. The jar
+shows cage + pots, and the cage details one line per non-empty pot; they go away on collect.
+
+Live: once a visitor's unit commits (`coins.afterCommit`), the host's floor socket gets
+`{ t: 'rakeback', amount, pot, from, game }` on the owner's own tabs (display only: no money moves through the
+socket; the next read is the truth). The floor shows "+N" over the machine and the jar's "From visitors" line
+grows. The welcome-back card shows what visitors' bets added while away (`welcome.visitorCoins`: the visitors
+pot now minus the pot in the last-seen snapshot, floored at 0).
+
+Effective return: every game's RTP in chips, plus 1% of every stake in coins at home (none when playing in
+someone else's casino, whose owner gets it). The RTP badges and the `<game>-rtp.ts` scripts show the game's own
+RTP; the rules dialog adds "plus 1% of every bet back in your cage as coins". Because a stake paid with chips
+earns coin rakeback too, betting chips turns them into coins at 1% of the turnover: a chip lost to the edge
+buys 1 / (100 × edge) coins (blackjack's 0.4% edge: 2.5 coins per chip lost; 3%: about 0.33). Coins only bet,
+so this feeds back into chips, but on games whose RTP is 99% or more the coin-and-chip loop pays more than it
+costs in expectation. If that matters, pay the rakeback only on a stake's coin part.
 
 ### Builders
 

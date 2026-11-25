@@ -2,7 +2,7 @@ import { toast } from 'vue-sonner'
 import { casinoLevel, gameUnlockLevel, type CasinoLevel } from '#shared/casino-level'
 import type { CosmeticBuyBody } from '#shared/cosmetics'
 import { placedSpecials, specialBonus, type BuyDecorBody, type OwnedDecor, type PlaceBody, type SpecialBonus } from '#shared/decor'
-import { normalizeCoins } from '#shared/money'
+import { normalizeCoins, sumCoins } from '#shared/money'
 import type { MissionKey, MissionView, WelcomeBack } from '#shared/missions'
 import {
     activeCampaigns, buildBlocker, campaignsOf, cageAt, campaignBlocker, campaignBoost, campaignCost, CAMPAIGNS, findCampaign, findTycoonGame, findUpgrade, findZone,
@@ -92,6 +92,9 @@ let lastRefresh = 0
  */
 let askWelcome = true
 let roundTimer: ReturnType<typeof setTimeout> | null = null
+/** Cage collects so far and the server time of the last one (see setPot). */
+let potEpoch = 0
+let collectedAt = 0
 /** While the page is open and visible, read the casino this often: the server counts it as a visit. */
 const HEARTBEAT_MS = 4 * 60_000
 
@@ -130,8 +133,13 @@ export function useTycoon() {
     const ready = computed(() => state.value !== null)
     const gems = computed(() => wallet.wallet.value?.gems ?? null)
 
-    /** Coins in the cage right now: what the server stored plus what has come in since. */
+    /** Coins in the cage right now: what the server stored plus what has come in since (guest income only: the part the capacity caps). */
     const cageStored = computed(() => (state.value ? cageAt(state.value, serverTime.value) : 0))
+    /** The jar's rakeback pots (coins, never capped): your own bets' 1%, and visitors' bets' 1%. */
+    const cageRakeback = computed(() => state.value?.cage.rakeback ?? 0)
+    const cageVisitors = computed(() => state.value?.cage.visitors ?? 0)
+    /** What a collect takes now: the guest income's whole coins and both pots in full. */
+    const cageTotal = computed(() => sumCoins([Math.floor(cageStored.value), cageRakeback.value, cageVisitors.value]))
     const cageFill = computed(() => {
         const s = state.value
         return s && s.cage.capacity > 0 ? Math.min(1, cageStored.value / s.cage.capacity) : 0
@@ -348,6 +356,10 @@ export function useTycoon() {
     async function collect(): Promise<number> {
         if (busy.value && inflight) await inflight.catch(() => null)
         const response = await act('/api/tycoon/collect')
+        if (response) {
+            potEpoch++
+            collectedAt = Math.max(collectedAt, state.value?.serverNow ?? Date.now())
+        }
         return response?.collected ?? 0
     }
 
@@ -406,6 +418,28 @@ export function useTycoon() {
             roundTimer = null
             void refresh()
         }, 2_500)
+    }
+
+    /**
+     * A rakeback pot's new size, as a round, a table settle or the floor socket
+     * reported it (null/undefined: unchanged). Display only: the next read is the truth.
+     */
+    /**
+     * Collects so far, and the server time of the last one. A pot only grows
+     * between collects, so a pot value from a round, table or push that started
+     * before a collect (its `epoch` or server `at` is older) is stale: dropping it
+     * keeps a collected pot from coming back.
+     */
+    const potsEpoch = () => potEpoch
+
+    /** A pot's value from a response or push; never lowers it (a pot only grows until collected). */
+    function setPot(pot: 'rakeback' | 'visitors', next: number | null | undefined, since: { epoch?: number, at?: number } = {}) {
+        const s = state.value
+        if (!s || typeof next !== 'number' || !(next >= 0)) return
+        if (since.epoch !== undefined && since.epoch !== potEpoch) return
+        if (since.at !== undefined && since.at <= collectedAt) return
+        if (next <= (s.cage[pot] ?? 0)) return
+        state.value = { ...s, cage: { ...s.cage, [pot]: next } }
     }
 
     /** The chip balance after a round, a table payout or an optimistic stake. */
@@ -514,9 +548,9 @@ export function useTycoon() {
     return {
         state, ready, loadFailed, chips, gems, busy, lastBuilt, serverTime, offset, welcome, missions, claimable, missionDone, levelUp, decorRefund,
         level: casino, decor, placements, storedGames, specials,
-        cageStored, cageFill, rushActive, rushLeftMs, rushPrice, queue,
+        cageStored, cageRakeback, cageVisitors, cageTotal, cageFill, rushActive, rushLeftMs, rushPrice, queue,
         seats, visitors, visitorTiers, waiting, occupied, perHour, expectedPerHour, floorNow, house, campaign, runningCampaigns, campaigns,
         startable, suggestion,
-        refresh, refreshSoon, collect, build, buyDecor, place, buyGem, buyCosmetic, equipCosmetic, startCampaign, claimMission, setRules, setChips, blocker, cost, skipPrice, view
+        refresh, refreshSoon, collect, build, buyDecor, place, buyGem, buyCosmetic, equipCosmetic, startCampaign, claimMission, setRules, setChips, setPot, potsEpoch, blocker, cost, skipPrice, view
     }
 }

@@ -176,14 +176,14 @@ describe('spinata rounds', () => {
             expect(round.stake).toBe(100)
             expect(round.payout).toBe(result.payout)
             expected = normalizeCoins(expected - round.stake)
-            chips = normalizeCoins(chips + round.payout + round.rakeback)
+            chips = normalizeCoins(chips + round.payout)
             expect(round.balance).toBe(expected)
         }
         const buy = await playRound(id, 'spinata', { bet: 200, options: { feature: 'buyBonus' } })
         expect(buy.stake).toBe(200 * SPN_BUY_BONUS_COST)
         expect((buy.result as ReturnType<typeof playSpinata>).freeSpins).toHaveLength(SPN_FREE_SPINS)
         expected = normalizeCoins(expected - buy.stake)
-            chips = normalizeCoins(chips + buy.payout + buy.rakeback)
+            chips = normalizeCoins(chips + buy.payout)
         expect(coinsOf(id).coins).toBe(expected)
         expect(ledgerSum(id)).toBe(normalizeCoins(expected - 1_000_000))
         // Every payout is chips.

@@ -1,7 +1,7 @@
-import { and, eq, gt, like, sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import type { Tx } from '../database'
-import { casinoProfiles, chipTransactions } from '../database/schema'
-import { fromUnits } from '../../shared/money'
+import { casinoProfiles } from '../database/schema'
+import { normalizeCoins } from '../../shared/money'
 import { placedSpecials, specialBonus } from '../../shared/decor'
 import { WELCOME_AFTER_MS, type WelcomeBack } from '../../shared/missions'
 import { DEFAULT_RULES, DOOR_RULES, runFloor, seatedTotal, type HouseRules, type NotableGuest } from '../../shared/visitors'
@@ -19,12 +19,15 @@ import { historyHours, type Casino } from './tycoon'
  * the cage gained: the difference is what a full cage turned away. The
  * replay also finds the whales that came by; the hours come from the
  * history (`historyHours`), and what visitors' bets paid the casino (their
- * rakeback) from the chip ledger.
+ * rakeback, coins in the cage's visitors pot) from the pot's growth since the
+ * snapshot.
  */
 
 interface Snapshot {
     at: number
     cage: number
+    /** The cage's visitors pot (coins; 0 in snapshots from before it existed). */
+    visitors: number
     zones: string[] | null
     /** The games on the floor (put-away ones take no guests). */
     games: Record<string, number>
@@ -41,6 +44,7 @@ function snapshotOf(state: TycoonState, rules: HouseRules): Snapshot {
     return {
         at: state.serverNow,
         cage: state.cage.stored,
+        visitors: state.cage.visitors ?? 0,
         zones: [...state.zones],
         games: { ...floorGames(state) },
         upgrades: { ...state.upgrades },
@@ -67,6 +71,8 @@ function readSnapshot(raw: unknown): Snapshot | null {
     return {
         at: s.at,
         cage: s.cage,
+        // Snapshots from before the pot have none: it was empty then.
+        visitors: typeof s.visitors === 'number' ? s.visitors : 0,
         // Snapshots from before the visitor tiers have no zones: the replay reads them from the games.
         zones: Array.isArray(s.zones) ? s.zones : null,
         games: s.games,
@@ -122,15 +128,6 @@ function replay(snap: Snapshot, seed: number, to: number): { income: number, not
     return { income, notable: [...visits.values()].sort((a, b) => a.at - b.at) }
 }
 
-/** Chips other players' bets paid `playerId`'s casino after `since` (the `host:<slug>` rakeback). */
-function visitorChipsSince(tx: Tx, playerId: string, since: number): number {
-    const row = tx.select({ units: sql<number>`coalesce(sum(${chipTransactions.amount}), 0)` })
-        .from(chipTransactions)
-        .where(and(eq(chipTransactions.playerId, playerId), eq(chipTransactions.type, 'credit'), like(chipTransactions.reason, 'host:%'), gt(chipTransactions.createdAt, new Date(since))))
-        .get()
-    return fromUnits(row?.units ?? 0)
-}
-
 /** How often a plain read refreshes the last-seen snapshot. */
 const LAST_SEEN_EVERY_MS = 60_000
 /** The welcome card's hours go back at most this far, and list this many guests at most. */
@@ -151,7 +148,7 @@ export function noteVisit(tx: Tx, casino: Casino, state: TycoonState, welcome: b
     const next = snapshotOf(state, casino.rules)
     // Reads come often (polls, every action): skip the write while the last one is under a
     // minute old and the snapshot still replays to now. It does while only guest income came
-    // in since; a collect (the cage went down), a rush, a campaign, a rule change or a build breaks the replay.
+    // in since; a collect (the cage or the visitors pot went down), a rush, a campaign, a rule change or a build breaks the replay.
     const same = !!snap && JSON.stringify(snap.constructions) === JSON.stringify(next.constructions)
         && JSON.stringify(snap.campaigns) === JSON.stringify(next.campaigns)
         && snap.rushUntil === next.rushUntil
@@ -161,6 +158,7 @@ export function noteVisit(tx: Tx, casino: Casino, state: TycoonState, welcome: b
         && JSON.stringify(snap.rules) === JSON.stringify(next.rules)
         && JSON.stringify(snap.specials) === JSON.stringify(next.specials)
         && next.cage >= snap.cage
+        && next.visitors >= snap.visitors
     if (!welcome && same && row?.lastSeenAt && now - row.lastSeenAt.getTime() < LAST_SEEN_EVERY_MS) return null
     tx.update(casinoProfiles)
         .set({ lastSeenAt: new Date(now), lastSeen: next as unknown as Record<string, unknown> })
@@ -189,6 +187,6 @@ export function noteVisit(tx: Tx, casino: Casino, state: TycoonState, welcome: b
         hours: historyHours(tx, playerId, Math.max(snap.at, now - (WELCOME_HOURS - 1) * 3_600_000), now),
         notable,
         whales: away.notable.length,
-        visitorChips: visitorChipsSince(tx, playerId, snap.at)
+        visitorCoins: normalizeCoins(Math.max(0, next.visitors - snap.visitors))
     }
 }

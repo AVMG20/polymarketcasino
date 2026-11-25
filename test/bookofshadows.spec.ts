@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isCoinAmount, normalizeCoins, payFor } from '../shared/money'
+import { isCoinAmount, payFor } from '../shared/money'
 import { seededRng, type Rng } from '../shared/rng'
 import {
     BONUS_RETRIGGER_SPINS,
@@ -214,7 +214,7 @@ describe('book of shadows: server', () => {
         const round = await playRound(id, 'bookofshadows', { bet: 100, options: { buy: true } })
         expect(round.stake).toBe(100 * BOS_BUY_COST)
         expect(round.balance).toBe(0)
-        expect(round.chips).toBe(normalizeCoins(round.payout + round.rakeback))
+        expect(round.chips).toBe(round.payout)
         const poor = seedPlayer(100 * BOS_BUY_COST - 1)
         await expect(playRound(poor, 'bookofshadows', { bet: 100, options: { buy: true } })).rejects.toMatchObject({ statusCode: 400 })
         expect(coinsOf(poor).coins).toBe(100 * BOS_BUY_COST - 1)

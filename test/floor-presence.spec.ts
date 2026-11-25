@@ -48,6 +48,28 @@ function setup() {
 const move = (x: unknown, y: unknown, walk: unknown = true) => JSON.stringify({ t: 'move', x, y, walk })
 
 describe('floor presence rooms', () => {
+    it("sends owner news (a visitor's rakeback) to the owner's own tabs in their room only", () => {
+        const { presence, join } = setup()
+        const guest = join('guest')
+        const elsewhere = join('owner', 'other')
+        // Nobody to tell yet: the message is not even made.
+        let made = 0
+        const news = () => {
+            made++
+            return { t: 'rakeback', amount: 1.5, pot: 3, from: 'GUEST', game: 'dice', at: 1 } as const
+        }
+        expect(presence.toOwner('owner', news)).toBe(false)
+        expect(made).toBe(0)
+        const tab1 = join('owner')
+        const tab2 = join('owner')
+        expect(presence.toOwner('owner', news)).toBe(true)
+        expect(made).toBe(1)
+        expect(tab1.last()).toEqual({ t: 'rakeback', amount: 1.5, pot: 3, from: 'GUEST', game: 'dice', at: 1 })
+        expect(tab2.last()).toEqual({ t: 'rakeback', amount: 1.5, pot: 3, from: 'GUEST', game: 'dice', at: 1 })
+        expect(guest.inbox.some(m => m.t === 'rakeback')).toBe(false)
+        expect(elsewhere.inbox.some(m => m.t === 'rakeback')).toBe(false)
+    })
+
     it('sends a joiner everyone there, and tells the others who joined', () => {
         const { presence, join } = setup()
         const owner = join('owner')

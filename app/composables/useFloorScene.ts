@@ -59,7 +59,8 @@ export function useFloorScene() {
     const cage = reactive({ fill: 0, stored: 0 })
     const syncCage = () => {
         cage.fill = tycoon.cageFill.value
-        cage.stored = Math.floor(tycoon.cageStored.value)
+        // The label shows what a collect takes: the guest income and the rakeback pots.
+        cage.stored = Math.floor(tycoon.cageTotal.value)
     }
 
     async function refreshTables() {

@@ -91,8 +91,8 @@ export type ServerMessage<TSeat = unknown, TShared = unknown> =
     | { t: 'state', state: TableState<TSeat, TShared> }
     /** `balance` is coins, `chips` the chip balance. */
     | { t: 'you', playerId: string, seat: number | null, balance: number, chips?: number }
-    /** After a stake, payout or refund: `balance` is coins, `chips` the chip balance. */
-    | { t: 'balance', balance: number, chips?: number }
+    /** After a stake, payout or refund: `balance` is coins, `chips` the chip balance; `rakebackPot` the player's cage rakeback pot after a settle that raised it. */
+    | { t: 'balance', balance: number, chips?: number, rakebackPot?: number }
     | { t: 'stars', stars: TableStarChange }
     | { t: 'error', message: string }
     | TableEvent

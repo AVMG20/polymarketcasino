@@ -12,7 +12,7 @@ export const RANGE_DAYS: Record<Exclude<StatsRange, 'all'>, number> = { '7d': 7,
  * mission rewards. They are listed apart and never count toward wagered, paid
  * out or return.
  */
-export const FLOW_CATEGORIES = ['allowance', 'convert', 'cage', 'mission'] as const
+export const FLOW_CATEGORIES = ['allowance', 'convert', 'cage', 'rakeback', 'mission'] as const
 export type FlowCategory = typeof FLOW_CATEGORIES[number]
 
 export function isStatsRange(value: unknown): value is StatsRange {

@@ -59,6 +59,12 @@ export interface CoinWork {
      * read that applies finished builds).
      */
     checkStars(playerId: string): void
+    /**
+     * Run `fn` once the unit has committed (never inside it; a unit that rolls
+     * back runs none): for news that must not go out before the money is
+     * real, like the floor socket's rakeback push. A throwing `fn` is logged.
+     */
+    afterCommit(fn: () => void): void
 }
 
 export interface StakeChange {
@@ -167,6 +173,7 @@ export interface CommittedCoins<T> {
  */
 export function commitCoins<T>(work: (coins: CoinWork) => T, own?: string): CommittedCoins<T> {
     const touched = new Set<string>()
+    const after: (() => void)[] = []
     const value = writeTx(tx => watchChips(playerId => touched.add(playerId), () => work({
         tx,
         credit: (change) => {
@@ -183,8 +190,16 @@ export function commitCoins<T>(work: (coins: CoinWork) => T, own?: string): Comm
             touched.add(change.playerId)
             return takeStake(tx, change)
         },
-        checkStars: playerId => touched.add(playerId)
+        checkStars: playerId => touched.add(playerId),
+        afterCommit: fn => after.push(fn)
     })))
+    for (const fn of after) {
+        try {
+            fn()
+        } catch (error) {
+            console.error('[ledger] after-commit hook failed', error)
+        }
+    }
     return { value, stars: reportStars(touched, own) }
 }
 

@@ -562,7 +562,7 @@ describe('rounds and My Casino', () => {
         let chips = 0
         for (let i = 0; i < 10; i++) {
             const round = await playRound(id, 'dice', { bet: 1_000, options: { chance: 50 } })
-            chips = normalizeCoins(chips + round.payout + round.rakeback)
+            chips = normalizeCoins(chips + round.payout)
             expect(round.balance).toBe(10_000 - 1_000 * (i + 1))
             expect(round.chips).toBe(chips)
             expect(round.chipsEarned).toBe(round.payout)
@@ -571,8 +571,9 @@ describe('rounds and My Casino', () => {
         expect(coinsOf(id).coins).toBe(0)
         expect(chipsOf(id)).toBe(chips)
         expect(chipLedgerSum(id)).toBe(chips)
-        expect(chipRows(id).every(row => row.type === 'credit' && (row.reason === 'win:dice' || row.reason === 'rakeback:dice'))).toBe(true)
-        expect(chipRows(id).filter(row => row.reason === 'rakeback:dice')).toHaveLength(10)
+        // The rakeback is coins in the cage: no chip rows for it.
+        expect(chipRows(id).every(row => row.type === 'credit' && row.reason === 'win:dice')).toBe(true)
+        expect(getTycoonState(id).cage.rakeback).toBe(100)
         const rows = db.select().from(gameRounds).where(eq(gameRounds.playerId, id)).all()
         expect(rows.every(row => row.funding === 'coins' && row.stake === 1_000)).toBe(true)
     })
@@ -585,7 +586,7 @@ describe('rounds and My Casino', () => {
         for (let i = 0; i < 20; i++) {
             // An older client's `funding` is ignored.
             const round = await playRound(id, 'dice', { bet: 100, options: { chance: 90 }, funding: 'coins' })
-            chips = normalizeCoins(chips - 100 + round.payout + 1)
+            chips = normalizeCoins(chips - 100 + round.payout)
             expect(round).toMatchObject({ stakeCoins: 0, stakeChips: 100, chips, balance: 0, rakeback: 1 })
         }
         expect(chipsOf(id)).toBe(chips)
@@ -602,7 +603,7 @@ describe('rounds and My Casino', () => {
         getTycoonState(id)
         giveChips(id, 1_000)
         const mixed = await playRound(id, 'dice', { bet: 100, options: { chance: 50 } })
-        expect(mixed).toMatchObject({ stake: 100, stakeCoins: 60, stakeChips: 40, balance: 0, chips: normalizeCoins(960 + mixed.payout + 1) })
+        expect(mixed).toMatchObject({ stake: 100, stakeCoins: 60, stakeChips: 40, balance: 0, chips: normalizeCoins(960 + mixed.payout) })
         expect(db.select().from(gameRounds).where(eq(gameRounds.playerId, id)).get()).toMatchObject({ stake: 100, stakeChips: 40, funding: 'coins' })
         expect(chipRows(id)[0]).toMatchObject({ type: 'debit', amount: 40, reason: 'bet:dice' })
 
@@ -648,7 +649,7 @@ describe('rounds and My Casino', () => {
         giveChips(id, 550)
         const burst = await Promise.allSettled(Array.from({ length: 30 }, () => playRound(id, 'dice', { bet: 100, options: { chance: 1 } })))
         const played = burst.flatMap(r => r.status === 'fulfilled' ? [r.value] : [])
-        const paid = sumCoins(played.map(round => round.payout + round.rakeback))
+        const paid = sumCoins(played.map(round => round.payout))
         expect(sumCoins(played.map(round => round.stakeCoins))).toBe(450)
         expect(coinsOf(id).coins).toBe(0)
         expect(ledgerSum(id)).toBe(-450)

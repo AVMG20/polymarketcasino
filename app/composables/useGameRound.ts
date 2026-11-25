@@ -14,8 +14,10 @@ export interface RoundResponse<TResult> {
     chips: number
     /** The payout, paid in chips (0 on a loss). */
     chipsEarned: number
-    /** The rakeback on the stake, in chips (0 when it went to the casino being visited); `chips` includes it. */
+    /** The coins the stake's rakeback put in the player's own cage (0 when it went to the casino being visited). */
     rakeback?: number
+    /** The player's rakeback pot in the cage after the round, when it grew; else null. */
+    rakebackPot?: number | null
     /** The stake's two parts: coins first, then chips for the rest. */
     stakeCoins: number
     stakeChips: number
@@ -38,6 +40,8 @@ export function useGameRound<TResult>(slug: string) {
     /** Why the last play() failed, or ''. */
     const error = ref('')
     let pending: RoundResponse<TResult> | null = null
+    /** The pots' epoch when the round was sent (a collect since makes its pot stale). */
+    let pendingEpoch = 0
     let unmounted = false
 
     async function play(body: { bet?: number, options?: Record<string, unknown> }): Promise<RoundResponse<TResult> | null> {
@@ -45,9 +49,11 @@ export function useGameRound<TResult>(slug: string) {
         busy.value = true
         error.value = ''
         floorEvents.emitPlaying(slug, true)
+        const epoch = tycoon.potsEpoch()
         try {
             const response = await $fetch<RoundResponse<TResult>>(`/api/games/${slug}/play`, { method: 'POST', body: { ...body, host: hostFor(slug) } })
             pending = response
+            pendingEpoch = epoch
             // The game closed while the request was out: apply it now, nobody will reveal it.
             if (unmounted) settle()
             return response
@@ -66,6 +72,7 @@ export function useGameRound<TResult>(slug: string) {
         if (pending) {
             session.setCoins(pending.balance)
             tycoon.setChips(pending.chips)
+            tycoon.setPot('rakeback', pending.rakebackPot, { epoch: pendingEpoch })
             wallet.applyStars(pending.stars)
             floorEvents.emitRound({
                 slug,

@@ -154,6 +154,7 @@ export function useLiveTable<TSeat, TShared, TAction>(slug: string, onGameEvent?
             case 'balance':
                 session.setCoins(message.balance)
                 if (typeof message.chips === 'number') tycoon.setChips(message.chips)
+                tycoon.setPot('rakeback', message.rakebackPot)
                 return
             case 'stars':
                 wallet.applyStars(message.stars)
