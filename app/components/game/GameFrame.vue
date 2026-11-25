@@ -3,7 +3,7 @@ import { CircleHelp, Hammer, X } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { findGame } from '#shared/games/registry'
-import { formatCoins } from '#shared/money'
+import { formatCoins, formatCoinsExact } from '#shared/money'
 import { isGameUnlocked } from '#shared/tycoon'
 import { RAKEBACK } from '#shared/rakeback'
 
@@ -15,6 +15,7 @@ const rulesOpen = ref(false)
 const rakeback = `${Math.round(RAKEBACK * 100)}%`
 const { postTitle } = useHubBridge()
 const tycoon = useTycoon()
+const session = useCasinoSession()
 // A live table can be watched by anyone; sitting needs the game built.
 const { host, hostFor } = useVisitHost()
 /** The owner's name when this game is played in a casino you're visiting (their cage gets the rakeback). */
@@ -35,12 +36,22 @@ onMounted(() => !embed && postTitle(game.value.name))
   <div :class="embed ? 'pb-4' : ''">
   <!-- Inside My Casino: a chunky game bar (back, name, RTP badge, rules), across the whole screen. -->
   <div v-if="embed" class="g-ui sticky top-0 z-20 mb-3 flex select-none items-center gap-2.5 border-b-2 border-[#120c1d] bg-gradient-to-b from-[#3b2c58] to-[#2a1f3f] px-3 py-1.5 shadow-[0_3px_0_#120c1d] sm:px-4">
-      <h1 class="g-title min-w-0 flex-1 truncate bg-transparent text-xl">{{ game.name }}</h1>
-      <span class="g-num shrink-0 rounded-full bg-[#1b1329] px-2.5 py-1 text-xs text-[#b6a6d3] shadow-[inset_0_2px_0_rgb(0_0_0/0.35)]" :title="`Return to player · ${game.volatility} volatility`">{{ formatFixed(game.rtp * 100, 1) }}%</span>
+      <h1 class="g-title min-w-0 flex-1 truncate bg-transparent text-xl" :class="game.live ? '' : 'max-sm:hidden'">{{ game.name }}</h1>
+      <!-- What you can bet with: coins (spent first) and chips (live tables show it in their bet bar). On a phone it takes the name's place. -->
+      <span
+        v-if="!game.live"
+        class="g-num flex shrink-0 max-sm:mr-auto items-center gap-2 rounded-full bg-[#1b1329] py-1 pr-2.5 pl-1.5 text-sm text-white shadow-[inset_0_2px_0_rgb(0_0_0/0.35)]"
+        :title="`${formatCoinsExact(session.coins.value)} coins · ${formatCoinsExact(tycoon.chips.value)} chips`"
+        aria-label="Your balance"
+      >
+        <span class="flex items-center gap-1"><CasinoCoinIcon class="size-4" />{{ formatCoins(session.coins.value, session.coins.value >= 100_000) }}</span>
+        <span class="flex items-center gap-1"><CasinoChipIcon class="size-4" />{{ formatCoins(tycoon.chips.value, tycoon.chips.value >= 100_000) }}</span>
+      </span>
+      <span class="g-num shrink-0 rounded-full max-sm:hidden bg-[#1b1329] px-2.5 py-1 text-xs text-[#b6a6d3] shadow-[inset_0_2px_0_rgb(0_0_0/0.35)]" :title="`Return to player · ${game.volatility} volatility`">{{ formatFixed(game.rtp * 100, 1) }}%</span>
       <!-- Rakeback: every bet puts 1% in a cage as coins: yours, or the cage of the casino you're visiting. -->
       <span
         class="g-num flex shrink-0 items-center gap-1 rounded-full bg-[#1b1329] py-1 pr-2.5 pl-1.5 text-xs shadow-[inset_0_2px_0_rgb(0_0_0/0.35)]"
-        :class="visiting ? 'text-[#b6a6d3]' : 'text-[#7ee08f]'"
+        :class="[visiting ? 'text-[#b6a6d3]' : 'text-[#7ee08f]', game.live ? '' : 'max-[399px]:hidden']"
         :title="visiting ? `Every bet puts ${rakeback} in ${visiting}'s cage as coins, win or lose (it's their casino)` : `Every bet puts ${rakeback} back in your cage as coins, win or lose`"
       ><CasinoCoinIcon class="size-3.5" />+{{ rakeback }}<span class="hidden sm:inline">{{ visiting ? ` to ${visiting}` : ' back' }}</span></span>
       <div class="flex items-center gap-1.5">
