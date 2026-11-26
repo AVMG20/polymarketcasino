@@ -23,7 +23,7 @@ function submit() {
 
 <template>
   <div class="g-ui flex min-h-0 flex-col gap-2">
-    <div ref="list" class="feed g-well h-36 space-y-1 overflow-y-auto rounded-2xl p-2 text-[13px] leading-snug lg:h-56">
+    <div ref="list" class="feed g-well h-44 space-y-1 overflow-y-auto rounded-2xl p-2 text-[13px] leading-snug lg:h-80">
       <p v-if="!items.length" class="px-1 py-0.5 text-[var(--g-muted)]">Nothing yet. Say hi.</p>
       <p v-for="item in items" :key="item.id" class="break-words px-1" :class="item.kind === 'chat' ? 'chat' : 'text-[var(--g-muted)]'">
         <span class="font-semibold" :class="item.kind === 'chat' ? 'text-[#ffc93a]' : 'text-[var(--g-ink)]/80'">{{ item.name }}</span>

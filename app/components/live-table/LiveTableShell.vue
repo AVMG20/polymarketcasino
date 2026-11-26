@@ -125,6 +125,7 @@ const lastChat = computed(() => [...props.feed].reverse().find(item => item.kind
 <template>
   <GameFrame :slug="slug" wide>
     <template #actions>
+      <TableBankroll class="mr-1" />
       <span v-if="!solo" class="mr-1 hidden items-center gap-1 rounded-full bg-black/25 sm:flex px-2 py-1 text-xs font-semibold text-muted-foreground" :title="`${watching} at the table`"><Eye class="size-3.5" />{{ watching }}</span>
       <Button v-if="seated" size="sm" variant="ghost" class="h-11 text-muted-foreground" :disabled="leaving" :title="leaving ? 'Standing up after this hand' : 'Leave seat'" @click="$emit('leave')">
         <DoorOpen class="size-4" /><span class="hidden sm:inline">{{ leaving ? 'Leaving' : 'Leave' }}</span>
@@ -136,7 +137,7 @@ const lastChat = computed(() => [...props.feed].reverse().find(item => item.kind
     </template>
 
     <div class="flex flex-wrap items-start justify-center gap-3">
-      <div ref="tableEl" class="lt-table min-w-0 rounded-[28px] bg-[#120c08] shadow-[0_8px_0_#0a0604,0_24px_44px_-16px_rgba(0,0,0,.8)] ring-2 ring-[#3a2010] [overflow:clip]" :class="`felt-${tone ?? 'green'}`" :style="tableStyle">
+      <div ref="tableEl" class="lt-table min-w-0 rounded-[26px] bg-[#110e1d] shadow-[0_7px_0_#0a0712,0_24px_44px_-16px_rgba(0,0,0,.8)] ring-2 ring-[#261d3a] [overflow:clip]" :class="`felt-${tone ?? 'green'}`" :style="tableStyle">
         <GameWinBurst :show="win ?? null">
           <slot name="felt" />
         </GameWinBurst>
@@ -172,14 +173,13 @@ const lastChat = computed(() => [...props.feed].reverse().find(item => item.kind
             <slot name="controls" />
           </div>
 
-          <div class="lt-band-foot flex flex-wrap items-center gap-2 text-[11px]">
+          <div v-if="$slots.footer" class="lt-band-foot flex flex-wrap items-center gap-2 text-[11px]">
             <slot name="footer" />
-            <TableBankroll class="ml-auto" />
           </div>
         </div>
       </div>
 
-      <aside v-if="!solo" class="g-ui @container w-full min-w-0 lg:w-auto" style="flex: 1 1 18rem">
+      <aside v-if="!solo" class="g-ui @container w-full min-w-0 lg:w-auto lg:max-w-[24rem]" style="flex: 1 1 22rem">
         <div class="grid grid-cols-1 gap-3 @2xl:grid-cols-2">
           <section class="g-panel rounded-[22px]">
             <button type="button" class="flex min-h-12 w-full items-center gap-2.5 px-3 text-left lg:pointer-events-none" :aria-expanded="chatOpen" @click="chatOpen = !chatOpen">
@@ -202,7 +202,7 @@ const lastChat = computed(() => [...props.feed].reverse().find(item => item.kind
                 <span class="g-num w-5 text-center text-sm" :class="i === 0 ? 'text-[#ffc93a]' : 'text-[var(--g-muted)]'">{{ i + 1 }}</span>
                 <TableAvatar :name="row.name" :image="row.image" :size="24" />
                 <span class="min-w-0 flex-1 truncate">{{ row.name }}</span>
-                <span v-if="row.winStreak > 1" class="g-num rounded-full bg-[#ff9a2e] px-1.5 text-[10px] leading-4 text-white" :title="`${row.winStreak} wins in a row`">W{{ row.winStreak }}</span>
+                <LiveTableStreakMedal v-if="row.winStreak >= 2" :streak="row.winStreak" :size="24" />
                 <span class="g-num inline-flex items-center gap-1 text-sm" :class="row.net > 0 ? 'text-[#7ee08f]' : 'text-[var(--g-muted)]'">
                   <CasinoChipIcon v-if="row.net > 0" class="size-4" />{{ row.net > 0 ? '+' : row.net < 0 ? '−' : '' }}{{ formatCoins(Math.abs(row.net)) }}
                 </span>

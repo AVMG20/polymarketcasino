@@ -119,6 +119,7 @@ export function useLiveTable<TSeat, TShared, TAction>(slug: string, onGameEvent?
      * burst. It clears once the show is over, or when betting opens again.
      */
     const win = ref<WinShow | null>(null)
+    let winDelay: ReturnType<typeof setTimeout> | null = null
     let winTimer: ReturnType<typeof setTimeout> | null = null
     watch(() => mySeat.value?.roundsPlayed, (played, before) => {
         const seat = mySeat.value
@@ -127,13 +128,24 @@ export function useLiveTable<TSeat, TShared, TAction>(slug: string, onGameEvent?
         const staked = stakedOf?.(seat.game) ?? 0
         if (net <= 0 || staked <= 0) return
         const payout = sumCoins([staked, net])
-        win.value = { id: `${state.value?.roundId ?? 0}-${played}`, payout, multiplier: payout / staked }
-        // The felt is shared: once the show is over it clears, the plate keeps the result.
+        const nextWin: WinShow = { id: `${state.value?.roundId ?? 0}-${played}`, payout, multiplier: payout / staked }
+        if (winDelay) clearTimeout(winDelay)
         if (winTimer) clearTimeout(winTimer)
-        winTimer = setTimeout(() => (win.value = null), 3_600)
+        // Brief beat after the dealer reveals/finishes before the win burst pops in your face.
+        winDelay = setTimeout(() => {
+            winDelay = null
+            if (phase.value === 'betting' || !mySeat.value) return
+            win.value = nextWin
+            // The felt is shared: once the show is over it clears, the plate keeps the result.
+            winTimer = setTimeout(() => (win.value = null), 3_600)
+        }, 200)
     })
     watch(() => [phase.value, !!mySeat.value] as const, ([current, seated]) => {
-        if (current === 'betting' || !seated) win.value = null
+        if (current === 'betting' || !seated) {
+            if (winDelay) clearTimeout(winDelay)
+            winDelay = null
+            win.value = null
+        }
     })
 
     function pushFeed(item: Omit<TableFeedItem, 'id'>) {
@@ -171,7 +183,10 @@ export function useLiveTable<TSeat, TShared, TAction>(slug: string, onGameEvent?
                     case 'watch': return pushFeed({ kind: 'watch', name: message.name, text: message.joined ? 'is watching' : 'stopped watching', tone: 'neutral' })
                     case 'chat': return pushFeed({ kind: 'chat', name: message.name, text: message.text, tone: 'neutral' })
                     case 'settled':
-                        if (message.net) pushFeed({ kind: 'settled', name: message.name, text: message.net > 0 ? `won ${formatCoins(message.net)} chips` : `lost ${formatCoins(-message.net)}`, tone: message.net > 0 ? 'win' : 'loss' })
+                        if (message.net) {
+                            const winAmount = message.payout && message.payout > 0 ? message.payout : message.net
+                            pushFeed({ kind: 'settled', name: message.name, text: message.net > 0 ? `won ${formatCoins(winAmount)} chips` : `lost ${formatCoins(-message.net)}`, tone: message.net > 0 ? 'win' : 'loss' })
+                        }
                         return
                     case 'game':
                         return onGameEvent?.(message.payload)
@@ -245,6 +260,7 @@ export function useLiveTable<TSeat, TShared, TAction>(slug: string, onGameEvent?
     onBeforeUnmount(() => {
         closed = true
         if (retry) clearTimeout(retry)
+        if (winDelay) clearTimeout(winDelay)
         if (winTimer) clearTimeout(winTimer)
         ws?.close()
         ws = null

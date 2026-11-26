@@ -106,6 +106,11 @@ export class BlackjackTable extends LiveTable<BjSeat, BjShared, BjTableAction> {
     // ─── betting ─────────────────────────────────────────────────────────────
 
     private requireBetting() {
+        // Solo player can skip the short payout pause as soon as they start betting again.
+        if (this.phase === 'payout' && this.seated().filter(p => !p.leaving).length <= 1) {
+            this.enterBetting()
+            return
+        }
         if (this.phase !== 'betting') fail('Betting is closed')
     }
 

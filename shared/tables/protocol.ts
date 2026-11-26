@@ -16,6 +16,8 @@ export interface SeatView<TSeat = unknown> {
     votedStart: boolean
     /** Net result of the round that just settled, for the flash badge. */
     lastNet: number | null
+    /** Total payout returned (stake included) for the round that just settled. */
+    lastPayout?: number | null
     /** Profit or loss since this player sat down. */
     sessionNet: number
     /** Winning rounds in a row. A push holds the streak. */
@@ -83,7 +85,7 @@ export type TableEvent =
     | { t: 'event', kind: 'sit', name: string, seat: number }
     | { t: 'event', kind: 'leave', name: string, seat: number }
     | { t: 'event', kind: 'watch', name: string, joined: boolean }
-    | { t: 'event', kind: 'settled', seat: number, name: string, net: number }
+    | { t: 'event', kind: 'settled', seat: number, name: string, net: number, payout?: number }
     | { t: 'event', kind: 'chat', name: string, seat: number, text: string }
     | { t: 'event', kind: 'game', payload: unknown }
 

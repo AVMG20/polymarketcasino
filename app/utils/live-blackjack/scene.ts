@@ -1116,7 +1116,8 @@ class SeatNode {
         isYou: boolean,
         tex: LbTextures
     ) {
-        const betting = state.phase === 'betting'
+        const activeSeats = state.seats.filter(s => s && !s.leaving).length
+        const betting = state.phase === 'betting' || (state.phase === 'payout' && activeSeats <= 1)
         if (state.roundId !== this.poppedRound) {
             this.popped.clear()
             this.poppedRound = state.roundId
@@ -1210,8 +1211,9 @@ class SeatNode {
 
     private addHandBadge(hand: LbHand, x: number, state: LbTableState, active = false, lift = 0, key = '') {
         const done = hand.net !== undefined && state.phase === 'payout'
+        const winShown = hand.payout && hand.payout > 0 ? hand.payout : hand.net!
         const text = done
-            ? (hand.net === 0 ? 'PUSH' : `${hand.net! > 0 ? '+' : '−'}${formatCoins(Math.abs(hand.net!))}`)
+            ? (hand.net === 0 ? 'PUSH' : hand.net! > 0 ? `+${formatCoins(winShown)}` : `−${formatCoins(Math.abs(hand.net!))}`)
             : hand.status === 'busted'
                 ? 'BUST'
                 : hand.status === 'blackjack'

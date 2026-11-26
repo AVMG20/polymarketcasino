@@ -42,6 +42,7 @@ export interface TablePlayer<TSeat> {
     leaving: boolean
     votedStart: boolean
     lastNet: number | null
+    lastPayout: number | null
     sessionNet: number
     winStreak: number
     roundsPlayed: number
@@ -230,6 +231,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
             leaving: false,
             votedStart: false,
             lastNet: null,
+            lastPayout: null,
             sessionNet: 0,
             winStreak: record?.winStreak ?? 0,
             roundsPlayed: 0,
@@ -362,7 +364,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
                 }
                 this.pushBalance(player, outcome, committed, outcome.rakebackPot)
                 const net = normalizeCoins(result.payout - result.staked)
-                this.recordResult(player, net)
+                this.recordResult(player, net, normalizeCoins(result.payout))
             } catch (error) {
                 console.error(`[tables] ${this.config.slug}: settling ${player.playerId} failed`, error)
                 this.refund(player)
@@ -371,8 +373,9 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
         this.releaseLeavers()
     }
 
-    private recordResult(player: TablePlayer<TSeat>, net: number) {
+    private recordResult(player: TablePlayer<TSeat>, net: number, payout: number) {
         player.lastNet = net
+        player.lastPayout = payout
         player.sessionNet = normalizeCoins(player.sessionNet + net)
         player.roundsPlayed++
         if (net > 0) player.winStreak++
@@ -382,7 +385,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
             record.net = normalizeCoins(record.net + net)
             record.winStreak = player.winStreak
         }
-        this.bus.broadcast({ t: 'event', kind: 'settled', seat: player.seatIndex, name: player.name, net })
+        this.bus.broadcast({ t: 'event', kind: 'settled', seat: player.seatIndex, name: player.name, net, payout })
     }
 
     /** Hand back everything `player` has open on this round. */
@@ -514,6 +517,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
                 leaving: p.leaving,
                 votedStart: p.votedStart,
                 lastNet: p.lastNet,
+                lastPayout: p.lastPayout,
                 sessionNet: p.sessionNet,
                 winStreak: p.winStreak,
                 roundsPlayed: p.roundsPlayed,
