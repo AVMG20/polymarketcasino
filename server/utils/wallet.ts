@@ -1,6 +1,6 @@
 import { and, eq, lt, sql } from 'drizzle-orm'
 import { db } from '../database'
-import { gemConversions, gemPurchases } from '../database/schema'
+import { gemConversions, gemPurchases, players } from '../database/schema'
 import {
     COINS_PER_GEM,
     CONVERT_MAX_GEMS,
@@ -8,7 +8,7 @@ import {
 } from '../../shared/economy'
 import { formatCoins } from '../../shared/money'
 import { coinTransaction, getCoins } from './ledger'
-import { hub, HubError, type HubSpendInput } from './hub'
+import { hub, HubError, type HubPlayer, type HubSpendInput } from './hub'
 import { ownStarChange, starSummaryOf, syncStars, type StarChange } from './stars'
 import { chipBalance } from './tycoon'
 import { CASINO_GAME_SLUG, type StarSummary } from '../../shared/stars'
@@ -184,6 +184,23 @@ export interface WalletState {
     starChange: StarChange | null
 }
 
+/** Keep the cached hub name, avatar and title fresh when an existing session reads the wallet. */
+function syncHubProfile(playerId: string, hubPlayer: Pick<HubPlayer, 'name' | 'image' | 'title'>) {
+    const current = db.select({ name: players.name, image: players.image, title: players.title })
+        .from(players)
+        .where(eq(players.id, playerId))
+        .get()
+    if (!current) return
+    const name = typeof hubPlayer.name === 'string' && hubPlayer.name.trim() ? hubPlayer.name.trim().slice(0, 60) : current.name
+    const image = typeof hubPlayer.image === 'string' && hubPlayer.image ? hubPlayer.image : null
+    const title = typeof hubPlayer.title === 'string' && hubPlayer.title ? hubPlayer.title : null
+    if (name === current.name && image === current.image && title === current.title) return
+    db.update(players)
+        .set({ name, image, title, updatedAt: new Date() })
+        .where(eq(players.id, playerId))
+        .run()
+}
+
 /** Everything the wallet UI shows. Also retries stale conversions and star reports. */
 export async function getWallet(playerId: string): Promise<WalletState> {
     await retryStaleConversions(playerId)
@@ -197,7 +214,9 @@ export async function getWallet(playerId: string): Promise<WalletState> {
     let gems: number | null = null
     if (hubAccount) {
         try {
-            gems = (await hub.getPlayer(playerId)).gems
+            const hubPlayer = await hub.getPlayer(playerId)
+            gems = hubPlayer.gems
+            syncHubProfile(playerId, hubPlayer)
         } catch {
             gems = null
         }

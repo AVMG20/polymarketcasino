@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // A fake hub with a gem balance per player and idempotent spends, like the real one.
 const hubGems = new Map<string, number>()
+const hubProfiles = new Map<string, { name?: string, image?: string | null, title?: string }>()
 const spends = new Map<string, { spendId: string, playerId: string, amount: number, gems: number }>()
 let hubDown = false
 /** The hub refuses before its idempotency lookup (bad key, rate limit, …) with this status. */
@@ -30,7 +31,17 @@ vi.mock('../server/utils/hub', async (importOriginal) => {
         hub: {
             ...actual.hub,
             spendGems: (input: never) => spendGems(input),
-            getPlayer: async (id: string) => ({ id, name: 'x', image: null, gems: hubGems.get(id) ?? 0, stars: 0, title: 'Newcomer' }),
+            getPlayer: async (id: string) => {
+                const profile = hubProfiles.get(id)
+                return {
+                    id,
+                    name: profile?.name ?? 'x',
+                    image: profile && 'image' in profile ? profile.image ?? null : null,
+                    gems: hubGems.get(id) ?? 0,
+                    stars: 0,
+                    title: profile?.title ?? 'Newcomer'
+                }
+            },
             setStars: async ({ stars }: { stars: number }) => ({ applied: true, stars, best: stars, bounty: 0, total: stars, title: 'Newcomer' })
         }
     }
@@ -170,5 +181,18 @@ describe('gem conversion', () => {
         await expect(convertGems(dev, 5)).rejects.toMatchObject({ statusCode: 400 })
         expect(spendGems).not.toHaveBeenCalled()
         expect(await getWallet(dev)).toMatchObject({ hubAccount: false, gems: null })
+    })
+
+    it('syncs updated name, avatar image and title from the hub on wallet read', async () => {
+        const id = seedPlayer(0, 0, { casino: 'none' })
+        hubGems.set(id, 12)
+        hubProfiles.set(id, { name: 'AVMG', image: 'https://polynux.avmg.nl/emblems/u1.svg?v=abc123', title: 'Rookie' })
+        expect(await getWallet(id)).toMatchObject({ gems: 12 })
+        expect(db.select({ name: players.name, image: players.image, title: players.title }).from(players).where(eq(players.id, id)).get())
+            .toEqual({ name: 'AVMG', image: 'https://polynux.avmg.nl/emblems/u1.svg?v=abc123', title: 'Rookie' })
+
+        hubProfiles.set(id, { name: 'AVMG', image: null, title: 'Rookie' })
+        await getWallet(id)
+        expect(db.select({ image: players.image }).from(players).where(eq(players.id, id)).get()?.image).toBeNull()
     })
 })
