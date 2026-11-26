@@ -7,6 +7,8 @@ import { avatarOf } from './cosmetics'
 import { createFloorPresence, type PresenceContext, type PresenceSource } from './floor-presence'
 import { onVisitorRakeback } from './rakeback'
 import { refuseCrossSiteSocket, socketPlayer, type SocketUpgradeRequest } from './socket-auth'
+import { tablesOccupancy } from './tables'
+import { onTableOccupancyChange } from './tables/table'
 import { casinoLayout, onFloorChange, peekCasino } from './tycoon'
 
 /** The casino a socket URL names: /api/floor/<casinoId>/ws. */
@@ -38,7 +40,8 @@ export const dbPresenceSource: PresenceSource = {
         const nav = new NavGrid(casinoLayout({ ...casino, zones: casino.zones.length ? casino.zones : ['backroom'] }))
         return (x, y) => nav.isWalkable(x, y)
     },
-    look: playerId => avatarOf(playerId)
+    look: playerId => avatarOf(playerId),
+    tables: tablesOccupancy
 }
 
 /** The process's floor rooms. */
@@ -52,3 +55,6 @@ onVisitorRakeback(event => floorPresence.toOwner(event.host, () => {
     const from = db.select({ name: players.name }).from(players).where(eq(players.id, event.playerId)).get()?.name ?? 'A visitor'
     return { t: 'rakeback', amount: event.amount, pot: event.pot, from, game: event.game, at: Date.now() }
 }))
+
+// Someone sat down or left a seat at a live table: tell every open floor.
+onTableOccupancyChange(() => floorPresence.toAll(() => ({ t: 'tables', tables: tablesOccupancy() })))

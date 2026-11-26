@@ -1,5 +1,6 @@
 import type { AvatarLook } from '#shared/cosmetics'
 import { PRESENCE_CLOSE, type PresenceMember, type PresenceServerMessage } from '#shared/floor-presence'
+import type { TableOccupancy } from '#shared/tycoon'
 import { takeToken, type TokenBucket } from './rate-limit'
 
 /**
@@ -28,6 +29,8 @@ export interface PresenceSource {
     walkable(casinoId: string): (x: number, y: number) => boolean
     /** A player's avatar, read from their profile (never from the client). */
     look(playerId: string): AvatarLook
+    /** Live table seating, sent once on join. */
+    tables?(): TableOccupancy[]
 }
 
 /** Who opens a socket into which room (from the upgrade hook). */
@@ -141,7 +144,8 @@ export function createFloorPresence(source: PresenceSource, now: () => number = 
             broadcast(room, member.id, { t: 'join', member: view(member) })
         }
         const others = [...room.members.values()].filter(m => m.id !== context.playerId).map(view)
-        write(peer, JSON.stringify({ t: 'snapshot', you: context.playerId, members: others } satisfies PresenceServerMessage))
+        const tables = source.tables?.()
+        write(peer, JSON.stringify({ t: 'snapshot', you: context.playerId, members: others, ...(tables ? { tables } : {}) } satisfies PresenceServerMessage))
         return true
     }
 
@@ -215,6 +219,19 @@ export function createFloorPresence(source: PresenceSource, now: () => number = 
             const payload = JSON.stringify(message)
             for (const peer of owner.peers) write(peer, payload)
             return true
+        },
+        /**
+         * Send `message` to every open floor socket (e.g. live table seating
+         * changed). `make` runs only when at least one socket is open. Returns
+         * how many sockets got it.
+         */
+        toAll(make: () => PresenceServerMessage | null): number {
+            if (!peers.size) return 0
+            const message = make()
+            if (!message) return 0
+            const payload = JSON.stringify(message)
+            for (const peer of peers.keys()) write(peer, payload)
+            return peers.size
         },
         /** The players in a casino's room now (tests, diagnostics). */
         members(casinoId: string): PresenceMember[] {

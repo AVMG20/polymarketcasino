@@ -1,3 +1,4 @@
+import type { TableOccupancy } from '#shared/tycoon'
 import { baccaratTable } from './baccarat'
 import { blackjackTable } from './blackjack'
 import { casinoHoldemTable } from './casino-holdem'
@@ -10,6 +11,11 @@ export const TABLES: Record<string, LiveTable<unknown, unknown, unknown>> = {
     'baccarat': baccaratTable as LiveTable<unknown, unknown, unknown>,
     'three-card-poker': threeCardPokerTable as LiveTable<unknown, unknown, unknown>,
     'casino-holdem': casinoHoldemTable as LiveTable<unknown, unknown, unknown>
+}
+
+/** Who sits at each live table and how many watch, for the casino floor. */
+export function tablesOccupancy(): TableOccupancy[] {
+    return Object.values(TABLES).map(table => table.occupancy())
 }
 
 /** Escrow rows some table still holds (the periodic sweep skips them). */

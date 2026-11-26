@@ -1,4 +1,5 @@
 import type { AvatarLook } from './cosmetics'
+import type { TableOccupancy } from './tycoon'
 
 /**
  * Live presence on a casino floor: who walks around it right now. One room
@@ -29,12 +30,14 @@ export type PresenceClientMessage =
     | { t: 'look' }
 
 export type PresenceServerMessage =
-    /** Sent once on join: everyone else in the room. */
-    | { t: 'snapshot', you: string, members: PresenceMember[] }
+    /** Sent once on join: everyone else in the room, and live table seating. */
+    | { t: 'snapshot', you: string, members: PresenceMember[], tables?: TableOccupancy[] }
     | { t: 'join', member: PresenceMember }
     | { t: 'move', id: string, x: number, y: number, walk: boolean }
     | { t: 'look', id: string, avatar: AvatarLook }
     | { t: 'leave', id: string }
+    /** Live table seating changed (someone sat down or left a seat). */
+    | { t: 'tables', tables: TableOccupancy[] }
     /**
      * To the casino's owner only: a visitor's settled bet just put its 1%
      * rakeback in your cage's visitors pot (`amount` coins; `pot` is the pot

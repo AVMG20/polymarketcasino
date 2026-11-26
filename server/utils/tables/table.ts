@@ -74,6 +74,17 @@ const CHAT_MAX_LENGTH = 120
 const CHAT_GAP_MS = 800
 const SCOREBOARD_ALUMNI = 12
 
+const occupancyListeners = new Set<(slug: string) => void>()
+
+/**
+ * Call `listener` with the table's slug whenever who sits at a live table
+ * changes (someone sat down or left a seat). Returns the unsubscribe.
+ */
+export function onTableOccupancyChange(listener: (slug: string) => void): () => void {
+    occupancyListeners.add(listener)
+    return () => occupancyListeners.delete(listener)
+}
+
 /**
  * The half of a live table that is the same in every game: seats, the phase
  * clock, escrow, settlement, chat, the scoreboard and per-viewer snapshots.
@@ -115,6 +126,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
     private phaseToken = 0
     private timer: ReturnType<typeof setTimeout> | null = null
     private version = 0
+    private occupancyDirty = false
     private scores = new Map<string, ScoreRecord>()
     private lastChat = new Map<string, number>()
 
@@ -229,6 +241,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
             releaseTimer: null,
             game: this.createSeat()
         })
+        this.occupancyDirty = true
         this.scores.set(playerId, { name, image, net: record?.net ?? 0, winStreak: record?.winStreak ?? 0, leftAt: null })
         this.bus.broadcast({ t: 'event', kind: 'sit', name, seat: index })
         if (this.phase === 'idle') this.onTableActive()
@@ -247,7 +260,7 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
 
     protected release(player: TablePlayer<TSeat>) {
         if (player.releaseTimer) clearTimeout(player.releaseTimer)
-        this.players.delete(player.playerId)
+        if (this.players.delete(player.playerId)) this.occupancyDirty = true
         const record = this.scores.get(player.playerId)
         if (record) record.leftAt = Date.now()
         this.pruneScores()
@@ -531,6 +544,16 @@ export abstract class LiveTable<TSeat, TShared, TAction> {
         this.version++
         for (const viewer of this.bus.viewers()) {
             this.bus.sendToPlayer(viewer, JSON.stringify({ t: 'state', state: this.snapshot(viewer) } satisfies ServerMessage))
+        }
+        if (this.occupancyDirty) {
+            this.occupancyDirty = false
+            for (const listener of occupancyListeners) {
+                try {
+                    listener(this.config.slug)
+                } catch (error) {
+                    console.error(`[tables] ${this.config.slug}: occupancy listener failed`, error)
+                }
+            }
         }
     }
 }

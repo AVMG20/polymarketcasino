@@ -2,9 +2,12 @@ import { sealSession, type H3Event } from 'h3'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_AVATAR, type AvatarLook } from '../shared/cosmetics'
 import { PRESENCE_CLOSE, type PresenceServerMessage } from '../shared/floor-presence'
+import type { TableOccupancy } from '../shared/tycoon'
 import { PRESENCE_LIMITS, createFloorPresence, type PresenceSource } from '../server/utils/floor-presence'
-import { authorizeFloorUpgrade, dbPresenceSource } from '../server/utils/floor-socket'
+import { authorizeFloorUpgrade, dbPresenceSource, floorPresence } from '../server/utils/floor-socket'
 import { SESSION_COOKIE, sessionConfig } from '../server/utils/session'
+import { TABLES } from '../server/utils/tables'
+import { TableError } from '../server/utils/tables/table'
 import { seedPlayer } from './setup/players'
 
 /** A floor of 10×10 open tiles, with (5, 5) blocked; looks come from a map the test can change. */
@@ -193,6 +196,32 @@ describe('floor presence rooms', () => {
         expect(fake.gridReads()).toBe(2)
     })
 
+    it('sends live table occupancy in snapshot and broadcasts updates across rooms with toAll', () => {
+        const fake = fakeSource()
+        let tables: TableOccupancy[] = [{ slug: 'blackjack', seated: [], seats: 5, watching: 0 }]
+        const presence = createFloorPresence({ ...fake.source, tables: () => tables })
+        let made = 0
+        const broadcast = () => presence.toAll(() => {
+            made++
+            return { t: 'tables', tables }
+        })
+        // Nobody connected: the payload is not even built.
+        expect(broadcast()).toBe(0)
+        expect(made).toBe(0)
+
+        const a = fakePeer()
+        const b = fakePeer()
+        presence.open(a, { casinoId: 'casino-1', playerId: 'a', name: 'A', image: null })
+        presence.open(b, { casinoId: 'casino-2', playerId: 'b', name: 'B', image: null })
+        expect(a.inbox[0]).toEqual({ t: 'snapshot', you: 'a', members: [], tables })
+
+        tables = [{ slug: 'blackjack', seated: [{ name: 'A', image: null }], seats: 5, watching: 1 }]
+        expect(broadcast()).toBe(2)
+        expect(made).toBe(1)
+        expect(a.last()).toEqual({ t: 'tables', tables })
+        expect(b.last()).toEqual({ t: 'tables', tables })
+    })
+
     it('reads the walkable grid again at once when the floor changed', () => {
         const { presence, join, fake } = setup()
         const a = join('a')
@@ -220,6 +249,38 @@ describe('floor presence source', () => {
         expect(fresh(-1, 0)).toBe(false)
         expect(dbPresenceSource.walkable(full)(10, 16)).toBe(true)
         expect(dbPresenceSource.look(full)).toEqual(DEFAULT_AVATAR)
+    })
+
+    it('pushes live table seating changes to open floors', () => {
+        const owner = seedPlayer(1_000)
+        const broke = seedPlayer(0, 0, { casino: 'none' })
+        const table = TABLES.blackjack!
+        const peer = fakePeer()
+        floorPresence.open(peer, { casinoId: owner, playerId: owner, name: 'Owner', image: null })
+        try {
+            const snapshot = peer.inbox[0] as Extract<PresenceServerMessage, { t: 'snapshot' }>
+            expect(snapshot.tables?.find(t => t.slug === 'blackjack')?.seated).toEqual([])
+
+            // A failed sit changes no seat and sends no push.
+            const before = peer.inbox.length
+            expect(() => table.run(() => table.sit(broke, 'Broke', null, 0))).toThrow(TableError)
+            expect(peer.inbox.length).toBe(before)
+
+            table.run(() => table.sit(owner, 'Owner', null, 0))
+            const sat = peer.last() as Extract<PresenceServerMessage, { t: 'tables' }>
+            expect(sat.t).toBe('tables')
+            expect(sat.tables.find(t => t.slug === 'blackjack')?.seated).toEqual([
+                { name: 'Owner', image: null, avatar: DEFAULT_AVATAR }
+            ])
+
+            table.run(() => table.leave(owner))
+            const left = peer.last() as Extract<PresenceServerMessage, { t: 'tables' }>
+            expect(left.t).toBe('tables')
+            expect(left.tables.find(t => t.slug === 'blackjack')?.seated).toEqual([])
+        } finally {
+            table.run(() => table.leave(owner))
+            floorPresence.close(peer)
+        }
     })
 })
 

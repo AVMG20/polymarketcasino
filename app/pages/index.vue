@@ -13,7 +13,7 @@ const route = useRoute()
 const router = useRouter()
 const tycoon = useTycoon()
 const events = useFloorEvents()
-const { scene, startPolling } = useFloorScene()
+const { scene, setTables } = useFloorScene()
 const cosmetics = useCosmetics()
 const sound = useTycoonSound()
 const leaderboard = useLeaderboard()
@@ -25,7 +25,8 @@ const presence = useFloorPresence(() => session.player.value?.id, {
     onRakeback: (news) => {
         tycoon.setPot('visitors', news.pot, { at: news.at })
         if (floorReady.value) floor.value?.rakeback(news.game, news.amount)
-    }
+    },
+    onTables: setTables
 })
 
 const floor = ref<FloorApi | null>(null)
@@ -472,7 +473,6 @@ const overlayOpen = computed(() => !floorReady.value || arrange.active.value || 
 
 onMounted(() => {
     void tycoon.refresh({ welcome: true })
-    startPolling()
 })
 
 useHead({ title: 'My Casino' })

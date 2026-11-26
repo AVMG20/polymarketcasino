@@ -1,4 +1,5 @@
 import { PRESENCE_CLOSE, type PresenceClientMessage, type PresenceMember, type PresenceServerMessage } from '#shared/floor-presence'
+import type { TableOccupancy } from '#shared/tycoon'
 import type { FloorMove, FloorRemote } from '~/utils/floor/types'
 
 /** Reconnect delays (ms), the last one repeating. */
@@ -33,7 +34,7 @@ interface Tracked {
  * server also tells you when a visitor's bet put rakeback in your cage
  * (`onRakeback`; display only).
  */
-export function useFloorPresence(casinoId: MaybeRefOrGetter<string | null | undefined>, options: { onRakeback?: (news: FloorRakeback) => void } = {}) {
+export function useFloorPresence(casinoId: MaybeRefOrGetter<string | null | undefined>, options: { onRakeback?: (news: FloorRakeback) => void, onTables?: (tables: TableOccupancy[]) => void } = {}) {
     const session = useCasinoSession()
     const tycoon = useTycoon()
 
@@ -69,6 +70,7 @@ export function useFloorPresence(casinoId: MaybeRefOrGetter<string | null | unde
                 members.clear()
                 // People already here stand where they are.
                 for (const member of message.members) members.set(member.id, { member: { ...member, walk: false }, seq: ++moves })
+                if (Array.isArray(message.tables)) options.onTables?.(message.tables)
                 break
             case 'join':
                 members.set(message.member.id, { member: message.member, seq: ++moves })
@@ -89,6 +91,9 @@ export function useFloorPresence(casinoId: MaybeRefOrGetter<string | null | unde
             case 'leave':
                 if (!members.delete(message.id)) return
                 break
+            case 'tables':
+                if (Array.isArray(message.tables)) options.onTables?.(message.tables)
+                return
             case 'rakeback':
                 if (typeof message.amount === 'number' && typeof message.pot === 'number') options.onRakeback?.({ amount: message.amount, pot: message.pot, from: String(message.from ?? ''), game: String(message.game ?? ''), at: typeof message.at === 'number' ? message.at : 0 })
                 return

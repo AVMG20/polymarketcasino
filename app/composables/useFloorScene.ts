@@ -40,19 +40,15 @@ export function placedDecorations(decor: TycoonState['decor']): FloorDecoration[
     return (decor ?? []).flatMap(d => (d.x !== null && d.y !== null ? [{ id: d.id, type: d.type, x: d.x, y: d.y }] : []))
 }
 
-const TABLES_POLL_MS = 10_000
-
 /**
  * Maps the tycoon state and the live table occupancy into the FloorScene the
- * Pixi floor draws. `startPolling()` keeps the occupancy fresh (~10 s) while
- * the page is visible.
+ * Pixi floor draws. Occupancy is pushed over the floor socket (`setTables`).
  */
 export function useFloorScene() {
     const tycoon = useTycoon()
     const session = useCasinoSession()
     const cosmetics = useCosmetics()
     const occupancy = useState<TableOccupancy[]>('tycoon:tables', () => [])
-    let timer: ReturnType<typeof setInterval> | null = null
     let cageTimer: ReturnType<typeof setInterval> | null = null
     // The cage fills continuously, but the floor only needs it for a glow: it is
     // updated in place about once a second, so the scene itself is not rebuilt.
@@ -63,26 +59,18 @@ export function useFloorScene() {
         cage.stored = Math.floor(tycoon.cageTotal.value)
     }
 
-    async function refreshTables() {
-        try {
-            occupancy.value = await $fetch<TableOccupancy[]>('/api/tables')
-        } catch {
-            // The floor just shows empty tables until the next poll.
-        }
+    function setTables(tables: TableOccupancy[]) {
+        occupancy.value = tables
     }
 
-    function startPolling() {
-        void refreshTables()
-        timer = setInterval(() => {
-            if (document.visibilityState === 'visible') void refreshTables()
-        }, TABLES_POLL_MS)
+    onMounted(() => {
         syncCage()
         cageTimer = setInterval(syncCage, 1000)
-        onBeforeUnmount(() => {
-            if (timer) clearInterval(timer)
-            if (cageTimer) clearInterval(cageTimer)
-        })
-    }
+    })
+    onBeforeUnmount(() => {
+        if (cageTimer) clearInterval(cageTimer)
+        cageTimer = null
+    })
 
     // A new state (collect, build, rush) updates the cage at once.
     watch(() => tycoon.state.value, syncCage, { immediate: true })
@@ -148,5 +136,5 @@ export function useFloorScene() {
         }
     })
 
-    return { scene, occupancy, refreshTables, startPolling }
+    return { scene, occupancy, setTables }
 }
