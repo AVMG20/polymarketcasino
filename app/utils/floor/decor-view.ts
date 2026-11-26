@@ -1,9 +1,9 @@
-import type { Container, Graphics, Sprite } from 'pixi.js'
+import type { Container, Sprite } from 'pixi.js'
 import { isSpecial, type DecorType } from '#shared/decor'
 import type { Rect } from '#shared/floor/layout'
 import type { Baked } from './art/bank'
 import { decorCanvas, decorFlat, decorHeight, decorLights, decorPool, decorSize, drawDecor } from './art/decor'
-import { circlePoly, project } from './iso'
+import { project } from './iso'
 import type { ViewContext } from './views'
 
 /** A decoration's baked art (shared by every copy, the arrange ghost and the floor). */
@@ -24,7 +24,7 @@ interface Light {
 /**
  * One decoration on the floor. Its container depth-sorts as a static (a
  * rug's lies flat in the rug layer instead); a light pool goes on the floor.
- * Specials glow gold underneath and sparkle, so they read as special.
+ * Specials glow softly gold underneath and sparkle, so they read as special.
  */
 export class DecorView {
     readonly container: Container
@@ -35,8 +35,6 @@ export class DecorView {
     /** What it is and where: a change rebuilds the view. */
     readonly key: string
     private pool: Sprite | null = null
-    /** A special's gold ring on the floor: normal blend, so it shows on pale floors too. */
-    private ring: Graphics | null = null
     private lights: Light[] = []
     private sparkles: Sprite[] = []
     private t = Math.random() * 10
@@ -70,18 +68,6 @@ export class DecorView {
             this.pool.alpha = pool.alpha
             ctx.floorLayer.addChildAt(this.pool, 0)
         }
-        // A flat special (the red carpet) is its own gold-edged runner: no ring on top of it.
-        if (this.special && !this.flat) {
-            const ring = new PIXI.Graphics()
-            const pts = circlePoly(x + w / 2, y + h / 2, Math.max(w, h) / 2 + 0.12, 32).flatMap(([gx, gy]) => {
-                const p = project(gx, gy)
-                return [p.x, p.y]
-            })
-            ring.poly(pts).fill({ color: 0xf2b53a, alpha: 0.2 }).stroke({ color: 0x6b3d12, width: 5, alpha: 0.28 })
-            ring.poly(pts).stroke({ color: 0xe8a72e, width: 3, alpha: 0.95 })
-            ctx.floorLayer.addChildAt(ring, 0)
-            this.ring = ring
-        }
         for (const l of decorLights(type)) {
             const s = new PIXI.Sprite(fx.glow.texture)
             s.anchor.set(0.5)
@@ -112,7 +98,6 @@ export class DecorView {
         this.hidden = hidden
         this.container.visible = !hidden
         if (this.pool) this.pool.visible = !hidden
-        if (this.ring) this.ring.visible = !hidden
     }
 
     update(dt: number) {
@@ -142,7 +127,6 @@ export class DecorView {
 
     destroy() {
         this.pool?.destroy()
-        this.ring?.destroy()
         this.container.destroy({ children: true })
     }
 }

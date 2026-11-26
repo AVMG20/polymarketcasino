@@ -166,7 +166,7 @@ export function decorPool(type: DecorType): { gx: number, gy: number, scale: num
     if (type === 'lamp') return { gx: 0.5, gy: 0.5, scale: 1.4, alpha: 0.32, tint: 0xffc76b }
     if (type === 'neon') return { gx: 0.5, gy: 0.9, scale: 1.3, alpha: 0.3, tint: 0xff4fd8 }
     if (type === 'aquarium') return { gx: w / 2, gy: h, scale: 1.8, alpha: 0.3, tint: 0x45b6e6 }
-    if (isSpecial(type)) return { gx: w / 2, gy: h / 2, scale: 0.9 + (w + h) * 0.45, alpha: 0.38, tint: 0xffc93a }
+    if (isSpecial(type)) return { gx: w / 2, gy: h / 2, scale: 0.9 + (w + h) * 0.4, alpha: 0.24, tint: 0xffc93a }
     return null
 }
 
