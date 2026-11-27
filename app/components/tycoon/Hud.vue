@@ -23,8 +23,8 @@ watch(() => stars.value?.level ?? 0, (to, from) => to > from && starPop.value++)
 
 // Daily missions: a ring of the ones cleared, a badge when one is ready to claim.
 const missions = computed(() => tycoon.missions.value)
-/** Every mission claimed: the button hides until the next day's missions. */
-const allClaimed = computed(() => !!missions.value?.missions.length && missions.value.missions.every(m => m.claimed))
+/** Every mission and the bonus claimed: the button hides until the next day's missions. */
+const allClaimed = computed(() => !!missions.value?.missions.length && missions.value.missions.every(m => m.claimed) && missions.value.bonus.claimed)
 const missionsCleared = computed(() => missions.value?.missions.filter(m => m.claimed || m.progress >= m.target).length ?? 0)
 const missionPop = ref(0)
 watch(() => tycoon.missionDone.value, done => done && missionPop.value++)
